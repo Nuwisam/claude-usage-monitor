@@ -1,0 +1,75 @@
+name: claude-usage-monitor
+
+services:
+  claude_usage_monitor_mariadb:
+    image: mariadb:11
+    container_name: claude_usage_monitor_mariadb
+    restart: unless-stopped
+    command: >
+      --default-time-zone=+00:00
+      --innodb-buffer-pool-size=256M
+      --innodb-flush-log-at-trx-commit=2
+      --max-connections=64
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${MARIADB_DATABASE}
+      MARIADB_USER: ${MARIADB_USER}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+      TZ: UTC
+    volumes:
+      - ./data/mariadb:/var/lib/mysql
+    networks:
+      - claude-usage-monitor_internal
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  claude_usage_monitor_backend:
+    build: ./backend
+    container_name: claude_usage_monitor_backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: mysql+aiomysql://${MARIADB_USER}:${MARIADB_PASSWORD}@claude_usage_monitor_mariadb:3306/${MARIADB_DATABASE}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TZ: UTC
+      ALLOWED_EMAILS: ${ALLOWED_EMAILS}
+      SSO_VERIFY_URL: ${SSO_VERIFY_URL:-http://identity_proxy:8080/api/verify}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://usage.example.org}
+      APP_BASE_PATH: ${APP_BASE_PATH:-/claude-usage}
+      INGEST_TOKENS: ${INGEST_TOKENS}
+      MAX_INGEST_BODY_BYTES: ${MAX_INGEST_BODY_BYTES:-262144}
+      MAX_BACKLOG_ENTRIES: ${MAX_BACKLOG_ENTRIES:-200}
+      CLOCK_SKEW_TOLERANCE_SEC: ${CLOCK_SKEW_TOLERANCE_SEC:-300}
+      BACKLOG_MAX_AGE_SEC: ${BACKLOG_MAX_AGE_SEC:-604800}
+      SAMPLE_HEARTBEAT_SEC: ${SAMPLE_HEARTBEAT_SEC:-300}
+      MONOTONIC_EPS: ${MONOTONIC_EPS:-0.5}
+      FRESH_WINDOW_SEC: ${FRESH_WINDOW_SEC:-300}
+      CLIENT_SILENT_SEC: ${CLIENT_SILENT_SEC:-21600}
+    depends_on:
+      claude_usage_monitor_mariadb:
+        condition: service_healthy
+    networks:
+      - claude-usage-monitor_internal
+      - identity-proxy_default
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health', timeout=2).status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  # DB nieosiagalna z niczego poza backendem — brak egress, brak dostepu z hosta.
+  claude-usage-monitor_internal:
+    name: claude-usage-monitor_internal
+    driver: bridge
+    internal: true
+  # Backend jest tu z dwoch powodow: wola /api/verify oauth2-proxy ORAZ dostaje adres
+  # routowalny z hosta, dzieki czemu Apache siega go po nazwie kontenera (pomocnik wpisujacy nazwy kontenerow do /etc/hosts).
+  # Celowo NIE tworzymy trzeciej sieci — host ma juz ~33 sieci i Docker wyczerpal
+  # predefiniowane pule adresowe ("all predefined address pools have been fully subnetted").
+  identity-proxy_default:
+    external: true

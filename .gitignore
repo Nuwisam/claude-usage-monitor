@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/
+logs/
+*.log
+node_modules/
+.idea/
+.vscode/
+.DS_Store
+
+# Dumpy payloadow ze statusline — zawieraja sciezki projektow, nazwy sesji i koszty.
+# Trzymamy je w %LOCALAPPDATA%, ale gdyby ktos skopiowal je tutaj — nie commitujemy.
+*.jsonl
+*.cache.json
+.env
+backups/
