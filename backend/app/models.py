@@ -86,7 +86,9 @@ class Machine(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     host: Mapped[str | None] = mapped_column(String(128))
-    cc_version: Mapped[str | None] = mapped_column(String(32))
+    # cc_version usuniete: pochodzilo z UA_VERSION sondy, czyli ze stalej "2.1.215"
+    # zaszytej w kodzie. Kolumna trzymala te sama wartosc dla wszystkich maszyn i nie
+    # mowila nic o wersji faktycznie tam dzialajacej.
     script_version: Mapped[int | None] = mapped_column(Integer)
     first_seen_at: Mapped[datetime] = _dt(nullable=False, server_default=func.now(6))
     last_seen_at: Mapped[datetime | None] = _dt()
@@ -161,14 +163,16 @@ class IngestBatch(Base):
 
     client_host: Mapped[str | None] = mapped_column(String(128))
     config_dir_hash: Mapped[str | None] = mapped_column(String(32))
-    cc_version: Mapped[str | None] = mapped_column(String(32))
     script_version: Mapped[int | None] = mapped_column(Integer)
     hook_event: Mapped[str | None] = mapped_column(String(64))
     session_id: Mapped[str | None] = mapped_column(String(64))
 
-    http_status: Mapped[int | None] = mapped_column(Integer)      # status od Anthropic
-    request_id: Mapped[str | None] = mapped_column(String(64))
-    rl_status: Mapped[str | None] = mapped_column(String(32))
+    # http_status / request_id / rl_status usuniete wraz z wersja 3 sondy: opisywaly
+    # odpowiedz HTTP od Anthropic na ZADANIE SONDY, a sonda zadnego juz nie wysyla.
+    # W zamian — skad wziety zostal pomiar i jak stary byl w chwili wyslania.
+    measurement_source: Mapped[str | None] = mapped_column(String(32))
+    cache_age_s: Mapped[int | None] = mapped_column(Integer)
+    fresh_age_s: Mapped[int | None] = mapped_column(Integer)
     probe_ms: Mapped[int | None] = mapped_column(Integer)
 
     raw_payload_id: Mapped[int | None] = mapped_column(ForeignKey("raw_payloads.id"))
@@ -202,9 +206,14 @@ class LimitSample(Base):
     captured_at: Mapped[datetime] = _dt(nullable=False)
     batch_id: Mapped[int] = mapped_column(ForeignKey("ingest_batches.id"), nullable=False)
 
+    # `probe` = historyczne dane sprzed wersji 3 sondy, gdy sama wolala /api/oauth/usage.
+    # Zostaje w enumie, bo te wiersze nadal sa w bazie i nadal sa poprawnymi pomiarami.
+    # `statusline` i `ratelimit_headers` nigdy nie zostaly wdrozone — statusline nie dziala
+    # w rozszerzeniu VS Code (#55643, zamkniete not_planned), a naglowki wymagalyby
+    # proxy MITM na wlasnym ruchu. Usuniete, zeby enum nie obiecywal nieistniejacych zrodel.
     source: Mapped[str] = mapped_column(
-        Enum("probe", "statusline", "ratelimit_headers", name="sample_source"),
-        nullable=False, default="probe",
+        Enum("probe", "cli_merged", "cli_usage_cache", name="sample_source"),
+        nullable=False, default="cli_merged",
     )
     # ZAWSZE 0..100 po normalizacji. Skala zrodlowa roznila sie (naglowki daja 0.0-1.0),
     # dlatego kolumna `source` mowi skad przyszlo, a wartosc jest juz ujednolicona.
@@ -234,6 +243,17 @@ class SeriesState(Base):
 
     last_sample_id: Mapped[int | None] = mapped_column(BigInteger)
     last_captured_at: Mapped[datetime | None] = _dt()
+
+    # Trzy rozne pytania, na ktore jedno pole odpowiadac nie moze:
+    #   last_captured_at  - kiedy zapisano ostatnia PROBKE (dedup pomija niezmienione)
+    #   last_confirmed_at - kiedy ostatnio POTWIERDZONO, ze wartosc nadal ta sama
+    #   value_since       - odkad wartosc jest niezmienna
+    # Bez last_confirmed_at stabilny odczyt wyglada identycznie jak zerwana lacznosc:
+    # dedup nie zapisuje probki, wiec last_captured_at stoi i UI melduje "pomiar sprzed
+    # 6 minut", mimo ze klient potwierdzil te wartosc 20 sekund temu.
+    last_confirmed_at: Mapped[datetime | None] = _dt()
+    value_since: Mapped[datetime | None] = _dt()
+
     last_utilization: Mapped[float | None] = mapped_column(Numeric(7, 4))
     last_resets_at: Mapped[datetime | None] = _dt()
     last_is_active: Mapped[bool | None] = mapped_column(Boolean)

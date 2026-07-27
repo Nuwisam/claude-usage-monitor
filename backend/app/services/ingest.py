@@ -64,7 +64,6 @@ async def get_or_create_machine(db: AsyncSession, name: str, client: dict) -> Ma
         db.add(m)
         await db.flush()
     m.host = client.get("host") or m.host
-    m.cc_version = client.get("cc_version") or m.cc_version
     m.script_version = client.get("script_version") or m.script_version
     m.last_seen_at = utcnow()
     m.batches = (m.batches or 0) + 1
@@ -180,6 +179,8 @@ async def _write_observation(
 
     stale_read = False
     should_write = True
+    changed = True
+    newest = st is None or st.last_captured_at is None or captured_at > st.last_captured_at
 
     if st is not None and st.last_captured_at is not None:
         prev_u = float(st.last_utilization) if st.last_utilization is not None else None
@@ -201,6 +202,10 @@ async def _write_observation(
             should_write = age >= settings.sample_heartbeat_sec
 
     if not should_write:
+        # Probki nie piszemy, ale POMIAR SIE ODBYL. Bez tego pominiecie zapisu jest
+        # nieodroznialne od ciszy klienta i UI raportuje falszywa starosc danych.
+        if newest and not stale_read and st is not None:
+            st.last_confirmed_at = captured_at
         return False, False
 
     sample = LimitSample(
@@ -214,7 +219,6 @@ async def _write_observation(
     await db.flush()
 
     # (3) stan aktualizuje wylacznie najnowsza, niepodejrzana probka
-    newest = st is None or st.last_captured_at is None or captured_at > st.last_captured_at
     if newest and not stale_read:
         if st is None:
             st = SeriesState(account_id=account.id, series_id=series.id)
@@ -223,6 +227,12 @@ async def _write_observation(
         st.prev_captured_at = st.last_captured_at
         st.last_sample_id = sample.id
         st.last_captured_at = captured_at
+        st.last_confirmed_at = captured_at
+        # value_since przesuwamy WYLACZNIE przy zmianie wartosci — inaczej zapis
+        # heartbeatu (ta sama wartosc, nowy wiersz) udawalby zmiane i "niezmienne od"
+        # resetowaloby sie co heartbeat, czyli pokazywaloby bzdure.
+        if changed or st.value_since is None:
+            st.value_since = captured_at
         st.last_utilization = o.utilization
         st.last_resets_at = o.resets_at
         st.last_is_active = o.is_active
@@ -238,20 +248,26 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
     now = utcnow()
     client = payload.get("client") or {}
     hook = payload.get("hook") or {}
-    http = payload.get("http") or {}
+    meas = payload.get("measurement") or {}
+    # token_meta jest OPCJONALNY od wersji 3 sondy: na macOS credentiale siedza w Keychain,
+    # a pomiar juz od nich nie zalezy — brakuje wtedy tylko tagow planu, nie danych.
     token_meta = payload.get("token_meta") or {}
     acct = payload.get("account") or {}
     usage = payload.get("usage")
 
     machine = await get_or_create_machine(db, machine_name, client)
 
+    source = meas.get("source") or "probe"
+    if source not in ("probe", "cli_merged", "cli_usage_cache"):
+        source = "cli_usage_cache"      # nieznana etykieta: nie wywracamy zapisu przez enum
+
     batch = IngestBatch(
         received_at=now, machine_id=machine.id,
         client_host=client.get("host"), config_dir_hash=client.get("config_dir_hash"),
-        cc_version=client.get("cc_version"), script_version=client.get("script_version"),
+        script_version=client.get("script_version"),
         hook_event=hook.get("event"), session_id=hook.get("session_id"),
-        http_status=http.get("status"), request_id=http.get("request_id"),
-        rl_status=http.get("rl_status"), probe_ms=client.get("exec_ms"),
+        measurement_source=source, cache_age_s=meas.get("cache_age_s"),
+        fresh_age_s=meas.get("fresh_age_s"), probe_ms=client.get("exec_ms"),
     )
     db.add(batch)
     await db.flush()
@@ -332,7 +348,7 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
             new_series.append(o.series_key)
         w, sr = await _write_observation(
             db, account=account, series=series, o=o, captured_at=captured_at,
-            batch=batch, session_id=hook.get("session_id"), source="probe",
+            batch=batch, session_id=hook.get("session_id"), source=source,
         )
         written += int(w)
         stale += int(sr)

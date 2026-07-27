@@ -29,10 +29,19 @@ docker exec claude_usage_monitor_mariadb mariadb -uroot -p"$RP" "$DB" -N -e \
    ' ostatni: ',timestampdiff(second,max(received_at),utc_timestamp()),' s temu')
   from ingest_batches;"
 
-# 3) czy nie ma 429 od Anthropic
+# 3) czy pomiary są ŚWIEŻE, a nie tylko obecne
 docker exec claude_usage_monitor_mariadb mariadb -uroot -p"$RP" "$DB" -N -e \
- "select http_status, count(*) from ingest_batches group by http_status;"
+ "select measurement_source, count(*), round(avg(cache_age_s)), round(avg(fresh_age_s))
+  from ingest_batches where received_at > utc_timestamp() - interval 1 hour
+  group by measurement_source;"
 ```
+
+Kodów HTTP tu nie ma i nie będzie — od wersji 3 sonda nie wysyła żadnego żądania do
+Anthropic. Zapytanie wyżej pilnuje czegoś innego i ważniejszego: **`cli_merged` znaczy, że
+doszły świeże procenty ze stdout `/usage`, a `cli_usage_cache` — że poszedł sam cache Claude
+Code, który bywa do 5 minut stary.** Przewaga tego drugiego to cicha awaria: dane nadal
+płyną, wykres wygląda normalnie, tylko rozdzielczość spadła z minuty do pięciu. Najczęstsza
+przyczyna to brak `claude` w `PATH` procesu hooka — sprawdź `spawn_error` w logu lokalnym.
 
 **Uwaga przy interpretacji:** dane przyrastają tylko wtedy, gdy **pracujesz** z Claude Code,
 i tylko raz na 60 s (throttle). `PostToolUse` odpala się **po** zakończeniu narzędzia, więc
@@ -56,14 +65,17 @@ nieudanych POST-ach) i sekcję o certyfikatach w `client/README.md`.
 | `/api/status` daje **403** `email-not-allowed` | `ALLOWED_EMAILS` w `.env` nie zawiera Twojego adresu SSO |
 | Ingest daje **403**, a token jest dobry | Brak nagłówka `X-Ingest-Key` albo rozjazd z `INGEST_EDGE_KEY` w vhoście Apache |
 | Ingest daje **401** | Zły token maszyny. Porównaj `config.json` klienta z `INGEST_TOKENS` |
-| `samplesWritten: 0`, ale `ok: true` | **Poprawne.** Dedup — wartości się nie zmieniły i nie minął heartbeat (5 min) |
+| `samplesWritten: 0`, ale `ok: true` | **Poprawne.** Dedup — wartości się nie zmieniły i nie minął heartbeat (5 min). Pomiar mimo to podbija `last_confirmed_at`, więc UI pokazuje go jako świeży |
+| Seria `live`, ale `capturedAt` sprzed godzin | **Poprawne i zamierzone.** `capturedAt` to ostatnia zapisana PRÓBKA, świeżość liczy się z `confirmedAt`. Wartość po prostu się nie zmienia — UI podpisuje to „bez zmian od” |
+| Wszystkie serie nagle `stale` | Brak potwierdzenia od 5 min. Od v3 **nie jest to już artefakt dedupu**, ale też nie musi być awaria: hooki odpalają się tylko przy pracy, więc kwadrans przerwy daje ten sam objaw. Awarię odróżnisz po tym, czy przychodzą batche — jeśli tak, a serii brak, stan przejdzie w `unknown` |
 | Seria w stanie `unknown` w `/api/status` | Klient raportuje, ale brak próbek dla tej serii. Sprawdź `events` i log lokalny. **Nie ignoruj** — to jedyny stan oznaczający awarię |
 | `docker compose up` → *„all predefined address pools have been fully subnetted"* | Docker wyczerpał pule (limit ~31 sieci). Usuń osieroconą sieć: `docker network ls`, sprawdź `docker network inspect <n> -f '{{len .Containers}}'` |
 | Zdarzenia `clock_skew` | Zegar klienta rozjechany >5 min. Backend użył czasu serwera — dane są poprawne, ale warto zsynchronizować zegar |
 | Zdarzenia `schema_drift` | Anthropic zmienił kształt odpowiedzi. Payload jest zapisany w całości; obejrzyj `GET /api/batches/{id}/raw` i zaktualizuj `app/parsing.py` + fixture |
 | UI daje **404** na `/claude-usage/` | Obraz zbudowany bez etapu `node` albo `dist` pusty. `docker exec claude_usage_monitor_backend ls /app/static` — powinien być `index.html` i `assets/`. Jeśli pusto: `docker compose build --no-cache` |
 | UI ładuje się, ale **pusta strona** i błąd w konsoli | Rozjazd `base` Vite z regułą Apache. Assety muszą wisieć pod `/claude-usage/assets/…`; `APP_BASE_PATH` w `.env`, `VITE_BASE_PATH` w build-argu i `ProxyPass` muszą mówić to samo |
-| Nagłówek UI pokazuje **`kontrakt vN ≠ v2`** | Backend i frontend rozjechały się wersją kontraktu — zbudowane z różnych commitów. `docker compose up -d --build` |
+| Nagłówek UI pokazuje **`kontrakt vN ≠ vM`** | Backend i frontend rozjechały się wersją kontraktu. Najpierw sprawdź, czy `CONTRACT_VERSION` w `app/services/status.py` i w `frontend/src/api/types.ts` są **równe w kodzie** — podbicie samego backendu daje dokładnie ten objaw przy poprawnych danych. Dopiero potem `docker compose up -d --build` (różne commity w obrazie) |
+| Historia daje **500**, w logu `can't subtract offset-naive and offset-aware datetimes` | Parametr `from`/`to` przyszedł ze strefą (przeglądarka wysyła `toISOString()`), a backend liczy na naiwnym UTC. Parametry dat muszą mieć typ `NaiveUtcDt` z `app/schemas.py`, nie `datetime` |
 | **Liczba próbek rośnie przy każdym pomiarze** mimo braku zmian | Zepsuty dedup. Sprawdź, czy porównanie `resets_at` idzie przez `same_reset_window` (tolerancja), a nie na równość — granica okna kołysze się o ~2 s i porównanie dosłowne wyłącza dedup, guard monotoniczności i granice resetu naraz |
 
 ## Backup

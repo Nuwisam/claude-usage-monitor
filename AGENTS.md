@@ -7,12 +7,25 @@ Wyniki rozpoznania, na których stoi cały projekt: `docs/POC-FINDINGS.md`.
 
 Każda z nich powstała po realnym problemie, nie z ostrożności.
 
-**1. Sonda nigdy nie dotyka endpointu tokenowego.**
-`client/usage-probe.py` czyta `.credentials.json` **tylko do odczytu** i nigdy nie woła
-`grant_type=refresh_token`. Odświeżanie należy do Claude Code. Wygasły token → pomijamy pomiar.
-Rotacja jednorazowego refresh tokenu to główny udokumentowany wektor utraty konta
-([#38248](https://github.com/anthropics/claude-code/issues/38248), #47754, #53063) — nie
-wchodzimy w niego wcale.
+**1. Sonda nie wysyła żadnego żądania do `api.anthropic.com`.**
+Pomiar zleca sam Claude Code (`claude -p "/usage"`), a `client/usage-probe.py` czyta tylko
+wynik z dysku. Nie ma w niej klienta HTTP do Anthropic, nie ma nagłówka `Authorization`
+z tokenem OAuth i nie ma podszywania się pod `User-Agent: claude-code/…`.
+
+Powód jest prosty: warunki Anthropic mówią bez wyjątków, że tokeny OAuth z kont Free/Pro/Max
+nie mogą być używane *„in any other product, tool, or service"*. Nie ma tam furtki dla użycia
+read-only. Wersja 2 sondy wołała `/api/oauth/usage` sama i była w szarej strefie; wersja 3
+usuwa cały ten problem, bo żądanie wykonuje pierwszorzędny klient własnym, odświeżanym
+tokenem.
+
+`.credentials.json` czytamy dalej — ale **wyłącznie po metadane planu** (`subscriptionType`,
+`rateLimitTier`, `expiresAt`), tylko do odczytu, i `accessToken` nie jest z niego używany do
+niczego. Linia podziału leży przy **użyciu tokena**, nie przy odczycie pliku: odczyt jest
+operacją czysto lokalną, wysłanie nim żądania — nie.
+
+Endpointu tokenowego (`grant_type=refresh_token`) nie wołamy i nigdy nie zawołamy. Rotacja
+jednorazowego refresh tokenu to główny udokumentowany wektor utraty konta
+([#38248](https://github.com/anthropics/claude-code/issues/38248), #47754, #53063).
 
 **2. Zero ciężkich importów w kliencie.**
 Wolno: `sys`, `json`, `os`, `time`, `socket`, `hashlib`, `http.client`, `urllib.parse`, `ssl`.
@@ -44,7 +57,7 @@ a `settings.json` jest wspólny — label przypisywałby połowę próbek do zł
 zatruwał historię obu, bez żadnego widocznego objawu.
 
 **8. Kontrakt API jest zamrożony.**
-`/api/status` zwraca `contractVersion` (dziś **2**). Zmiana łamiąca zgodność = podbicie wersji
+`/api/status` zwraca `contractVersion` (dziś **3**). Zmiana łamiąca zgodność = podbicie wersji
 **i** aktualizacja `docs/UI-HANDOUT.md` **i** stałej `CONTRACT_VERSION` w
 `frontend/src/api/types.ts` — UI porównuje je i protestuje w nagłówku przy rozjeździe.
 
@@ -60,6 +73,14 @@ progiem, a nie równością.
 Komentarze w kodzie zostają bez — to świadoma niespójność (kodowanie na Windows), ale etykiety
 serii, ostrzeżenia i podpisy trafiają na ekran. `display_label` jest odświeżane przy każdym
 ingest, więc poprawka słownika dochodzi do serii zarejestrowanych wcześniej.
+
+**11. Czas wchodzi przez `NaiveUtcDt`, wychodzi przez `UtcDt`.**
+Odkąd wyjście ma strefę, przeglądarka ją **odsyła** (`Date.toISOString()`), a baza,
+`utcnow()` i próbki są naiwne w UTC. Zwykły `datetime` w parametrze zapytania wpuszcza czas
+ze strefą do środka i wywraca się dopiero warstwę dalej — Historia zwracała 500 przy każdym
+otwarciu. Gorszy wariant jest cichy: sterownik MySQL formatuje datetime `strftime`-em
+i `tzinfo` **ignoruje**, więc `+02:00` przesunęłoby cały zakres o dwie godziny przy
+HTTP 200 i poprawnie wyglądającej odpowiedzi. Oba typy leżą obok siebie w `app/schemas.py`.
 
 ## Układ
 
@@ -112,7 +133,18 @@ Zmiana w kliencie wymaga skopiowania na dysk lokalny maszyny — patrz `client/R
 - **Docker ma wyczerpane pule adresowe** (~31 sieci to limit, host jest przy granicy).
   Nie dodawaj nowych sieci bez potrzeby.
 - **`statusLine` nie działa w rozszerzeniu VS Code** — to funkcja CLI/TUI. Nie próbuj
-  wracać do tego pomysłu, jest zamknięty w `docs/POC-FINDINGS.md`.
+  wracać do tego pomysłu, jest zamknięty w `docs/POC-FINDINGS.md`. Zgłoszenie
+  [#55643](https://github.com/anthropics/claude-code/issues/55643) zamknięto jako
+  `not_planned` (bot od nieaktywności), więc to się samo nie naprawi.
+- **`claude -p "/usage"` NIE zużywa limitu, ale `claude -p "cokolwiek innego"` zużywa.**
+  `/usage` jest zarejestrowane dwukrotnie i wariant `supportsNonInteractive` zwraca
+  `{type:"text"}`, co ustawia `shouldQuery=false` — zmierzone `num_turns=0`,
+  `duration_api_ms=0`, `total_cost_usd=0`. Jeśli argument nie trafi w komendę lokalną,
+  leci **normalny turn modelu**. Sonda wykrywa to po `num_turns>0` i odrzuca taki zrzut.
+- **Git Bash zjada argumenty zaczynające się od `/`.** `claude -p "/usage"` w Git Bashu
+  staje się `claude -p "C:/Program Files/Git/usage"` (konwersja ścieżek MSYS) i zamiast
+  komendy lokalnej dostajesz płatny turn modelu. Testuj z PowerShella albo ustaw
+  `MSYS_NO_PATHCONV=1`. Kosztowało to dwa przypadkowe wywołania po ~$0,10.
 - **Magazyn CA Windows** odrzuca łańcuch Let's Encrypt niektorych hostow, choć każde ogniwo jest ważne.
   Klient używa `certifi`; nie wyłączaj weryfikacji.
 - **Skrypt uruchamiany z dysku sieciowego kosztuje +19 ms** na wywołanie. Wykonywana kopia

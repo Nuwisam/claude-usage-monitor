@@ -23,16 +23,23 @@ UNKNOWN = "unknown"                 # nie wiemy; NIGDY nie renderowac jako 0%
 
 def freshness(
     now: datetime,
-    captured_at: datetime | None,
+    confirmed_at: datetime | None,
     resets_at: datetime | None,
     last_batch_at: datetime | None,
     fresh_window_sec: int = 300,
     client_silent_sec: int = 21600,
 ) -> str:
-    if captured_at is None:
+    """Wiek liczymy od POTWIERDZENIA, nie od zapisu probki.
+
+    Dedup celowo nie zapisuje probki, gdy wartosc sie nie zmienila — wiec czas ostatniej
+    PROBKI moze byc o kilka minut starszy niz ostatni realny pomiar. Liczenie wieku z niego
+    pokazywaloby stabilny odczyt jako przeterminowany, czyli myloby "nic sie nie zmienia"
+    z "stracilismy lacznosc". To dwie zupelnie rozne informacje dla kogos, kto wlasnie
+    decyduje, czy odpalic duze zadanie."""
+    if confirmed_at is None:
         return UNKNOWN
 
-    age = (now - captured_at).total_seconds()
+    age = (now - confirmed_at).total_seconds()
     if age <= fresh_window_sec:
         return LIVE
 

@@ -13,6 +13,7 @@ import pytest_asyncio
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.config import settings
 from app.models import (
     Account, Base, IngestBatch, IngestEvent, LimitSample, SeriesState, UsageSeries,
 )
@@ -45,10 +46,9 @@ def payload(usage=None, account=_DOMYSLNE, captured_at=None, event="PostToolUse"
         "account": ACCOUNT_MAX if account is _DOMYSLNE else account,
         "token_meta": {"subscription_type": "max"},
         "captured_at": (captured_at or utcnow()).isoformat(),
-        "client": {"host": "DESKTOP-X", "cc_version": "2.1.215",
-                   "script_version": 1, "exec_ms": 337},
+        "client": {"host": "DESKTOP-X", "script_version": 3, "exec_ms": 36},
         "hook": {"event": event, "session_id": "sess-1", "cwd": "z:/projects/x"},
-        "http": {"status": 200, "request_id": "req_test"},
+        "measurement": {"source": "cli_merged", "cache_age_s": 42, "fresh_age_s": 7},
         "usage": usage if usage is not None else REAL,
     }
 
@@ -322,7 +322,7 @@ async def test_status_pokazuje_konto_z_planem_i_aktywnym_limitem(db):
     await db.commit()
     st = await build_status(db)
 
-    assert st.contract_version == 2
+    assert st.contract_version == 3
     assert len(st.accounts) == 1
     a = st.accounts[0]
     assert a.org_type == "claude_max"
@@ -379,3 +379,114 @@ async def test_status_nie_pokazuje_pustych_serii(db):
     st = await build_status(db)
     assert all(s.raw_utilization is not None or s.freshness != "live"
                for s in st.accounts[0].series)
+
+
+# ------------------------------------------------- swiezosc vs zmiana wartosci (v3)
+async def _five_hour_state(db):
+    row = (await db.execute(
+        select(SeriesState).join(UsageSeries, UsageSeries.id == SeriesState.series_id)
+        .where(UsageSeries.series_key == "bucket:five_hour")
+    )).scalar_one()
+    return row
+
+
+async def test_niezmienna_wartosc_nadal_odswieza_potwierdzenie(db):
+    """Sedno sprawy: dedup nie zapisuje probki, gdy wartosc sie nie zmienila. Gdyby swiezosc
+    liczyla sie z czasu ostatniej PROBKI, stabilny odczyt po 5 minutach zaczalby wygladac
+    jak zerwana lacznosc — mimo ze klient melduje sie co 60 s.
+
+    Znaczniki musza sie miescic w CLOCK_SKEW_TOLERANCE_SEC (300 s), bo poza nim
+    resolve_captured_at slusznie odrzuca zegar klienta i podstawia czas serwera."""
+    t0 = (utcnow() - timedelta(seconds=240)).replace(microsecond=0)  # parse_ts tnie do sekund
+    await ingest_one(db, machine_name="desktop", payload=payload(captured_at=t0))
+    await db.commit()
+    st0 = await _five_hour_state(db)
+    assert st0.last_captured_at == st0.last_confirmed_at == t0
+
+    # ta sama wartosc, zmierzona 230 s pozniej — wciaz ponizej progu heartbeatu (300 s)
+    t1 = t0 + timedelta(seconds=230)
+    await ingest_one(db, machine_name="desktop", payload=payload(captured_at=t1))
+    await db.commit()
+
+    st1 = await _five_hour_state(db)
+    assert st1.last_captured_at == t0, "probka celowo NIE zostala zapisana (dedup)"
+    assert st1.last_confirmed_at == t1, "ale pomiar sie odbyl i musi to byc widoczne"
+
+
+async def test_swiezosc_liczy_sie_z_potwierdzenia_a_nie_z_probki(db):
+    """Ten sam scenariusz widziany przez /api/status: seria ma zostac `live`."""
+    t0 = utcnow() - timedelta(minutes=8)
+    await ingest_one(db, machine_name="desktop", payload=payload(captured_at=t0))
+    await db.commit()
+    await ingest_one(db, machine_name="desktop",
+                     payload=payload(captured_at=utcnow() - timedelta(seconds=30)))
+    await db.commit()
+
+    st = await build_status(db)
+    five = {s.series_key: s for s in st.accounts[0].series}["bucket:five_hour"]
+    assert five.freshness == "live"
+    assert five.utilization is not None
+
+
+async def test_value_since_nie_przesuwa_sie_przy_niezmienionej_wartosci(db, monkeypatch):
+    """"Niezmienne od" musi wskazywac poczatek stalej wartosci. Gdyby przesuwal je zapis
+    heartbeatu, licznik resetowalby sie co heartbeat i pokazywal nieprawde.
+
+    Heartbeat skracamy zamiast oddalac znaczniki, bo oba i tak musza sie zmiescic
+    w tolerancji rozjazdu zegara (300 s) — inaczej testowalibysmy co innego."""
+    monkeypatch.setattr(settings, "sample_heartbeat_sec", 60)
+    t0 = (utcnow() - timedelta(seconds=240)).replace(microsecond=0)  # parse_ts tnie do sekund
+    await ingest_one(db, machine_name="desktop", payload=payload(captured_at=t0))
+    await db.commit()
+    # ponad heartbeat => probka ZOSTANIE zapisana, mimo ze wartosc ta sama
+    t1 = t0 + timedelta(seconds=230)
+    await ingest_one(db, machine_name="desktop", payload=payload(captured_at=t1))
+    await db.commit()
+
+    st = await _five_hour_state(db)
+    assert st.last_captured_at == t1, "heartbeat zapisal nowa probke"
+    assert st.value_since == t0, "ale wartosc trwa niezmiennie od pierwszego pomiaru"
+
+
+async def test_value_since_przesuwa_sie_przy_zmianie_wartosci(db):
+    t0 = (utcnow() - timedelta(seconds=240)).replace(microsecond=0)  # parse_ts tnie do sekund
+    await ingest_one(db, machine_name="desktop", payload=payload(captured_at=t0))
+    await db.commit()
+    t1 = t0 + timedelta(seconds=120)
+    await ingest_one(db, machine_name="desktop",
+                     payload=payload(usage=with_util(five_hour=91.0), captured_at=t1))
+    await db.commit()
+
+    st = await _five_hour_state(db)
+    assert float(st.last_utilization) == 91.0
+    assert st.value_since == t1
+
+
+async def test_zrodlo_pomiaru_trafia_do_probki_i_batcha(db):
+    await ingest_one(db, machine_name="desktop", payload=payload())
+    await db.commit()
+    batch = (await db.execute(select(IngestBatch))).scalars().first()
+    assert batch.measurement_source == "cli_merged"
+    assert batch.cache_age_s == 42 and batch.fresh_age_s == 7
+    sample = (await db.execute(select(LimitSample))).scalars().first()
+    assert sample.source == "cli_merged"
+
+
+async def test_payload_bez_measurement_ladzie_jako_probe(db):
+    """Zgodnosc wstecz: wpisy w spoolu zapisane przez sonde v2 nie maja bloku measurement."""
+    p = payload()
+    del p["measurement"]
+    await ingest_one(db, machine_name="desktop", payload=p)
+    await db.commit()
+    assert (await db.execute(select(LimitSample))).scalars().first().source == "probe"
+
+
+async def test_brak_token_meta_nie_wywraca_zapisu(db):
+    """macOS trzyma credentiale w Keychain — od wersji 3 sondy pomiar tego nie potrzebuje."""
+    p = payload()
+    del p["token_meta"]
+    r = await ingest_one(db, machine_name="mac", payload=p)
+    await db.commit()
+    assert r["ok"] and r["samples_written"] > 0
+    acc = (await db.execute(select(Account))).scalars().one()
+    assert acc.subscription_type is None      # brak tagu planu, ale dane sa

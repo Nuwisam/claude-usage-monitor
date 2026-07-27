@@ -2,11 +2,15 @@
 
 Podgląd **aktualnych limitów Claude** dla wielu kont (Max i Team), z historią w bazie.
 
-Dane zbiera sonda uruchamiana z hooka Claude Code **na maszynie użytkownika** — tam, gdzie
-leżą poświadczenia. Sonda odpytuje `GET /api/oauth/usage` bieżącym tokenem i wysyła do
-monitora **sam wynik pomiaru**. Token nigdy nie opuszcza maszyny, a endpoint tokenowy nie
-jest wołany nigdy — odświeżanie należy do Claude Code. Dzięki temu nie ma tu głównego
-wektora utraty konta, czyli rotacji jednorazowego refresh tokenu.
+Dane zbiera sonda uruchamiana z hooka Claude Code **na maszynie użytkownika**. Sonda
+**nie wysyła żadnego żądania do `api.anthropic.com`** — pomiar zleca samemu Claude Code
+(`claude -p "/usage"`, zero zużycia limitu) i czyta wynik z dysku, po czym wysyła do monitora
+sam wynik pomiaru.
+
+Żaden token nie opuszcza maszyny i **żaden nie jest używany do uwierzytelniania czegokolwiek**
+po naszej stronie: żądanie wykonuje pierwszorzędny klient własnym, samodzielnie odświeżanym
+tokenem. Endpoint tokenowy nie jest wołany nigdy, więc nie ma tu głównego wektora utraty
+konta — rotacji jednorazowego refresh tokenu.
 
 ## Stan: wdrożone
 
@@ -17,7 +21,7 @@ wektora utraty konta, czyli rotacji jednorazowego refresh tokenu.
 | Sonda + hooki (`PostToolUse` async, `Stop`) | działa |
 | Backend + MariaDB na `192.0.2.10` | działa |
 | Apache `/claude-usage` + filtr brzegowy | działa |
-| API odczytu za SSO, kontrakt v2 | działa |
+| API odczytu za SSO, kontrakt v3 | działa |
 | UI — **Live** i **Historia** | działa |
 
 UI pokrywa dwa widoki z makiet. Diagnostyka (zdarzenia, batche, maszyny, surowe payloady)
@@ -32,8 +36,8 @@ maszyna z Claude Code                              192.0.2.10
 │ hook Stop                    │
 │        ↓                     │      HTTPS + Bearer + X-Ingest-Key
 │ client/usage-probe.py        │ ───────────────────────────────────►  Apache
-│  · czyta token (read-only)   │                                         │
-│  · GET /api/oauth/usage      │              /claude-usage/api/ingest ──► backend
+│  · zleca `claude -p /usage`  │                                         │
+│  · czyta cache + stdout      │              /claude-usage/api/ingest ──► backend
 │  · throttle 60 s             │              /claude-usage/api/*     ──► backend (SSO)
 │  · spool przy awarii         │              /claude-usage/          ──► backend (statyki)
 └──────────────────────────────┘                          ┌──────────────┴──────────────┐
@@ -51,14 +55,40 @@ budujący `redirect_url` z jawnych `PUBLIC_ORIGIN` + `APP_BASE_PATH`.
 
 ## Dlaczego tak, a nie inaczej
 
-Trzy podejścia sprawdzone i odrzucone w kroku 0 (`docs/POC-FINDINGS.md`):
+Podejścia sprawdzone i odrzucone (`docs/POC-FINDINGS.md`):
 
 - **Statusline hook** — byłby darmowy (zero wywołań API), ale **nie działa w rozszerzeniu
-  VS Code**; to funkcja wyłącznie CLI/TUI ([#55643](https://github.com/anthropics/claude-code/issues/55643)).
+  VS Code**; to funkcja wyłącznie CLI/TUI ([#55643](https://github.com/anthropics/claude-code/issues/55643),
+  zamknięte jako `not_planned`). Repo referencyjne stoi właśnie na tym mechanizmie i dlatego
+  nie jest dla nas ścieżką. Daje też wyłącznie `five_hour` i `seven_day` — bez kaskady, kwot
+  w USD, `is_active` i `severity`.
 - **Poller na serwerze** — wymagałby trzymania tokenów i **rotowania refresh tokenu**, czyli
   dokładnie tego, co powoduje utratę konta.
 - **Parsowanie lokalnych JSONL** — niedokładne; zgłoszenie CCUM #202 dokumentuje rozjazd
   1.4% vs 12% wobec serwera.
+- **Własne wołanie `/api/oauth/usage`** — działało (wersja 2 sondy), ale wymagało użycia
+  tokena OAuth i podszycia się pod `User-Agent: claude-code/…`. Warunki Anthropic zakazują
+  używania tych tokenów *„in any other product, tool, or service"*, bez wyjątku dla odczytu.
+- **`--debug api` jako źródło** — sprawdzone, **nie zrzuca ciała odpowiedzi** endpointu.
+  Gdyby zrzucał, cała dwuźródłowość niżej byłaby zbędna.
+
+### Co robimy zamiast tego
+
+Pomiar zleca **sam Claude Code**: `claude -p "/usage"`. Komenda jest zarejestrowana dwukrotnie
+i wariant `supportsNonInteractive` zwraca `{type:"text"}` → `shouldQuery=false`, więc **żaden
+turn modelu się nie odbywa**. Zmierzone: `num_turns=0`, `duration_api_ms=0`,
+`total_cost_usd=0`, ~3,4 s na wywołanie. Pomiar limitu nie zużywa limitu.
+
+Sonda czyta wynik z dwóch miejsc, bo świeżość i kompletność leżą gdzie indziej:
+
+| Źródło | Świeżość | Zawartość |
+|---|---|---|
+| stdout `/usage` | świeże przy każdym wywołaniu | procenty głównych okien |
+| `~/.claude.json` → `cachedUsageUtilization` | ≤ 5 min | pełne surowe ciało odpowiedzi |
+
+Throttle 300000 ms w Claude Code dotyczy **zapisu na dysk**, nie pobrania — stąd ten
+rozdział. Sonda scala jedno z drugim, a wynik ma dokładnie ten sam kształt co dawna odpowiedź
+HTTP, więc parser backendu nie wymagał zmian.
 
 ## Kluczowe decyzje projektowe
 
@@ -90,15 +120,17 @@ połowę próbek do złego konta i cicho zatruwał historię obu.
     "edge_key": "<INGEST_EDGE_KEY>",
     "throttle_sec": 60}
    ```
-3. W `~/.claude/settings.json`:
+3. W `~/.claude/settings.json` — **pełna ścieżka**, bo hooki idą przez Git Bash, który nie
+   rozwija `%LOCALAPPDATA%`:
    ```json
    "hooks": {
      "PostToolUse": [{"hooks": [{"type": "command", "async": true, "timeout": 10,
-        "command": "python \"X:/Projekty/repozytorium skilli/tools/usage-probe.py\""}]}],
+        "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}],
      "Stop": [{"hooks": [{"type": "command", "timeout": 10,
-        "command": "python \"X:/Projekty/repozytorium skilli/tools/usage-probe.py\""}]}]
+        "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}]
    }
    ```
+4. Wymagany `claude` w `PATH` (albo `claude_bin` w `config.json`).
 
 Bez `config.json` sonda działa w trybie **tylko lokalnym** — loguje do
 `%LOCALAPPDATA%\claude-usage-monitor\usage-samples.jsonl`, nic nie wysyła.
@@ -128,14 +160,19 @@ DATABASE_URL="sqlite+aiosqlite:///:memory:" INGEST_TOKENS="t:m" ALLOWED_EMAILS="
 cd ../frontend && npm run typecheck
 ```
 
-107 testów, w tym normalizator i ścieżka zapisu uruchamiane na **realnym payloadzie** z konta
+137 testów, w tym normalizator i ścieżka zapisu uruchamiane na **realnym payloadzie** z konta
 Max (`backend/tests/fixtures/usage_max.json`), nie na wymyślonym.
 
 Kilka z nich pilnuje błędów, które raz już przeszły niezauważone na produkcję — dedup i guard
-monotoniczności przy kołyszącym się `resets_at`, fallback SPA zjadający błędy API, `unknown`
-renderowane jako zero. Przy zmianach w tych okolicach zacznij od przeczytania ich nazw.
+monotoniczności przy kołyszącym się `resets_at`, fallback SPA zjadający błędy API, czas ze
+strefą w parametrach `/history`, `unknown` renderowane jako zero, endpointy diagnostyczne
+czytające kolumny usunięte migracją. Przy zmianach w tych okolicach zacznij od przeczytania ich nazw.
 
 ## Licencja
 
-MIT. Projekt nie jest powiązany z Anthropic. Endpoint `/api/oauth/usage` jest nieudokumentowany
-i może się zmienić bez ostrzeżenia — stąd archiwum surowych odpowiedzi i tolerancyjny parser.
+MIT. Projekt nie jest powiązany z Anthropic.
+
+Sonda nie wysyła żadnego żądania do `api.anthropic.com` i nie używa tokena OAuth do
+uwierzytelniania czegokolwiek — pomiar zleca Claude Code własnym kanałem. Kształt danych,
+które czytamy z jego cache, pozostaje jednak nieudokumentowany i może się zmienić bez
+ostrzeżenia — stąd archiwum surowych odpowiedzi i tolerancyjny parser.

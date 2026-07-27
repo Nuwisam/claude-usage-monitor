@@ -1,35 +1,52 @@
 #!/usr/bin/env python3
 """Sonda limitow Claude, uruchamiana z hooka Claude Code (PostToolUse async + Stop).
 
-Czyta biezacy token lokalnie, odpytuje /api/oauth/usage i wysyla WYNIK do monitora.
-Token nigdy nie opuszcza maszyny.
+NIE wola api.anthropic.com. Zamiast tego zleca pomiar samemu Claude Code
+(`claude -p "/usage"`) i czyta wynik z dwoch miejsc, ktore ten zostawia na dysku.
 
 ZASADY BEZPIECZENSTWA — nie lamac przy rozwijaniu:
-  1. .credentials.json TYLKO do odczytu. Nigdy nie zapisujemy.
-  2. NIGDY nie wolamy endpointu tokenowego (grant_type=refresh_token). Refresh nalezy do
-     Claude Code. Wygasly token => pomijamy pomiar. To usuwa glowny wektor utraty konta:
-     rotacje jednorazowego refresh tokenu.
-  3. Token nie trafia do logu ani do monitora.
-  4. Throttle obowiazkowy — PostToolUse odpala sie przy kazdym narzedziu, a wywolanie
-     sieciowe kosztuje ~500 ms.
-  5. Zero ciezkich importow. Tylko stdlib; http.client zamiast httpx/requests (~150 ms
-     samego importu). Zmierzony start CPythona: 27 ms — caly budzet zalezy od tej zasady.
+  1. Sonda NIE wykonuje zadnego zapytania do api.anthropic.com. Jedynym podmiotem
+     wolajacym /api/oauth/usage jest Claude Code, wlasnym kanalem, wlasnym tokenem,
+     ktory sam sobie odswieza. To usuwa naraz: uzycie tokena OAuth przez obce
+     narzedzie (zakazane w ToS), impersonacje User-Agenta i ryzyko bana.
+  2. .credentials.json czytamy TYLKO do odczytu i TYLKO po metadane planu.
+     accessToken nie jest z niego pobierany ani uzywany do niczego.
+  3. NIGDY nie wolamy endpointu tokenowego (grant_type=refresh_token).
+  4. Throttle obowiazkowy — PostToolUse odpala sie przy kazdym narzedziu.
+  5. Zero ciezkich importow w sciezce goracej. Tylko stdlib.
   6. Nigdy nie rzuca wyjatkiem i nigdy nie blokuje sesji.
+  7. Sonda NIGDY nie czeka na proces potomny. `claude -p "/usage"` trwa ~3,4 s;
+     wynik konsumuje DOPIERO nastepny przebieg sondy.
+
+DWA ZRODLA, bo swiezosc i kompletnosc leza w roznych miejscach (zmierzone):
+  * stdout `claude -p "/usage"` — SWIEZE przy kazdym wywolaniu, ale tylko procenty
+    glownych okien, jako tekst. Wartosci sa calkowite — i to nie jest strata, bo
+    API samo zwraca liczby calkowite (zweryfikowane na surowym payloadzie).
+  * ~/.claude.json -> cachedUsageUtilization.utilization — PELNE surowe cialo
+    odpowiedzi (spend, extra_usage, limits[], wszystkie buckety), ale Claude Code
+    przepisuje je najwyzej raz na 5 minut (twardy throttle zapisu po jego stronie).
+
+Scalamy: struktura z cache + swieze procenty ze stdout nadpisane na wierzchu.
+Wynik ma DOKLADNIE ten sam ksztalt co dawna odpowiedz HTTP, wiec parser backendu
+nie wymaga zmian.
 
 Konfiguracja: %LOCALAPPDATA%\\claude-usage-monitor\\config.json (Windows)
               ~/.local/state/claude-usage-monitor/config.json (Linux)
     {"ingest_url": "https://usage.example.org/claude-usage/api/ingest",
      "ingest_token": "<token TEJ maszyny>",
      "edge_key": "<wspolny sekret brzegowy>",
-     "throttle_sec": 60}
+     "throttle_sec": 60,
+     "claude_bin": "<opcjonalnie pelna sciezka do claude>"}
 Celowo plik lokalny, a nie repo — token maszyny nie ma prawa trafic do gita.
 """
-import sys, os, json, time, socket, hashlib, http.client, urllib.parse
+import sys, os, json, time, re, socket, hashlib, http.client, urllib.parse
 
-SCRIPT_VERSION = 2
-UA_VERSION = os.environ.get("CLAUDE_CODE_UA_VERSION", "2.1.215")
-ANTHROPIC_HOST, ANTHROPIC_PATH = "api.anthropic.com", "/api/oauth/usage"
-BETA = "oauth-2025-04-20"
+SCRIPT_VERSION = 3
+
+# Znacznik dziedziczony przez proces potomny. `claude -p "/usage"` to normalna sesja
+# Claude Code — odpali hook Stop, ktory odpali sonde, ktora odpalilaby kolejnego
+# `claude`... Sam throttle tego NIE zatrzyma, bo kazdy potomek ma wlasny zegar.
+CHILD_ENV = "CUM_PROBE_CHILD"
 
 _base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/.local/state")
 OUTDIR = os.path.join(_base, "claude-usage-monitor")
@@ -37,10 +54,13 @@ CONFIG = os.path.join(OUTDIR, "config.json")
 LOG = os.path.join(OUTDIR, "usage-samples.jsonl")
 SPOOL = os.path.join(OUTDIR, "spool.jsonl")
 THROTTLE_FILE = os.path.join(OUTDIR, "last-probe.txt")
-ACCT_CACHE = os.path.join(OUTDIR, "oauth-account.cache.json")
+CLI_OUT = os.path.join(OUTDIR, "usage-cli.json")
 
 MAX_SPOOL_LINES = 5000
 MAX_BACKLOG_PER_REQUEST = 200
+CACHE_MAX_AGE_S = 3600          # tyle samo, ile TTL odczytu po stronie Claude Code
+CLI_MAX_AGE_S = 900             # starszy zrzut stdout ignorujemy — lepiej same dane z cache
+MAX_SANE_PCT = 101              # patrz strazniki w parse_usage_text / sanitize
 
 
 def _safe(fn, *a, **kw):
@@ -83,7 +103,7 @@ def throttled(seconds):
     return False
 
 
-# --------------------------------------------------------------- tozsamosc konta
+# --------------------------------------------------------------- tozsamosc + cache
 def _find(name, in_claude_dir=False):
     cfg = os.environ.get("CLAUDE_CONFIG_DIR")
     cands = []
@@ -100,7 +120,8 @@ def _find(name, in_claude_dir=False):
 
 def _extract_block(text, key):
     """Wycina zbalansowany blok {...} po kluczu. Odporne na duplikaty kluczy roznjace sie
-    wielkoscia liter (z:/... i Z:/...), na ktorych parsery calego pliku padaja."""
+    wielkoscia liter (z:/... i Z:/...), na ktorych parsery calego pliku padaja —
+    ~/.claude.json REALNIE takie ma, json.load() na calosci sie na nim wywraca."""
     i = text.find('"%s"' % key)
     if i < 0:
         return None
@@ -130,67 +151,271 @@ _ACCT_FIELDS = ("accountUuid", "emailAddress", "organizationUuid", "organization
                 "seatTier", "hasExtraUsageEnabled", "displayName")
 
 
-def account_info():
-    """Cache po mtime. Przelaczenie konta przez /login przepisuje .claude.json, wiec
-    inwalidacja po mtime JEST mechanizmem wykrywania przelaczenia."""
+def read_claude_json():
+    """Jeden odczyt pliku, dwa wyciagi: tozsamosc konta i cache pomiaru.
+
+    Dawna wersja cache'owala tozsamosc po mtime. Teraz i tak musimy czytac ten plik za
+    kazdym razem (cachedUsageUtilization sie zmienia), wiec osobny cache byl juz tylko
+    dodatkowym I/O. Przelaczenie konta przez /login przepisuje ten sam plik, wiec
+    wykrywanie zmiany konta nadal dziala — po prostu bez posrednika."""
     path = _find(".claude.json")
     if not path:
-        return None, None
-    try:
-        mtime = os.path.getmtime(path)
-        with open(ACCT_CACHE, "r", encoding="utf-8") as f:
-            c = json.load(f)
-        if c.get("mtime") == mtime and c.get("path") == path:
-            return c.get("account"), os.path.dirname(path)
-    except Exception:
-        pass
-    acct = None
+        return None, None, None
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
-            raw = _extract_block(f.read(), "oauthAccount")
-        if raw:
-            acct = {k: raw.get(k) for k in _ACCT_FIELDS}
-        os.makedirs(OUTDIR, exist_ok=True)
-        with open(ACCT_CACHE, "w", encoding="utf-8") as f:
-            json.dump({"path": path, "mtime": os.path.getmtime(path), "account": acct}, f)
+            text = f.read()
     except Exception:
-        pass
-    return acct, os.path.dirname(path)
+        return None, None, None
+
+    acct = None
+    raw = _safe(_extract_block, text, "oauthAccount")
+    if raw:
+        acct = {k: raw.get(k) for k in _ACCT_FIELDS}
+
+    cached = _safe(_extract_block, text, "cachedUsageUtilization")
+    return acct, cached, os.path.dirname(path)
 
 
-# --------------------------------------------------------------- token (read-only)
-def load_token():
+# --------------------------------------------------------------- metadane planu
+def load_token_meta():
+    """TYLKO metadane planu. accessToken celowo nie jest zwracany — od wersji 3 sonda
+    nie uwierzytelnia niczego. Brak pliku (macOS trzyma credentiale w Keychain) nie
+    jest juz bledem krytycznym: pomiar dziala dalej, znikaja tylko tagi planu."""
     path = _find(".credentials.json", in_claude_dir=True)
     if not path:
-        return None, {"reason": "brak-credentials"}
+        return {"reason": "brak-credentials"}
     try:
         with open(path, "r", encoding="utf-8") as f:      # TYLKO odczyt
             oa = (json.load(f).get("claudeAiOauth") or {})
     except Exception as e:
-        return None, {"reason": "odczyt-%s" % type(e).__name__}
+        return {"reason": "odczyt-%s" % type(e).__name__}
     exp = oa.get("expiresAt")
-    meta = {"subscription_type": oa.get("subscriptionType"),
+    return {"subscription_type": oa.get("subscriptionType"),
             "rate_limit_tier": oa.get("rateLimitTier"),
             "expires_in_s": int(exp / 1000.0 - time.time()) if exp else None}
-    if exp and exp / 1000.0 < time.time():
-        return None, dict(meta, reason="token-wygasl")     # NIE odswiezamy — to robi Claude Code
-    return oa.get("accessToken"), meta
 
 
-def fetch_usage(token):
-    conn = http.client.HTTPSConnection(ANTHROPIC_HOST, timeout=8.0)
+# --------------------------------------------------------------- pomiar przez CLI
+def find_claude(cfg):
+    b = cfg.get("claude_bin")
+    if b and os.path.isfile(b):
+        return b
+    import shutil                       # import lokalny — sciezka zimna, raz na 60 s
+    return shutil.which("claude")
+
+
+def spawn_refresh(cfg):
+    """Odpala `claude -p "/usage"` i NATYCHMIAST wraca. Wynik przeczyta nastepny przebieg.
+
+    /usage jest zarejestrowane dwukrotnie; wariant z supportsNonInteractive jest aktywny
+    wlasnie w trybie -p. Zwraca {type:"text"}, co ustawia shouldQuery=false — czyli
+    zaden turn modelu sie nie odbywa. Zmierzone: num_turns=0, duration_api_ms=0,
+    total_cost_usd=0. Pomiar limitu nie zuzywa limitu.
+
+    --no-session-persistence wylacza zapis transkryptu. Bez niej kazde wywolanie zostawia
+    ~4 KB plik w ~/.claude/projects/<cwd> — zmierzone 102 pliki w 2h35m pracy. Flaga dziala
+    wylacznie z -p. Zweryfikowane A/B: z flaga 0 plikow, bez niej 1 plik, przy czym cache
+    cachedUsageUtilization nadal sie odswieza (a od niego zalezy merge).
+
+    --model haiku to pas bezpieczenstwa, bezczynny na sciezce szczesliwej: /usage zwraca
+    shouldQuery=false, wiec zaden model nie rusza (zmierzone: num_turns=0, koszt 0, czas bez
+    zmian). Znaczenie ma tylko wtedy, gdy argument nie trafi w komende lokalna — wtedy leci
+    platna tura, ktora bez tej flagi poszlaby na modelu z settings.json.
+    Sonda i tak odrzuci taki zrzut po num_turns>0, ale koszt jest juz poniesiony; flaga go
+    obniza o rzad wielkosci. Alias, nie ID z data — ID bywaja wycofywane."""
+    exe = find_claude(cfg)
+    if not exe:
+        return "brak-claude-w-path"
+    import subprocess
+    env = dict(os.environ)
+    env[CHILD_ENV] = "1"                # zapora przed rekurencja hookow
+    kw = {}
+    if os.name == "nt":
+        # DETACHED_PROCESS | CREATE_NO_WINDOW — bez konsoli i bez wiazania z sesja rodzica
+        kw["creationflags"] = 0x00000008 | 0x08000000
+    else:
+        kw["start_new_session"] = True
     try:
-        conn.request("GET", ANTHROPIC_PATH, headers={
-            "Authorization": "Bearer %s" % token,
-            "anthropic-beta": BETA,
-            "User-Agent": "claude-code/%s" % UA_VERSION,   # bez tego agresywny bucket 429
-            "Content-Type": "application/json",
-            "Accept": "application/json"})
-        r = conn.getresponse()
-        body = r.read().decode("utf-8", "replace")
-        return r.status, {k.lower(): v for k, v in r.getheaders()}, body
+        os.makedirs(OUTDIR, exist_ok=True)
+        out = open(CLI_OUT, "wb")
+    except Exception:
+        return "brak-pliku-wyjscia"
+    try:
+        subprocess.Popen(
+            [exe, "-p", "--no-session-persistence", "--model", "haiku",
+             "/usage", "--output-format", "json"],
+            stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.DEVNULL,
+            cwd=OUTDIR,                 # neutralny katalog: bez CLAUDE.md i hookow projektu
+            env=env, close_fds=True, **kw)
+    except Exception as e:
+        return "spawn-%s" % type(e).__name__
     finally:
-        _safe(conn.close)
+        _safe(out.close)
+    return None
+
+
+# [^:\n] a nie [^:] — klasa negatywna lapie takze znak nowej linii, wiec bez wykluczenia
+# \n tytul przezera naglowek i puste linie az do dwukropka w NASTEPNEJ linii. Efekt jest
+# podstepny: krotkie wejscia parsuja sie dobrze, realne wyjscie gubi pierwszy odczyt.
+_PCT_RE = re.compile(r"^(?P<title>\S[^:\n]*):\s+(?P<pct>\d+)%\s+used", re.M)
+
+
+def parse_usage_text(text):
+    """Tolerancyjny parser wyjscia /usage. Nierozpoznana linia jest ignorowana, nie jest
+    bledem. Tytuly sa lokalizowalne i moga sie zmienic miedzy wersjami — dlatego surowy
+    tekst i tak trafia do payloadu, obok sparsowanych wartosci.
+
+        Current session: 47% used - resets Jul 27, 12:30pm (UTC)
+        Current week (all models): 48% used - resets Aug 1, 6pm (UTC)
+        Current week (Fable): 0% used
+
+    Sekcja atrybucji ("100% of your usage came from...") nie ma dwukropka przed
+    procentem, wiec nie lapie sie w regex."""
+    out = {"session": None, "weekly_all": None, "scoped": {}}
+    for m in _PCT_RE.finditer(text or ""):
+        title, pct = m.group("title").strip(), int(m.group("pct"))
+        if pct > MAX_SANE_PCT:
+            # Claude Code potrafi wyciec epoch z resets_at w pole procentu (blad #52326).
+            # Odrzucamy zamiast obcinac do 100: obciecie zamienia ewidentna awarie w
+            # wiarygodnie wygladajace "limit na maksie", czyli w falszywy alarm.
+            continue
+        low = title.lower()
+        if low == "current session":
+            out["session"] = pct
+        elif low == "current week (all models)":
+            out["weekly_all"] = pct
+        elif low.startswith("current week (") and title.endswith(")"):
+            out["scoped"][title[len("Current week ("):-1]] = pct
+    return out
+
+
+def read_fresh():
+    """Czyta zrzut stdout zostawiony przez POPRZEDNI przebieg.
+
+    Plik pisze proces potomny, wiec mozemy trafic na zapis w toku — dlatego walidacja
+    jest przez json.loads(): urwany plik po prostu nie sparsuje i cykl leci na samym
+    cache. Zadnego blokowania, zadnego pliku-znacznika."""
+    try:
+        age = time.time() - os.path.getmtime(CLI_OUT)
+        with open(CLI_OUT, "r", encoding="utf-8", errors="replace") as f:
+            d = json.loads(f.read())
+    except Exception:
+        return None, None, None
+    if d.get("num_turns"):
+        # num_turns>0 znaczy, ze "/usage" nie trafilo w komende lokalna i poszlo do modelu.
+        # Taki wynik jest bezwartosciowy i kosztowny — nie uzywamy go i sygnalizujemy.
+        return None, None, "nie-komenda-lokalna"
+    if age > CLI_MAX_AGE_S:
+        return None, None, "stary-zrzut"
+    parsed = parse_usage_text(d.get("result") or "")
+    if parsed["session"] is None and parsed["weekly_all"] is None:
+        return None, None, "brak-procentow"
+    return parsed, os.path.getmtime(CLI_OUT), None
+
+
+def merge(cached_usage, fresh):
+    """Struktura z cache + swieze procenty na wierzchu.
+
+    Zwraca payload w ksztalcie identycznym z dawna odpowiedzia HTTP, wiec
+    backend/app/parsing.py nie wymaga ani jednej zmiany."""
+    if not fresh:
+        return cached_usage, []
+    usage = json.loads(json.dumps(cached_usage))      # kopia — nie mutujemy zrodla
+    applied = []
+
+    def put(bucket, val):
+        b = usage.get(bucket)
+        if isinstance(b, dict) and val is not None and b.get("utilization") != val:
+            b["utilization"] = val
+            applied.append(bucket)
+
+    put("five_hour", fresh["session"])
+    put("seven_day", fresh["weekly_all"])
+
+    for lim in (usage.get("limits") or []):
+        if not isinstance(lim, dict):
+            continue
+        kind, val = lim.get("kind"), None
+        if kind == "session":
+            val = fresh["session"]
+        elif kind == "weekly_all":
+            val = fresh["weekly_all"]
+        elif kind == "weekly_scoped":
+            name = (((lim.get("scope") or {}).get("model") or {}).get("display_name"))
+            val = fresh["scoped"].get(name)
+        if val is not None and lim.get("percent") != val:
+            lim["percent"] = val
+            applied.append("limit:%s" % (kind or "?"))
+    return usage, applied
+
+
+def _epoch(iso):
+    """resets_at przychodzi jako ISO-8601 z offsetem: 2026-07-27T10:29:59.761469+00:00."""
+    if not iso:
+        return None
+    try:
+        from datetime import datetime          # modul C, import znikomy
+        return datetime.fromisoformat(iso).timestamp()
+    except Exception:
+        return None
+
+
+def sanitize(usage, applied, now):
+    """Odrzuca dane z okna, ktore juz sie zresetowalo, oraz absurdalne procenty.
+
+    Sedno problemu: `resets_at` mamy WYLACZNIE z cache, ktory ma do 5 minut (a w trybie
+    awaryjnym do godziny). Jesli okno zresetowalo sie w miedzyczasie, para
+    (procent, resets_at) jest wewnetrznie sprzeczna. Dwa przypadki, dwie reakcje:
+
+      * seria dostala swiezy procent  -> procent jest prawdziwy, nieaktualny jest tylko
+        czas resetu. Zerujemy resets_at; nastepny zapis cache (<=5 min) poda nowy.
+      * seria NIE dostala swiezego    -> procent tez pochodzi z wygaslego okna. Publikacja
+        dawnych 95% jako biezacych bylaby grubym bledem (realnie jest ~0%), wiec
+        wyrzucamy cala serie z tego cyklu.
+
+    Zwraca liste zdarzen do diagnostyki — cisza przy odrzucaniu danych jest gorsza niz
+    brak danych, bo wyglada jak poprawny pomiar."""
+    events = []
+    applied_set = set(applied)
+
+    for key, bucket in list(usage.items()):
+        if not isinstance(bucket, dict) or "utilization" not in bucket:
+            continue
+        util = bucket.get("utilization")
+        if isinstance(util, (int, float)) and util > MAX_SANE_PCT:
+            usage[key] = None
+            events.append("%s:absurd(%s)" % (key, util))
+            continue
+        exp = _epoch(bucket.get("resets_at"))
+        if exp and exp <= now:
+            if key in applied_set:
+                bucket["resets_at"] = None
+                events.append("%s:reset-w-toku" % key)
+            else:
+                usage[key] = None
+                events.append("%s:okno-wygaslo" % key)
+
+    kept = []
+    for lim in (usage.get("limits") or []):
+        if not isinstance(lim, dict):
+            continue
+        pct = lim.get("percent")
+        kind = lim.get("kind") or "?"
+        if isinstance(pct, (int, float)) and pct > MAX_SANE_PCT:
+            events.append("limit:%s:absurd(%s)" % (kind, pct))
+            continue
+        exp = _epoch(lim.get("resets_at"))
+        if exp and exp <= now:
+            if ("limit:%s" % kind) in applied_set:
+                lim["resets_at"] = None
+                events.append("limit:%s:reset-w-toku" % kind)
+            else:
+                events.append("limit:%s:okno-wygaslo" % kind)
+                continue
+        kept.append(lim)
+    if "limits" in usage:
+        usage["limits"] = kept
+    return usage, events
 
 
 # --------------------------------------------------------------- spool
@@ -284,30 +509,62 @@ def post(cfg, body):
         _safe(conn.close)
 
 
+def _iso(epoch):
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(epoch)) + "Z"
+
+
 # --------------------------------------------------------------- main
 def main():
     t0 = time.perf_counter()
+
+    # Zapora przed rekurencja. MUSI byc przed czymkolwiek innym: proces potomny
+    # `claude -p "/usage"` odpala hook Stop, ktory uruchamia te sonde ponownie.
+    if os.environ.get(CHILD_ENV):
+        return 0
+
     hook = _safe(json.loads, sys.stdin.read() or "{}") or {}
     cfg = load_config()
 
     if throttled(int(cfg.get("throttle_sec", 60))):
         return 0
 
-    tok, meta = load_token()
-    if not tok:
-        log_local({"t": round(time.time(), 3), "ok": False, "skip": meta.get("reason"),
-                   "event": hook.get("hook_event_name")})
+    fresh, fresh_at, fresh_skip = read_fresh()
+    acct, cached, cfg_dir = read_claude_json()
+
+    # Zlecamy pomiar na NASTEPNY cykl. Zawsze, takze gdy teraz nie mamy czego wyslac —
+    # to jest wlasnie mechanizm bootstrapu na swiezej maszynie.
+    spawn_err = spawn_refresh(cfg)
+
+    if not cached or not isinstance(cached.get("utilization"), dict):
+        # Pierwszy przebieg na maszynie: Claude Code jeszcze nigdy nie zapisal cache.
+        # Spawn wyzej to naprawi, pomiar pojawi sie w nastepnym cyklu.
+        log_local({"t": round(time.time(), 3), "ok": False, "skip": "brak-cache",
+                   "spawn": spawn_err, "event": hook.get("hook_event_name")})
         return 0
 
-    try:
-        status, hdrs, body = fetch_usage(tok)
-    except Exception as e:
-        log_local({"t": round(time.time(), 3), "ok": False, "error": type(e).__name__,
-                   "event": hook.get("hook_event_name")})
+    cache_at = (cached.get("fetchedAtMs") or 0) / 1000.0
+    cache_age = time.time() - cache_at
+    if cache_age > CACHE_MAX_AGE_S:
+        log_local({"t": round(time.time(), 3), "ok": False, "skip": "cache-przeterminowany",
+                   "cache_age_s": round(cache_age), "spawn": spawn_err})
         return 0
 
-    usage = _safe(json.loads, body)
-    acct, cfg_dir = account_info()
+    # Claude Code czysci cache przy zmianie konta, ale nie ufamy temu na slowo.
+    if acct and cached.get("accountUuid") and cached["accountUuid"] != acct.get("accountUuid"):
+        log_local({"t": round(time.time(), 3), "ok": False, "skip": "cache-innego-konta"})
+        return 0
+
+    usage, applied = merge(cached["utilization"], fresh)
+    usage, dropped = sanitize(usage, applied, time.time())
+
+    # captured_at to moment POMIARU, nigdy now(). Uruchomienie sondy niczego nie
+    # potwierdza — odczyt 4-minutowego cache znaczy tylko tyle, ze wartosc byla taka
+    # 4 minuty temu. Podstawienie tu now() zawyzaloby swiezosc w UI.
+    #
+    # Rozdzialu "pierwsza obserwacja tej wartosci" (wykres) od "ostatnie potwierdzenie"
+    # (swiezosc) NIE robimy tutaj: sonda nie zna poprzedniej wartosci serii. Robi to
+    # backend, ktory ma series_state — patrz confirmed_at w backend/app/services/ingest.py.
+    captured = fresh_at if (fresh and fresh_at) else cache_at
 
     record = {
         "account": {
@@ -322,25 +579,33 @@ def main():
             "user_rate_limit_tier": (acct or {}).get("userRateLimitTier"),
             "extra_usage_enabled": (acct or {}).get("hasExtraUsageEnabled"),
         },
-        "token_meta": meta,
-        "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z",
+        "token_meta": load_token_meta(),
+        "captured_at": _iso(captured),
         "client": {
             "host": _safe(socket.gethostname),
             "config_dir_hash": (hashlib.sha256(cfg_dir.encode()).hexdigest()[:16]
                                 if cfg_dir else None),
-            "cc_version": UA_VERSION, "script_version": SCRIPT_VERSION,
+            "script_version": SCRIPT_VERSION,
             "exec_ms": round((time.perf_counter() - t0) * 1000),
         },
         "hook": {"event": hook.get("hook_event_name"),
                  "session_id": hook.get("session_id"), "cwd": hook.get("cwd")},
-        "http": {"status": status, "request_id": hdrs.get("request-id"),
-                 "retry_after": hdrs.get("retry-after"),
-                 "rl_status": hdrs.get("anthropic-ratelimit-unified-status"),
-                 "cf_ray": hdrs.get("cf-ray")},
-        "usage": usage if usage is not None else body[:2000],
+        "measurement": {
+            "source": "cli_merged" if fresh else "cli_usage_cache",
+            "probe_at": _iso(time.time()),  # kiedy sonda sie uruchomila — DIAGNOSTYKA,
+                                            # nie mylic z captured_at; roznica tych dwoch
+                                            # to wlasnie opoznienie pomiaru
+            "cache_age_s": round(cache_age),
+            "fresh_age_s": round(time.time() - fresh_at) if fresh_at else None,
+            "fresh_applied": applied,       # ktore serie dostaly swieza wartosc
+            "fresh_skip": fresh_skip,       # czemu zrzut stdout nie zostal uzyty
+            "dropped": dropped,             # co odrzucil sanitize i dlaczego
+            "spawn_error": spawn_err,
+        },
+        "usage": usage,
     }
 
-    log_local(dict(record, t=round(time.time(), 3), ok=status == 200))     # lokalny log zostaje niezaleznie od POST
+    log_local(dict(record, t=round(time.time(), 3), ok=True))   # lokalny log niezaleznie od POST
 
     if not cfg.get("ingest_url") or not cfg.get("ingest_token"):
         return 0                                   # tryb "tylko lokalnie" — brak konfiguracji

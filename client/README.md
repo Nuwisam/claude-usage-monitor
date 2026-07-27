@@ -1,8 +1,49 @@
 # Klient — sonda limitów
 
-Skrypt uruchamiany z hooków Claude Code. Czyta bieżący token **lokalnie**, odpytuje
-`GET /api/oauth/usage` i wysyła do monitora **sam wynik pomiaru**. Token nigdy nie opuszcza
-maszyny.
+Skrypt uruchamiany z hooków Claude Code. **Nie wysyła żadnego żądania do `api.anthropic.com`.**
+Pomiar zleca samemu Claude Code (`claude -p "/usage"`), czyta wynik z dysku i wysyła do
+monitora sam wynik.
+
+## Dlaczego nie odpytujemy endpointu sami
+
+Wersja 2 sondy wołała `GET /api/oauth/usage` własnym tokenem OAuth z `.credentials.json`,
+podszywając się pod `User-Agent: claude-code/…` (bez tego trafia się w agresywny bucket 429).
+Warunki Anthropic mówią bez wyjątków, że tokeny OAuth z kont Free/Pro/Max nie mogą być używane
+*„in any other product, tool, or service"* — nie ma tam furtki dla użycia read-only.
+
+Wersja 3 usuwa cały problem: żądanie wykonuje pierwszorzędny klient, własnym tokenem, który
+sam sobie odświeża. My tylko czytamy to, co zostawił.
+
+## Dwa źródła, bo świeżość i kompletność leżą gdzie indziej
+
+Zmierzone, nie wydedukowane:
+
+| Źródło | Świeżość | Co zawiera |
+|---|---|---|
+| stdout `claude -p "/usage"` | **świeże przy każdym wywołaniu** | procenty głównych okien, jako tekst |
+| `~/.claude.json` → `cachedUsageUtilization` | ≤ 5 min | **pełne surowe ciało odpowiedzi** — `spend`, `extra_usage`, `limits[]`, wszystkie 17 bucketów |
+
+Rozdział bierze się stąd, że throttle 300000 ms w Claude Code dotyczy **zapisu na
+dysk**, a nie pobrania — dlatego interaktywne `/usage` zawsze pokazuje aktualne dane, a plik
+bywa o kilka minut starszy.
+
+Sonda scala jedno z drugim: struktura z cache, świeże procenty nadpisane na wierzchu. Wynik ma
+**dokładnie ten sam kształt** co dawna odpowiedź HTTP, więc `backend/app/parsing.py` nie
+wymagał ani jednej zmiany. Utrata miejsc po przecinku przy `Math.floor` w stdout **nie jest
+stratą** — API samo zwraca liczby całkowite (sprawdzone na surowym payloadzie).
+
+## `/usage` nie zużywa limitu
+
+`/usage` jest w binarce zarejestrowane dwukrotnie; wariant `supportsNonInteractive: true` jest
+aktywny właśnie w trybie `-p` i zwraca `{type:"text"}`, co ustawia `shouldQuery=false`.
+Zmierzone na 6 wywołaniach: `num_turns=0`, `duration_api_ms=0`, `total_cost_usd=0`.
+
+**Ale to działa tylko wtedy, gdy argument trafi w komendę lokalną.** Jeśli nie trafi — leci
+normalny, płatny turn modelu. Sonda wykrywa to po `num_turns>0` i taki zrzut odrzuca.
+
+> **Pułapka:** Git Bash na Windows konwertuje argumenty zaczynające się od `/`, więc
+> `claude -p "/usage"` staje się `claude -p "C:/Program Files/Git/usage"` i dostajesz płatny
+> turn. Testuj z PowerShella albo ustaw `MSYS_NO_PATHCONV=1`.
 
 ## Pliki
 
@@ -10,17 +51,16 @@ maszyny.
 |---|---|
 | `usage-probe.py` | **Produkcyjny.** Sonda wpinana w hooki |
 | `analyze-samples.py` | Analiza lokalnego logu — tempo zmian, błędy, konta |
-| `probe-usage.py` | Diagnostyczny. Jedno wywołanie, drukuje całą odpowiedź |
-| `poc-dump.py` | Statusline z kroku 0. Działa **tylko w trybie terminalowym** CLI |
+| `probe-usage.py` | Diagnostyczny, **historyczny** — woła endpoint bezpośrednio. Nie wpinać w hooki |
 
 ## Instalacja
 
 **1. Skopiuj na dysk LOKALNY.** Uruchomienie z dysku sieciowego kosztuje +19 ms przy każdym
 wywołaniu (zmierzone: 27 ms lokalnie vs 46 ms z dysku sieciowego), a skrypt startuje przy każdym użyciu
-narzędzia przez Claude Code.
+narzędzia. Źródłem prawdy jest repo; na dysku lokalnym leży kopia wykonywana.
 
 ```powershell
-Copy-Item client\usage-probe.py X:\Projekty\repozytorium skilli\tools\usage-probe.py
+Copy-Item client\usage-probe.py "$env:LOCALAPPDATA\claude-usage-monitor\usage-probe.py"
 ```
 
 **2. Konfiguracja** — `%LOCALAPPDATA%\claude-usage-monitor\config.json` (Windows)
@@ -31,7 +71,8 @@ albo `~/.local/state/claude-usage-monitor/config.json` (Linux):
   "ingest_url": "https://usage.example.org/claude-usage/api/ingest",
   "ingest_token": "<token TEJ maszyny z INGEST_TOKENS>",
   "edge_key": "<INGEST_EDGE_KEY>",
-  "throttle_sec": 60
+  "throttle_sec": 60,
+  "claude_bin": "<opcjonalnie, gdy `claude` nie jest w PATH>"
 }
 ```
 
@@ -43,54 +84,78 @@ Bez `config.json` sonda działa w **trybie tylko lokalnym**: mierzy i loguje, ni
 ```json
 "hooks": {
   "PostToolUse": [{"hooks": [{"type": "command", "async": true, "timeout": 10,
-     "command": "python \"X:/Projekty/repozytorium skilli/tools/usage-probe.py\""}]}],
+     "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}],
   "Stop": [{"hooks": [{"type": "command", "timeout": 10,
-     "command": "python \"X:/Projekty/repozytorium skilli/tools/usage-probe.py\""}]}]
+     "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}]
 }
 ```
+
+**Ścieżka musi być pełna, `%LOCALAPPDATA%` nie zadziała.** Hooki na Windows uruchamiane są
+przez Git Bash (widać to w `claude --debug`: `Using bash path: C:\Program Files\Git\bin\bash.exe`),
+a bash nie rozwija składni `%ZMIENNA%`.
 
 `PostToolUse` z `"async": true` to główny wyzwalacz — jedyne zdarzenie z prawdziwym
 fire-and-forget, zmierzone 0,24 ms narzutu. `Stop` domyka lukę dla tur bez wywołań narzędzi.
 **`UserPromptSubmit` odpada** — blokuje wysłanie promptu z 30-sekundowym timeoutem.
 
+**4. Wymagane:** `claude` w `PATH` (albo `claude_bin` w konfiguracji). Bez tego sonda nie ma
+czym zlecić pomiaru i loguje `brak-claude-w-path`.
+
 ## Zasady, których nie wolno złamać
 
-**1. `.credentials.json` wyłącznie do odczytu.** Nigdy nie zapisujemy.
+**1. Żadnego żądania do `api.anthropic.com`.** Ani jednego. To jest cały sens wersji 3.
 
-**2. Nigdy nie wołamy endpointu tokenowego.** Odświeżanie należy do Claude Code. Wygasły
-token → pomijamy pomiar, logujemy `token-wygasl`, Claude Code odświeży go sam przy normalnej
-pracy. To jest cały mechanizm, dzięki któremu nie ma tu ryzyka utraty konta.
+**2. `accessToken` nie służy do uwierzytelniania niczego.** `.credentials.json` czytamy
+wyłącznie po metadane planu (`subscriptionType`, `rateLimitTier`, `expiresAt`), tylko do
+odczytu. Linia podziału leży przy **użyciu** tokena, nie przy odczycie pliku.
 
-**3. Zero ciężkich importów.** Tylko biblioteka standardowa. `import httpx` to ~150 ms —
-przy starcie interpretera 27 ms to pięciokrotność całego budżetu.
+**3. Nigdy nie wołamy endpointu tokenowego.** Odświeżanie należy do Claude Code.
 
-**4. Nigdy nie rzuca wyjątkiem.** `except: sys.exit(0)` na najwyższym poziomie.
+**4. Zero ciężkich importów w ścieżce gorącej.** Tylko biblioteka standardowa.
+`subprocess` i `shutil` importowane lokalnie, w gałęzi wykonywanej raz na 60 s.
 
-**5. Throttle jest obowiązkowy.** `PostToolUse` odpala się przy każdym narzędziu, a wywołanie
-sieciowe kosztuje ~500 ms.
+**5. Nigdy nie rzuca wyjątkiem.** `except: sys.exit(0)` na najwyższym poziomie.
+
+**6. Sonda nigdy nie czeka na proces potomny.** `claude -p "/usage"` trwa ~3,4 s. Wynik
+konsumuje **następny** przebieg — dzięki temu hook kosztuje ~36 ms, a nie 3,4 s.
+
+**7. Zapora przed rekurencją jest obowiązkowa.** Proces potomny to normalna sesja Claude Code
+i odpala hook `Stop`. Sonda ustawia potomkowi `CUM_PROBE_CHILD=1` i przy tej zmiennej kończy
+się natychmiast. **Sam throttle tego nie zatrzyma** — każdy potomek ma własny zegar.
 
 ## Jak to się zachowuje
 
 - **Throttle 60 s** — znacznik zapisywany **przed** wywołaniem, żeby równoległe hooki nie
   zrobiły stampede. Okno wyścigu jest niezerowe: sporadycznie przejdą dwa wywołania zamiast
   jednego. Nieszkodliwe przy tej skali.
+- **Bootstrap** — przy pierwszym uruchomieniu na maszynie `cachedUsageUtilization` jeszcze nie
+  istnieje. Sonda loguje `brak-cache`, odpala `/usage` i pomiar pojawia się w następnym cyklu.
+- **Strażnik wygasłego okna** — `resets_at` mamy tylko z cache. Gdy okno zresetuje się między
+  zapisem cache a odczytem, para (procent, `resets_at`) jest sprzeczna. Przy świeżym procencie
+  zerujemy `resets_at`; bez świeżego wyrzucamy całą serię z cyklu — publikacja dawnych 95%
+  jako bieżących byłaby grubym błędem, bo realnie jest ~0%.
+- **Strażnik absurdalnych wartości** — procent > 101 jest odrzucany, nie obcinany do 100.
+  Claude Code potrafi wyciec epoch z `resets_at` w pole procentu (#52326), a obcięcie
+  zamieniłoby ewidentną awarię w wiarygodnie wyglądający fałszywy alarm.
 - **Spool** — nieudany POST ląduje w `spool.jsonl` i jedzie jako `backlog[]` przy następnym
   udanym. Spool obcinany **dopiero po potwierdzeniu** liczby przyjętych wpisów, więc awaria
   w połowie nic nie gubi. Cap 5000 linii.
-- **Cache konta po mtime** — `/login` przepisuje `.claude.json`, więc unieważnienie po mtime
-  **jest** mechanizmem wykrywania przełączenia konta.
 - **Log lokalny zawsze**, niezależnie od tego, czy POST się udał.
 
 ## Diagnostyka
 
 ```bash
-python client/analyze-samples.py          # tempo zmian, 429, konta, przełączenia
-python client/probe-usage.py              # jedno wywołanie, cała odpowiedź na ekran
+python client/analyze-samples.py          # tempo zmian, błędy, konta, przełączenia
 ```
 
 Pliki robocze w `%LOCALAPPDATA%\claude-usage-monitor\`:
 `usage-samples.jsonl` (log), `spool.jsonl` (zaległości), `last-probe.txt` (throttle),
-`oauth-account.cache.json` (cache tożsamości), `config.json`.
+`usage-cli.json` (zrzut stdout z `/usage`), `config.json`, `usage-probe.py` (kopia wykonywana).
+
+Pole `measurement` w każdym wpisie logu mówi, skąd wzięty jest pomiar: `source`
+(`cli_merged` / `cli_usage_cache`), `cache_age_s`, `fresh_age_s`, `fresh_applied` (które serie
+dostały świeżą wartość), `fresh_skip` (czemu zrzut nie został użyty), `dropped` (co odrzuciły
+strażniki), `spawn_error`.
 
 **Certyfikaty na Windows:** magazyn CA używany przez Pythona odrzuca łańcuch Let's Encrypt
 niektórych hostów z błędem `certificate has expired`, mimo że każde ogniwo jest ważne — `curl`

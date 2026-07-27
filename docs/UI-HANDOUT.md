@@ -7,7 +7,23 @@ systemu**, nie wymyślone.
 Stan na 2026-07-27: backend i frontend wdrożone pod `https://usage.example.org/claude-usage/`.
 Base URL API: `https://usage.example.org/claude-usage/api`
 
-**`contractVersion` = 2.** Co doszło względem v1 i dlaczego:
+**`contractVersion` = 3.** Co doszło w v3:
+
+- **`confirmedAt`** — kiedy ostatnio POTWIERDZONO tę wartość. **Świeżość liczy się z tego
+  pola, nie z `capturedAt`.** Dedup celowo nie zapisuje próbki, gdy wartość się nie zmieniła,
+  więc `capturedAt` bywa o minuty starsze niż ostatni realny pomiar — a wtedy stabilny odczyt
+  wygląda w UI jak zerwana łączność. To dwie przeciwne informacje dla kogoś, kto właśnie
+  decyduje, czy odpalić duże zadanie.
+- **`valueSince`** — odkąd wartość jest niezmienna. Stąd podpis „bez zmian od 12:05".
+- `capturedAt` zostaje i znaczy dalej to samo: czas ostatniej zapisanej PRÓBKI.
+- **`deltaFrom`** — od której PRÓBKI liczy się `deltaPct1h`. Baseline jest przycięty do
+  **bieżącego okna**, więc rozpiętość bywa krótsza niż godzina i UI musi to napisać
+  („+3 pp od 14:03", nie „+3 pp w ciągu godziny"). Wcześniej po resecie sesji punkt
+  odniesienia pochodził z poprzedniego okna i przez godzinę wisiało „−46 pp w ciągu godziny".
+  `null` zawsze i dokładnie wtedy, gdy `deltaPct1h` jest `null`. Nazwa `deltaPct1h` zostaje —
+  jej zmiana łamałaby zgodność, a dodanie pola nie łamie (patrz § 11).
+
+Co doszło w v2 względem v1 i dlaczego:
 
 | Zmiana | Powód |
 |---|---|
@@ -61,11 +77,27 @@ niż brak odpowiedzi.
 | `GET /status` | **Główny endpoint.** Stan bieżący wszystkich kont i serii. Odpytywać co **15 s** |
 | `GET /history?account=&seriesId=&from=&to=&bucket=auto` | Przebieg w czasie + dziury + granice resetów |
 | `GET /accounts` | Lista kont. **`PATCH /accounts/{uuid}` NIE ISTNIEJE** — kolumny `label`, `color`, `isEnabled` są w bazie, ale nie ma ścieżki zapisu. Nie buduj na nim edycji |
-| `GET /machines` | Które maszyny raportowały które konta, z wersją Claude Code |
+| `GET /machines` | Które maszyny raportowały które konta, z wersją **sondy** (`scriptVersion`) |
 | `GET /series` | Rejestr serii (zob. § 6 — lista jest otwarta) |
 | `GET /events` | Log operacyjny: przełączenia konta, drift schematu, błędy klienta |
 | `GET /batches` · `GET /batches/{id}/raw` | Log przyjęć + surowa odpowiedź Anthropic |
+
+**W `/batches` nie ma kodów HTTP i nie będzie** — od v3 sonda nie wysyła żadnego żądania do
+Anthropic, więc nie ma odpowiedzi, którą miałyby opisywać. W ich miejscu jest proweniencja
+pomiaru: `measurementSource` (`cli_merged` = świeże procenty ze stdout `/usage`,
+`cli_usage_cache` = sam cache Claude Code, do 5 min stary), `cacheAgeS`, `freshAgeS`.
+Przewaga `cli_usage_cache` to cicha awaria — dane płyną dalej, tylko rozdzielczość spadła
+z minuty do pięciu, i **to jedyne miejsce, w którym widać to wprost**.
 | `GET /stats` | Liczniki, współczynnik dedupu, skuteczność ingestu 24 h |
+
+**Czas działa w obie strony.** `from` i `to` w `/history` przyjmują ISO-8601 ze strefą
+(`…Z`, `…+02:00`) albo bez niej — bez strefy zakłada się UTC, ze strefą wartość jest
+**przeliczana**, a nie obcinana. Wysyłaj po prostu `Date.toISOString()`.
+
+To nie jest uprzejmość dla klienta, tylko domknięcie granicy: gdy kontrakt v2 dopiął
+strefę do czasu wychodzącego, przeglądarka zaczęła ją odsyłać — i widok Historia zwracał
+**500** przy każdym otwarciu, bo reszta backendu liczy na naiwnym UTC. Pilnuje tego
+`backend/tests/test_history_endpoint.py`.
 
 ---
 
@@ -75,10 +107,21 @@ Każda seria w `/status` ma pole `freshness`. **Nie wolno ich zlewać w jeden.**
 
 | `freshness` | Znaczenie | `utilization` | Jak pokazać |
 |---|---|---|---|
-| `live` | Próbka świeższa niż 5 min | liczba | normalnie |
-| `stale` | Starsza, ale okno wciąż trwa — wartość nadal prawdziwa, bo zużycie nie rośnie samo | liczba | z etykietą czasu obserwacji |
+| `live` | **Potwierdzenie** świeższe niż 5 min (od v3 — nie próbka, patrz niżej) | liczba | normalnie |
+| `stale` | Brak potwierdzenia od 5 min, ale okno wciąż trwa | liczba | czas potwierdzenia + wartość może być już wyższa |
 | `inferred_reset` | Okno się zresetowało i klient milczał — **wnioskujemy** ~0% | `0.0` | wyraźnie inaczej niż pomiar |
 | `unknown` | Klient raportuje, ale brak danych dla tej serii — **awaria** | **`null`** | „nie wiem", **nigdy 0%** |
+
+**Świeżość liczy się z `confirmedAt`, nie z `capturedAt`** — to jest ta zmiana z v3.
+Pod v2 stabilna wartość wpadała w `stale` przez sam dedup, więc „nic się nie zmienia"
+wyglądało identycznie jak „straciliśmy łączność". Odwrotnie też trzeba uważać przy
+podpisywaniu `stale`: hooki odpalają się **tylko przy pracy**, więc kwadrans przerwy daje
+ten sam stan co martwy klient. Awarię rozpoznaje osobno `unknown` (tam wchodzi w grę
+`lastBatchAt`), i dlatego przy `stale` nie wolno pisać niczego alarmowego.
+
+Przy `stale` wartość jest **dolnym ograniczeniem**: w trwającym oknie zużycie tylko rośnie.
+„Może być już wyższa" jest prawdziwe, „wciąż aktualna" — nie. Przy decyzji „czy odpalić duże
+zadanie" mylenie się w tę stronę jest bezpieczne, w drugą nie.
 
 ### Najważniejsze zdanie w tym dokumencie
 
@@ -125,7 +168,7 @@ z czego 5 nie było znanych z żadnego źródła (`amber_ladder`, `iguana_neckti
 
 **`primary` i `duplicateOf`.** API raportuje ten sam limit dwukrotnie — raz jako bucket
 najwyższego poziomu, raz jako wpis w `limits[]`. Backend paruje je po danych i oznacza
-duplikaty. **Domyślnie pokazuj tylko `primary: true`.** Wpis z `limits[]` wygrywa, bo niesie
+duplikaty. **Pokazuj tylko `primary: true`.** Wpis z `limits[]` wygrywa, bo niesie
 `isActive` i `severity`. Gdy wartości się rozjadą, pary nie powstaną i obie serie będą
 widoczne — to celowe, wolimy pokazać rozjazd niż go ukryć.
 
@@ -138,6 +181,26 @@ wymyślać własne progi.
 
 **Countdowny licz od `serverNow`** z odpowiedzi, nie od zegara przeglądarki. `secondsToReset`
 jest policzone po stronie serwera.
+
+**`resetsAt: null` ma dwa różne powody i żaden nie znaczy „ta seria się nie resetuje".**
+Anthropic nie podaje granicy dla okna z **0% zużycia** (widać to w `limits[]`:
+`weekly_scoped percent 0 → resets_at null`) — okno 5 h przed pierwszym użyciem po prostu nie
+ma instancji. Osobno sonda **zeruje przedawnioną granicę z cache**, gdy okno przeturlało się
+między zapisem cache a odczytem (do ~5 min). Podpis musi je rozróżniać:
+
+| stan serii | podpis |
+|---|---|
+| `resetsAt` w przyszłości | `reset za 2 h 05 min · o 20:00` |
+| `resetsAt` w przeszłości | `reset minął · o 20:00` — **nigdy** „reset za …" |
+| `resetsAt: null`, `utilization: 0` | `okno nie wystartowało` |
+| `resetsAt: null`, `utilization > 0` | `czas resetu nieznany` |
+| seria bez okna (`spend`, `extra_usage`) | `bez resetu` |
+
+**Drut jest w UTC, ekran w strefie użytkownika.** Konwersję robi wyłącznie warstwa
+prezentacji (`lib/time.ts`) — żadna wartość nie jest przeliczana przed wysłaniem ani przed
+porównaniem. Tam, gdzie widać surowe godziny bez kontekstu „teraz" (zakres historii), strefa
+jest **podpisana** (`UTC+2`), bo dwie strefy na jednym ekranie bez etykiety to najkrótsza
+droga do błędnej interpretacji.
 
 **Limity są kaskadą, nie jedną liczbą** — i od v2 liczy ją backend, w `cascade[]` przy koncie.
 Cztery szczeble w kolejności: `session` → `weekly` → `credits` → `hard_block`, każdy ze
@@ -181,7 +244,7 @@ Wygenerowana z działającego systemu, konto Max, 2026-07-26 21:57 UTC. Skrócon
 
 ```json
 {
-  "contractVersion": 2,
+  "contractVersion": 3,
   "serverNow": "2026-07-26T21:57:27.446632Z",
   "warnings": [],
   "accounts": [{
@@ -227,10 +290,13 @@ Wygenerowana z działającego systemu, konto Max, 2026-07-26 21:57 UTC. Skrócon
         "resetsAt": "2026-07-27T00:59:59.056340Z",
         "secondsToReset": 10951,
         "capturedAt": "2026-07-26T21:57:05Z",
+        "confirmedAt": "2026-07-26T21:57:05Z",
+        "valueSince": "2026-07-26T21:41:07Z",
         "freshness": "live",
         "isActive": true,
         "severity": "critical",
         "deltaPct1h": 28.0,
+        "deltaFrom": "2026-07-26T20:58:03Z",
         "primary": true,
         "duplicateOf": null,
         "extra": null
@@ -249,10 +315,13 @@ Wygenerowana z działającego systemu, konto Max, 2026-07-26 21:57 UTC. Skrócon
         "resetsAt": "2026-08-01T15:59:59.056361Z",
         "secondsToReset": 496951,
         "capturedAt": "2026-07-26T21:57:05Z",
+        "confirmedAt": "2026-07-26T21:57:05Z",
+        "valueSince": "2026-07-26T21:10:44Z",
         "freshness": "live",
         "isActive": false,
         "severity": "normal",
         "deltaPct1h": 3.0,
+        "deltaFrom": "2026-07-26T20:58:03Z",
         "primary": true,
         "duplicateOf": null,
         "extra": null
@@ -362,12 +431,13 @@ Lokalnie, bez SSO i bez serwera:
 
 ## 11. Wersjonowanie kontraktu
 
-`/status` zwraca `contractVersion` (obecnie **`2`**). Przy zmianie łamiącej zgodność liczba
+`/status` zwraca `contractVersion` (obecnie **`3`**). Przy zmianie łamiącej zgodność liczba
 rośnie — UI sprawdza to i **głośno protestuje** w nagłówku, zamiast po cichu renderować śmieci
 (`frontend/src/components/Nav.tsx`, stała `CONTRACT_VERSION` w `api/types.ts`).
 
 Dodanie pola jest zmianą **nie**łamiącą i nie wymaga podbicia. Wersja poszła z 1 na 2 wyłącznie
-przez zmianę serializacji czasu — reszta v2 to dodatki.
+przez zmianę serializacji czasu — reszta v2 to dodatki. Tak samo doszło `deltaFrom`: wersja
+została na 3, a UI bez tego pola dostaje `undefined` i wraca do brzmienia godzinowego.
 
 Konto Team nie zostało jeszcze zweryfikowane na żywo (ma wyczerpany limit tygodniowy). To ono
 włącza szczeble `credits` i `hard_block` z kwotami; do tego czasu stoją one na fixture

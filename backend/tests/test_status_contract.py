@@ -20,7 +20,7 @@ from app.services.status import CONTRACT_VERSION, build_status
 
 # ISO-8601 z offsetem: "2026-07-26T19:07:37.564772Z" albo "...+00:00"
 ISO_TZ = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$")
-DATE_KEYS = ("At", "Now", "resetsAt")
+DATE_KEYS = ("At", "Now", "resetsAt", "From")
 
 
 def walk_timestamps(node, path=""):
@@ -56,7 +56,7 @@ async def test_kazdy_znacznik_czasu_ma_strefe(db):
 async def test_contract_version_jest_zadeklarowana_wersja(db):
     await ingest_one(db, machine_name="desktop", payload=payload())
     await db.commit()
-    assert (await wire(db))["contractVersion"] == CONTRACT_VERSION == 2
+    assert (await wire(db))["contractVersion"] == CONTRACT_VERSION == 3
 
 
 async def test_serie_niosa_semantyke_a_nie_tylko_klucz(db):

@@ -8,6 +8,7 @@ bez udawania, ze to pomiar biezacy.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Sequence
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,13 +16,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.freshness import display_utilization, freshness
 from app.models import Account, IngestBatch, LimitSample, SeriesState, UsageSeries
+from app.parsing import Sample, window_start_index
 from app.schemas import AccountStatus, SeriesStatus, StatusResponse
 from app.services.cascade import SeriesFacts, build_cascade
 from app.services.ingest import utcnow
 
 # v2: czas na drucie z offsetem (bylo bez), kind/group/bucketKey w seriach, cascade[]
-# przy koncie, gaps[] w dwoch rodzajach. Podbicie = aktualizacja docs/UI-HANDOUT.md.
-CONTRACT_VERSION = 2
+# przy koncie, gaps[] w dwoch rodzajach.
+# v3: confirmedAt + valueSince w seriach — swiezosc liczy sie od POTWIERDZENIA, nie od
+#     zapisu probki. Bez tego dedup sprawia, ze niezmienna wartosc udaje utracona lacznosc.
+# Podbicie = aktualizacja docs/UI-HANDOUT.md.
+# deltaFrom doszlo PO v3 i wersji NIE podbija — dodanie pola nie lamie zgodnosci.
+CONTRACT_VERSION = 3
 
 
 async def _last_batch_times(db: AsyncSession) -> dict[int, datetime]:
@@ -33,22 +39,44 @@ async def _last_batch_times(db: AsyncSession) -> dict[int, datetime]:
     return {aid: t for aid, t in rows}
 
 
-async def _delta_1h(db: AsyncSession, account_id: int, series_id: int,
-                    now: datetime, current: float | None) -> float | None:
-    if current is None:
-        return None
-    since = now - timedelta(hours=1)
-    row = (await db.execute(
-        select(LimitSample.utilization)
+async def _recent_samples(db: AsyncSession, account_id: int,
+                          since: datetime) -> dict[int, list[Sample]]:
+    """Przebieg serii konta z ostatniej godziny, jednym zapytaniem — baseline delty trzeba
+    przyciac do biezacego okna, wiec pojedynczy wiersz i tak nie wystarcza."""
+    rows = (await db.execute(
+        select(LimitSample.series_id, LimitSample.captured_at,
+               LimitSample.utilization, LimitSample.resets_at)
         .where(LimitSample.account_id == account_id,
-               LimitSample.series_id == series_id,
                LimitSample.captured_at >= since,
                LimitSample.stale_read.is_(False))
-        .order_by(LimitSample.captured_at.asc()).limit(1)
-    )).scalar_one_or_none()
-    if row is None:
-        return None
-    return round(current - float(row), 4)
+        .order_by(LimitSample.series_id, LimitSample.captured_at)
+    )).all()
+    out: dict[int, list[Sample]] = {}
+    for sid, captured_at, util, resets_at in rows:
+        out.setdefault(sid, []).append(
+            (captured_at, float(util) if util is not None else None, resets_at))
+    return out
+
+
+def _delta_1h(rows: Sequence[Sample], *, now: datetime, current: float | None,
+              resets_at: datetime | None) -> tuple[float | None, datetime | None]:
+    """Przyrost zuzycia i czas probki, od ktorej go liczymy.
+
+    Baseline PRZYCIETY DO BIEZACEGO OKNA: bez tego zaraz po resecie punktem odniesienia byla
+    probka z poprzedniego okna i UI pisalo "-46 pp w ciagu godziny" przez cala godzine.
+    """
+    if current is None:
+        return None, None
+    if resets_at is not None and now > resets_at:
+        # Wszystkie probki naleza do POPRZEDNIEGO okna. Warunek bez tolerancji, dokladnie jak
+        # w freshness() — inaczej jedna karta pokazalaby "~0%" i delte ze starego okna.
+        return None, None
+    i = window_start_index(rows, settings.reset_window_eps_sec, settings.monotonic_eps)
+    in_window = [(t, u) for t, u, _ in rows[i:] if u is not None]
+    if len(in_window) < 2:
+        return None, None      # jedna probka to nie rozpietosc
+    t0, u0 = in_window[0]
+    return round(current - u0, 4), t0
 
 
 def _mark_duplicates(series: list[SeriesStatus]) -> None:
@@ -97,6 +125,7 @@ async def build_status(db: AsyncSession) -> StatusResponse:
         )).all()
 
         lb = last_batch.get(a.id)
+        recent = await _recent_samples(db, a.id, now - timedelta(hours=1))
         series: list[SeriesStatus] = []
         facts: list[SeriesFacts] = []
         for st, s in rows:
@@ -114,9 +143,12 @@ async def build_status(db: AsyncSession) -> StatusResponse:
             if not s.ever_non_null and st.last_utilization is None:
                 continue
 
+            # Fallback na last_captured_at dla wierszy sprzed migracji dodajacej
+            # last_confirmed_at — dla nich oba znaczenia sa i tak tozsame.
+            confirmed = st.last_confirmed_at or st.last_captured_at
             state = freshness(
                 now=now,
-                captured_at=st.last_captured_at,
+                confirmed_at=confirmed,
                 resets_at=st.last_resets_at,
                 last_batch_at=lb,
                 fresh_window_sec=settings.fresh_window_sec,
@@ -126,6 +158,10 @@ async def build_status(db: AsyncSession) -> StatusResponse:
             shown = display_utilization(state, raw_u)
             secs = (int((st.last_resets_at - now).total_seconds())
                     if st.last_resets_at is not None else None)
+            # `shown`, nie `raw_u`: delta towarzyszy liczbie widocznej na ekranie, a przy
+            # `unknown` liczby nie ma.
+            d_pct, d_from = _delta_1h(recent.get(s.id, ()), now=now, current=shown,
+                                      resets_at=st.last_resets_at)
 
             series.append(SeriesStatus(
                 series_id=s.id, series_key=s.series_key, label=s.display_label,
@@ -133,9 +169,10 @@ async def build_status(db: AsyncSession) -> StatusResponse:
                 kind=s.kind, group=s.group_key, bucket_key=s.bucket_key,
                 utilization=shown, raw_utilization=raw_u,
                 resets_at=st.last_resets_at, seconds_to_reset=secs,
-                captured_at=st.last_captured_at, freshness=state,
+                captured_at=st.last_captured_at, confirmed_at=confirmed,
+                value_since=st.value_since, freshness=state,
                 is_active=st.last_is_active, severity=st.last_severity,
-                delta_pct_1h=await _delta_1h(db, a.id, s.id, now, raw_u),
+                delta_pct_1h=d_pct, delta_from=d_from,
                 extra=st.last_extra,
             ))
 

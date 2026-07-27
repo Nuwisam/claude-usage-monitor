@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Sequence
 
 # Klucze najwyzszego poziomu obslugiwane osobno, nie jako zwykly bucket.
 _SPECIAL_KEYS = {"limits", "extra_usage", "spend", "member_dashboard_available"}
@@ -154,6 +154,43 @@ def same_reset_window(a: datetime | None, b: datetime | None, eps_sec: float) ->
     if a is None or b is None:
         return False
     return abs((a - b).total_seconds()) <= eps_sec
+
+
+# (captured_at, utilization, resets_at) — jeden wiersz przebiegu serii.
+Sample = tuple[datetime, float | None, datetime | None]
+
+
+def window_start_index(rows: Sequence[Sample], eps_sec: float, monotonic_eps: float) -> int:
+    """Indeks pierwszej probki z BIEZACEGO okna. `rows` rosnaco, bez probek `stale_read`.
+
+    Trzy sygnaly, bo `resets_at` bywa None z dwoch roznych powodow i zaden pojedynczy nie
+    widzi wszystkich resetow:
+      shift  - granica przeskoczyla o cale okno (z tolerancja, zasada 9),
+      passed - probka jest mlodsza od znanej granicy; jedyny sygnal na `reset-w-toku` sondy,
+               gdzie sanitize() zeruje `resets_at`, a zuzycie moze rosnac,
+      drop   - utilization spadl; w obrebie okna niemozliwe (guard monotonicznosci). Ratunek
+               dla serii bez znanej granicy — przy 0% Anthropic nie podaje `resets_at`.
+
+    Falszywy sygnal SKRACA okno, nigdy nie wciaga probki z poprzedniego.
+    """
+    if not rows:
+        return 0
+    start = 0
+    cur = rows[0][2]          # granica okna, po ktorym idziemy
+    prev_u = rows[0][1]
+    for i in range(1, len(rows)):
+        t, u, r = rows[i]
+        drop = prev_u is not None and u is not None and u < prev_u - monotonic_eps
+        shift = (cur is not None and r is not None
+                 and not same_reset_window(cur, r, eps_sec))
+        passed = cur is not None and (t - cur).total_seconds() > eps_sec
+        if drop or shift or passed:
+            start, cur = i, r
+        elif cur is None and r is not None:
+            cur = r           # granica wrocila po przerwie — to NIE jest drugi reset
+        if u is not None:
+            prev_u = u        # null nie kasuje punktu odniesienia dla spadku
+    return start
 
 
 def _slug(s: Any) -> str:

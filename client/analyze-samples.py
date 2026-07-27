@@ -4,7 +4,7 @@ rozstrzygnac inaczej niz obserwacja:
 
   A. jak szybko realnie zmienia sie utilization  -> dobor throttle i sens historii
   B. czy dedup ma sens i ile wycina
-  C. czy endpoint kiedykolwiek zwraca 429 / blad przy naszym tempie
+  C. skad pochodzi pomiar i czy stdout `/usage` faktycznie dochodzi
   D. ktore buckety sa niepuste i czy pojawiaja sie nowe
   E. czy is_active sie przelacza (co realnie ogranicza)
   F. przelaczenia konta i roznice miedzy planami
@@ -29,6 +29,12 @@ def pctile(xs, q):
 
 def ts(t):
     return time.strftime("%H:%M:%S", time.localtime(t))
+
+
+def meas(r):
+    """Blok `measurement` z wpisu logu. Wpisy sprzed wersji 3 sondy go nie maja."""
+    m = r.get("measurement")
+    return m if isinstance(m, dict) else {}
 
 
 def iso_to_epoch(v):
@@ -76,24 +82,51 @@ def main():
           % (len(recs), len(ok), ts(recs[0]["t"]), ts(recs[-1]["t"]), span / 60))
     print("=" * 76)
 
-    # ---- C. bledy i rate limiting -----------------------------------------
-    print("\n[C] kody odpowiedzi i bledy")
-    print("    http: %s" % dict(Counter(str(r.get("http")) for r in recs)))
+    # ---- C. proweniencja pomiaru ------------------------------------------
+    # Wersja 3 sondy nie wysyla zadnego zadania do Anthropic, wiec nie ma tu kodow HTTP,
+    # 429 ani naglowkow rate limitu. Pilnujemy czego innego: SKAD wzial sie pomiar.
+    #
+    # `cli_merged`      — doszly swieze procenty ze stdout `/usage` (rozdzielczosc minutowa)
+    # `cli_usage_cache` — poszedl sam cache Claude Code, ktory bywa do 5 minut stary
+    #
+    # Przewaga tego drugiego to CICHA awaria: dane nadal plyna i nic nie wyglada na zepsute,
+    # tylko rozdzielczosc spadla z minuty do pieciu. To jest jedyne miejsce, w ktorym widac
+    # to wprost — dlatego udzial `cli_merged` jest tu liczba, nie tylko rozkladem.
+    print("\n[C] proweniencja pomiaru")
+    src = Counter(meas(r).get("source") for r in ok if meas(r).get("source"))
+    if src:
+        total = sum(src.values())
+        merged = src.get("cli_merged", 0)
+        print("    zrodlo: %s" % dict(src))
+        print("    swiezych ze stdout: %d/%d (%.0f%%)%s"
+              % (merged, total, 100.0 * merged / total,
+                 "   <-- SPRAWDZ `claude -p /usage`" if merged * 2 < total else ""))
     skips = Counter(r.get("skip") for r in recs if r.get("skip"))
     if skips:
-        print("    pominiete: %s" % dict(skips))
-    errs = Counter(r.get("error") for r in recs if r.get("error"))
-    if errs:
-        print("    bledy transportu: %s" % dict(errs))
-    r429 = [r for r in recs if r.get("http") == 429]
-    print("    429: %d %s" % (len(r429), "<-- ZWOLNIC TEMPO" if r429 else "(brak)"))
-    rl = Counter(r.get("rl_status") for r in recs if r.get("rl_status"))
-    if rl:
-        print("    anthropic-ratelimit-unified-status: %s" % dict(rl))
-    ms = [r["ms"] for r in recs if isinstance(r.get("ms"), (int, float))]
-    if ms:
-        print("    czas wywolania: p50=%s ms  p95=%s ms  max=%s ms"
-              % (pctile(ms, .5), pctile(ms, .95), max(ms)))
+        print("    przebiegi bez pomiaru: %s" % dict(skips))
+    fskip = Counter(meas(r).get("fresh_skip") for r in ok if meas(r).get("fresh_skip"))
+    if fskip:
+        print("    zrzut stdout odrzucony: %s" % dict(fskip))
+    spawn = Counter(meas(r).get("spawn_error") or r.get("spawn")
+                    for r in recs if meas(r).get("spawn_error") or r.get("spawn"))
+    if spawn:
+        print("    nie udalo sie zlecic pomiaru: %s" % dict(spawn))
+    dropped = Counter()
+    for r in ok:
+        for d in (meas(r).get("dropped") or []):
+            dropped[str(d).split("(")[0]] += 1
+    if dropped:
+        print("    odrzucone przez straznikow: %s" % dict(dropped))
+
+    for name, path in (("wiek cache", ("measurement", "cache_age_s")),
+                       ("wiek stdout", ("measurement", "fresh_age_s")),
+                       ("czas hooka [ms]", ("client", "exec_ms"))):
+        xs = [r[path[0]][path[1]] for r in ok
+              if isinstance(r.get(path[0]), dict)
+              and isinstance(r[path[0]].get(path[1]), (int, float))]
+        if xs:
+            print("    %-16s p50=%s  p95=%s  max=%s" % (name, pctile(xs, .5),
+                                                        pctile(xs, .95), max(xs)))
     gaps = [recs[i]["t"] - recs[i-1]["t"] for i in range(1, len(recs))]
     if gaps:
         print("    odstepy miedzy zapisami: min=%.0f s  p50=%.0f s  (throttle dziala jesli min >= throttle)"

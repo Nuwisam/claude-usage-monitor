@@ -3,13 +3,14 @@
 fixtures/usage_max.json to dokladna odpowiedz /api/oauth/usage zapisana przez sonde.
 """
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from app.parsing import (
     Observation, humanize, limit_series_key, parse_pct, parse_ts, parse_usage,
+    window_start_index,
 )
 
 FIX = Path(__file__).parent / "fixtures" / "usage_max.json"
@@ -82,6 +83,64 @@ def test_same_reset_window_traktuje_brak_resetu_jako_stan():
     from app.parsing import same_reset_window
     assert same_reset_window(None, None, 300)
     assert not same_reset_window(None, parse_ts("2026-07-27T00:59:59+00:00"), 300)
+
+
+# --------------------------------------------------------------------------- okno biezace
+T0 = datetime(2026, 7, 27, 10, 0, 0)
+B1 = datetime(2026, 7, 27, 11, 0, 0)          # granica okna sesji
+B2 = B1 + timedelta(hours=5)                  # granica po resecie
+EPS, MONO = 300, 0.5
+
+
+def przebieg(*items):
+    """(minuta od T0, utilization, granica) -> wiersze przebiegu serii."""
+    return [(T0 + timedelta(minutes=m), u, r) for m, u, r in items]
+
+
+def test_window_start_kolysanie_granicy_to_nie_reset():
+    """Ten sam prog co same_reset_window — inaczej wracaja 61 „resetow" na dobe."""
+    r = przebieg((0, 10.0, B1), (5, 12.0, B1 + timedelta(seconds=2)),
+                 (10, 12.0, B1 - timedelta(seconds=1)))
+    assert window_start_index(r, EPS, MONO) == 0
+
+
+def test_window_start_lapie_spadek_i_przeskok_granicy():
+    r = przebieg((0, 46.0, B1), (30, 46.0, B1), (65, 0.0, B2), (70, 3.0, B2))
+    assert window_start_index(r, EPS, MONO) == 2
+
+
+def test_window_start_reset_w_toku_a_powrot_granicy_to_nie_drugi_reset():
+    """Sonda zeruje przedawniona granice; nowa wraca dopiero z kolejnym cachem."""
+    r = przebieg((0, 46.0, B1), (65, 0.0, None), (70, 2.0, None), (75, 2.0, B2))
+    assert window_start_index(r, EPS, MONO) == 1
+
+
+def test_window_start_lapie_reset_gdy_zuzycie_roslo():
+    """Poprzednie okno skonczylo sie nisko, po resecie od razu wiecej — ani spadku,
+    ani przeskoku granicy nie ma, zostaje sama data probki."""
+    r = przebieg((0, 1.0, B1), (70, 4.0, None), (75, 6.0, None))
+    assert window_start_index(r, EPS, MONO) == 1
+
+
+def test_window_start_lapie_spadek_gdy_granicy_nie_znamy_wcale():
+    r = przebieg((0, 8.0, None), (5, 9.0, None), (10, 0.0, None), (15, 2.0, None))
+    assert window_start_index(r, EPS, MONO) == 2
+
+
+def test_window_start_null_utilization_nie_gubi_spadku():
+    r = przebieg((0, 46.0, None), (5, None, None), (10, 0.0, None))
+    assert window_start_index(r, EPS, MONO) == 2
+
+
+def test_window_start_zwraca_ostatni_reset_w_zakresie():
+    B3 = B2 + timedelta(hours=5)
+    r = przebieg((0, 46.0, B1), (65, 2.0, B2), (200, 30.0, B2), (370, 1.0, B3))
+    assert window_start_index(r, EPS, MONO) == 3
+
+
+def test_window_start_pusto_i_jeden_wiersz():
+    assert window_start_index([], EPS, MONO) == 0
+    assert window_start_index(przebieg((0, 5.0, B1)), EPS, MONO) == 0
 
 
 def test_parse_ts_smieci_nie_wywalaja():

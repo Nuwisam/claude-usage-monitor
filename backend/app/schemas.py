@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, PlainSerializer
+from pydantic import AfterValidator, BaseModel, ConfigDict, PlainSerializer
 
 
 def _camel(s: str) -> str:
@@ -31,6 +31,26 @@ def _utc_iso(v: datetime) -> str:
 # Uzywaj TEGO typu w kazdym polu wyjsciowym z data. Zwykly `datetime` serializuje sie
 # bez offsetu i to jest pulapka, nie preferencja stylistyczna.
 UtcDt = Annotated[datetime, PlainSerializer(_utc_iso, return_type=str)]
+
+
+def _naive_utc(v: datetime) -> datetime:
+    """ISO-8601 z drutu -> naiwny UTC. Wejsciowe lustro `UtcDt`.
+
+    Kiedy wyjscie dostalo strefe (kontrakt v2), przegladarka zaczela ODSYLAC czas z 'Z' —
+    `Date.toISOString()`. Pydantic robi z tego datetime ZE STREFA, a caly backend (kolumny,
+    `utcnow()`, probki) jest naiwny. Bez tej konwersji /history wybucha na odejmowaniu
+    "can't subtract offset-naive and offset-aware datetimes".
+
+    Gorsze jest to, czego nie widac: sterownik MySQL formatuje datetime `strftime`-em
+    i tzinfo IGNORUJE, wiec parametr z offsetem innym niz UTC (np. '+02:00') trafilby do
+    WHERE jako czas scienny i cicho przesunal caly zakres o dwie godziny. Z 'Z' wychodzi
+    to samo przez przypadek — dlatego granice zamykamy tutaj, a nie liczymy na klienta.
+    """
+    return v if v.tzinfo is None else v.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+# Uzywaj TEGO typu w kazdym parametrze WEJSCIOWYM z data (query, body).
+NaiveUtcDt = Annotated[datetime, AfterValidator(_naive_utc)]
 
 
 class CamelModel(BaseModel):
@@ -65,11 +85,20 @@ class SeriesStatus(CamelModel):
     raw_utilization: float | None      # ostatnia ZMIERZONA wartosc, bez wnioskowania
     resets_at: UtcDt | None
     seconds_to_reset: int | None
+    # Trzy rozne pytania o czas — mylenie ich sprawia, ze stabilny odczyt wyglada jak awaria:
+    #   captured_at  - kiedy zapisano ostatnia PROBKE (dedup pomija niezmienione wartosci)
+    #   confirmed_at - kiedy ostatnio POTWIERDZONO te wartosc  <- z tego liczy sie swiezosc
+    #   value_since  - odkad wartosc jest niezmienna           <- z tego "niezmienne od ..."
     captured_at: UtcDt | None
+    confirmed_at: UtcDt | None
+    value_since: UtcDt | None
     freshness: str                     # live | stale | inferred_reset | unknown
     is_active: bool | None
     severity: str | None
     delta_pct_1h: float | None
+    # Od ktorej PROBKI liczy sie delta_pct_1h — baseline jest przyciety do biezacego okna,
+    # wiec rozpietosc bywa krotsza niz godzina. Null razem z delta_pct_1h.
+    delta_from: UtcDt | None
     # API raportuje te same limity dwukrotnie: raz jako bucket najwyzszego poziomu,
     # raz jako wpis w limits[]. Wykrywamy to z danych (identyczne utilization + resets_at),
     # bez hardkodowanego mapowania — bo wlasnie hardkodowanie nas juz raz ugryzlo.

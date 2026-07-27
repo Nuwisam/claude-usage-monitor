@@ -19,7 +19,9 @@ from app.models import (
     RawPayload, UsageSeries,
 )
 from app.parsing import same_reset_window
-from app.schemas import HistoryGap, HistoryPoint, HistoryResponse, StatusResponse
+from app.schemas import (
+    HistoryGap, HistoryPoint, HistoryResponse, NaiveUtcDt, StatusResponse,
+)
 from app.services.ingest import utcnow
 from app.services.status import build_status
 from app.sso import CurrentUser, require_authorized_user
@@ -73,7 +75,7 @@ async def machines(
     by: dict[int, dict] = {}
     for m, ma, a in rows:
         e = by.setdefault(m.id, {
-            "name": m.name, "host": m.host, "ccVersion": m.cc_version,
+            "name": m.name, "host": m.host,
             "scriptVersion": m.script_version, "firstSeenAt": m.first_seen_at,
             "lastSeenAt": m.last_seen_at, "batches": m.batches, "accounts": [],
         })
@@ -206,8 +208,11 @@ def _find_gaps(from_: datetime, to: datetime, batch_times: list[datetime],
 async def history(
     account: str = Query(..., description="account_uuid"),
     series_id: int = Query(..., alias="seriesId"),
-    from_: datetime | None = Query(None, alias="from"),
-    to: datetime | None = Query(None),
+    # NaiveUtcDt, nie datetime: przegladarka wysyla `toISOString()`, czyli czas ZE STREFA,
+    # a baza i `utcnow()` sa naiwne. Zwykly `datetime` przepuszcza to do srodka i wybucha
+    # dopiero przy odejmowaniu, kilka warstw dalej.
+    from_: NaiveUtcDt | None = Query(None, alias="from"),
+    to: NaiveUtcDt | None = Query(None),
     bucket: str = Query("auto"),
     user: CurrentUser = Depends(require_authorized_user),
     db: AsyncSession = Depends(get_session),
@@ -325,11 +330,16 @@ async def batches(
     rows = (await db.execute(
         select(IngestBatch).order_by(IngestBatch.id.desc()).limit(limit)
     )).scalars().all()
+    # Pola opisujace odpowiedz HTTP od Anthropic znikly wraz z wersja 3 sondy — nie ma juz
+    # zadania, ktore mialyby opisywac. W ich miejsce idzie proweniencja pomiaru: skad zostal
+    # wziety i jak stary byl w chwili wyslania. To jedyne miejsce, w ktorym widac roznice
+    # miedzy `cli_merged` (swieze procenty ze stdout) a `cli_usage_cache` (sam cache).
     return [{"id": b.id, "receivedAt": b.received_at, "accountId": b.account_id,
              "machineId": b.machine_id, "clientHost": b.client_host,
-             "ccVersion": b.cc_version, "hookEvent": b.hook_event,
-             "httpStatus": b.http_status, "requestId": b.request_id,
-             "rlStatus": b.rl_status, "probeMs": b.probe_ms,
+             "hookEvent": b.hook_event, "scriptVersion": b.script_version,
+             "measurementSource": b.measurement_source,
+             "cacheAgeS": b.cache_age_s, "freshAgeS": b.fresh_age_s,
+             "probeMs": b.probe_ms,
              "samplesWritten": b.samples_written, "ok": b.ok,
              "errorKind": b.error_kind} for b in rows]
 
