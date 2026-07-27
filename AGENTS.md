@@ -44,26 +44,53 @@ a `settings.json` jest wspólny — label przypisywałby połowę próbek do zł
 zatruwał historię obu, bez żadnego widocznego objawu.
 
 **8. Kontrakt API jest zamrożony.**
-`/api/status` zwraca `contractVersion`. Zmiana łamiąca zgodność = podbicie wersji **i**
-aktualizacja `docs/UI-HANDOUT.md`. Makiety powstają na podstawie tego dokumentu.
+`/api/status` zwraca `contractVersion` (dziś **2**). Zmiana łamiąca zgodność = podbicie wersji
+**i** aktualizacja `docs/UI-HANDOUT.md` **i** stałej `CONTRACT_VERSION` w
+`frontend/src/api/types.ts` — UI porównuje je i protestuje w nagłówku przy rozjeździe.
+
+**9. `resets_at` porównuj z tolerancją, nigdy na równość.**
+Granica okna podawana przez Anthropic **kołysze się**: zmierzone 49 próbek w 3 h, jedno okno,
+wartości od `00:59:59.014384` do `01:00:00.982268`. Porównanie doslowne było zawsze fałszywe
+i po cichu wyłączyło **trzy** mechanizmy naraz — dedup, guard monotoniczności i wykrywanie
+granic resetu (61 „resetów" na dobę zamiast pięciu). Jest na to `parsing.same_reset_window`
+i testy regresyjne; prawdziwy reset przesuwa granicę o całe okno, więc rozróżnia się je
+progiem, a nie równością.
+
+**10. Tekst widoczny w UI pisze się po polsku, z ogonkami.**
+Komentarze w kodzie zostają bez — to świadoma niespójność (kodowanie na Windows), ale etykiety
+serii, ostrzeżenia i podpisy trafiają na ekran. `display_label` jest odświeżane przy każdym
+ingest, więc poprawka słownika dochodzi do serii zarejestrowanych wcześniej.
 
 ## Układ
 
 ```
 client/     sonda (stdlib-only) + narzędzia analizy; zasady 1-3
-backend/    FastAPI + SQLAlchemy async + Alembic; MariaDB
+backend/    FastAPI + SQLAlchemy async + Alembic; MariaDB; serwuje też statyki UI
   app/parsing.py     czyste funkcje, cała logika normalizacji  <- tu zaczynaj przy zmianach API
   app/freshness.py   czyste funkcje, cztery stany świeżości
-  app/services/      ingest (zapis), status (odczyt)
+  app/services/      ingest (zapis), status (odczyt), cascade (szczeble limitu)
+  app/main.py        mount /assets + fallback SPA; powłoka HTML celowo BEZ SSO
+frontend/   React 18 + Vite + TypeScript, bez Tailwinda i bez biblioteki wykresów
+  src/lib/freshness.ts   stan -> wygląd; JEDYNE miejsce tej decyzji (zasada 4 w pikselach)
+  src/mocks/             VITE_MOCKS=1: stany, których w produkcji nie da się wywołać
 docs/       POC-FINDINGS (dlaczego tak), UI-HANDOUT (kontrakt), POLLING-HANDOUT (odrzucone)
 deploy/     szablon vhosta Apache; sekret podstawiany przy deployu, NIE w repo
 ```
+
+**Frontend budowany jest w Dockerfile backendu** (etap `node`), więc kontekst budowania to
+katalog repo, nie `./backend`. Bez `.dockerignore` każdy build wysyłałby do daemona cały
+katalog `data/` z bazą.
+
+Iteracja nad wyglądem: `cd frontend && VITE_MOCKS=1 npm run dev` — backend nie ma CORS ani
+portu na hoście, więc dev przeciw produkcji i tak nie zadziała. Warianty przez `?mock=states`.
 
 ## Testy
 
 ```bash
 cd backend
 DATABASE_URL="sqlite+aiosqlite:///:memory:" INGEST_TOKENS="t:m" ALLOWED_EMAILS="a@b.pl" pytest
+
+cd ../frontend && npm run typecheck      # kontrakt jest typowany, korzystaj z tego
 ```
 
 Normalizator i ścieżka zapisu są testowane na **realnym payloadzie** z konta Max

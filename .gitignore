@@ -6,6 +6,7 @@ data/
 logs/
 *.log
 node_modules/
+frontend/dist/
 .idea/
 .vscode/
 .DS_Store

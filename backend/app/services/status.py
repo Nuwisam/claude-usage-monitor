@@ -16,9 +16,12 @@ from app.config import settings
 from app.freshness import display_utilization, freshness
 from app.models import Account, IngestBatch, LimitSample, SeriesState, UsageSeries
 from app.schemas import AccountStatus, SeriesStatus, StatusResponse
+from app.services.cascade import SeriesFacts, build_cascade
 from app.services.ingest import utcnow
 
-CONTRACT_VERSION = 1
+# v2: czas na drucie z offsetem (bylo bez), kind/group/bucketKey w seriach, cascade[]
+# przy koncie, gaps[] w dwoch rodzajach. Podbicie = aktualizacja docs/UI-HANDOUT.md.
+CONTRACT_VERSION = 2
 
 
 async def _last_batch_times(db: AsyncSession) -> dict[int, datetime]:
@@ -95,7 +98,17 @@ async def build_status(db: AsyncSession) -> StatusResponse:
 
         lb = last_batch.get(a.id)
         series: list[SeriesStatus] = []
+        facts: list[SeriesFacts] = []
         for st, s in rows:
+            raw_all = float(st.last_utilization) if st.last_utilization is not None else None
+            # Fakty dla kaskady zbieramy PRZED filtrem widoku: `extra:usage` na koncie bez
+            # kredytow ma utilization = null i za chwile wypadnie, a kaskada z niego czyta.
+            facts.append(SeriesFacts(
+                series_key=s.series_key, source=s.source, kind=s.kind,
+                bucket_key=s.bucket_key, utilization=raw_all,
+                is_active=st.last_is_active, extra=st.last_extra,
+            ))
+
             # Serie, ktore nigdy nie mialy wartosci (np. seven_day_opus na koncie bez Opusa)
             # rejestrujemy, ale nie zasmiecamy nimi widoku.
             if not s.ever_non_null and st.last_utilization is None:
@@ -109,7 +122,7 @@ async def build_status(db: AsyncSession) -> StatusResponse:
                 fresh_window_sec=settings.fresh_window_sec,
                 client_silent_sec=settings.client_silent_sec,
             )
-            raw_u = float(st.last_utilization) if st.last_utilization is not None else None
+            raw_u = raw_all
             shown = display_utilization(state, raw_u)
             secs = (int((st.last_resets_at - now).total_seconds())
                     if st.last_resets_at is not None else None)
@@ -117,6 +130,7 @@ async def build_status(db: AsyncSession) -> StatusResponse:
             series.append(SeriesStatus(
                 series_id=s.id, series_key=s.series_key, label=s.display_label,
                 source=s.source, sort_order=s.sort_order,
+                kind=s.kind, group=s.group_key, bucket_key=s.bucket_key,
                 utilization=shown, raw_utilization=raw_u,
                 resets_at=st.last_resets_at, seconds_to_reset=secs,
                 captured_at=st.last_captured_at, freshness=state,
@@ -128,8 +142,10 @@ async def build_status(db: AsyncSession) -> StatusResponse:
         _mark_duplicates(series)
 
         if any(x.freshness == "unknown" for x in series):
-            warnings.append("Konto %s: cz. serii w stanie 'unknown' — sprawdz klienta"
-                            % (a.label or a.account_uuid[:8]))
+            warnings.append(
+                "Część serii na koncie %s jest w stanie „unknown” — sprawdź klienta"
+                % (a.email or a.label or a.account_uuid[:8])
+            )
 
         out.append(AccountStatus(
             uuid=a.account_uuid, label=a.label, email=a.email,
@@ -138,7 +154,8 @@ async def build_status(db: AsyncSession) -> StatusResponse:
             rate_limit_tier=a.org_rate_limit_tier or a.user_rate_limit_tier,
             subscription_type=a.subscription_type, is_enabled=a.is_enabled,
             last_sample_at=a.last_sample_at, last_batch_at=lb,
-            last_client_host=a.last_client_host, series=series,
+            last_client_host=a.last_client_host,
+            cascade=build_cascade(facts), series=series,
         ))
 
     return StatusResponse(contract_version=CONTRACT_VERSION, server_now=now,

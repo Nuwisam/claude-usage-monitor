@@ -120,6 +120,61 @@ async def test_dedup_nie_pisze_identycznych_wierszy(db):
     assert await count(db, LimitSample) == po_pierwszym, "identyczna wartosc nie moze dublowac wierszy"
 
 
+async def test_dedup_dziala_gdy_zmienily_sie_TYLKO_mikrosekundy_resets_at(db):
+    """Regresja na realny blad, ktory przez dobe cicho zabijal dedup.
+
+    Powyzszy test uzywa fixture'a, wiec `resets_at` jest bajt-identyczny i dedup
+    "dzialal". W naturze Anthropic stempluje `resets_at` mikrosekundami SWOJEJ
+    ODPOWIEDZI, wiec kazda probka miala inna wartosc, porownanie zawsze wypadalo
+    "zmienilo sie" i kazdy pomiar szedl do bazy jako nowy wiersz. Zmierzone: 63 probki
+    w 6 h, 63 rozne `resets_at`, przy zaledwie 10 roznych wartosciach utilization.
+    """
+    now = utcnow()
+    u1 = json.loads(json.dumps(REAL))
+    u1["five_hour"]["resets_at"] = "2026-07-27T00:59:59.056340+00:00"
+    u1["seven_day"]["resets_at"] = "2026-08-01T15:59:59.056361+00:00"
+    await ingest_one(db, machine_name="desktop", payload=payload(usage=u1, captured_at=now))
+    po_pierwszym = await count(db, LimitSample)
+
+    # ta sama granica okna, inne mikrosekundy odpowiedzi — to NIE jest zmiana danych
+    u2 = json.loads(json.dumps(u1))
+    u2["five_hour"]["resets_at"] = "2026-07-27T00:59:59.981119+00:00"
+    u2["seven_day"]["resets_at"] = "2026-08-01T15:59:59.998004+00:00"
+    await ingest_one(db, machine_name="desktop",
+                     payload=payload(usage=u2, captured_at=now + timedelta(seconds=60)))
+    await db.commit()
+
+    assert await count(db, LimitSample) == po_pierwszym, \
+        "mikrosekundy odpowiedzi nie sa zmiana wartosci i nie moga tworzyc wierszy"
+
+
+async def test_guard_monotonicznosci_dziala_przy_szumie_mikrosekund(db):
+    """Ten sam blad wylaczal guard monotonicznosci: odpalal sie tylko przy NIEZMIENIONYM
+    `resets_at`, a ten zmienial sie zawsze. Efekt byl grozniejszy niz spuchnieta tabela —
+    nieaktualny odczyt z drugiej maszyny mogl cofnac `series_state` i widok Live."""
+    now = utcnow()
+    u1 = json.loads(json.dumps(REAL))
+    u1["five_hour"]["utilization"] = 60.0
+    u1["five_hour"]["resets_at"] = "2026-07-27T00:59:59.111111+00:00"
+    await ingest_one(db, machine_name="desktop", payload=payload(usage=u1, captured_at=now))
+
+    u2 = json.loads(json.dumps(u1))
+    u2["five_hour"]["utilization"] = 40.0      # spadek bez zmiany okna => stary odczyt
+    u2["five_hour"]["resets_at"] = "2026-07-27T00:59:59.999999+00:00"
+    await ingest_one(db, machine_name="laptop",
+                     payload=payload(usage=u2, captured_at=now + timedelta(seconds=30)))
+    await db.commit()
+
+    types = {e.event_type for e in (await db.execute(select(IngestEvent))).scalars()}
+    assert "stale_read" in types, "spadek przy tej samej granicy okna to nieaktualny odczyt"
+
+    st = (await db.execute(
+        select(SeriesState).join(UsageSeries, UsageSeries.id == SeriesState.series_id)
+        .where(UsageSeries.series_key == "bucket:five_hour")
+    )).scalars().first()
+    assert st is not None and float(st.last_utilization) == 60.0, "stan nie moze sie cofnac"
+
+
 async def test_heartbeat_zapisuje_mimo_braku_zmiany(db, monkeypatch):
     """Guard skew zegara odrzucilby captured_at 400 s w przyszlosci — i slusznie, bo klient
     nie moze raportowac przyszlosci. Zeby przetestowac SAM heartbeat, luzujemy tolerancje."""
@@ -267,7 +322,7 @@ async def test_status_pokazuje_konto_z_planem_i_aktywnym_limitem(db):
     await db.commit()
     st = await build_status(db)
 
-    assert st.contract_version == 1
+    assert st.contract_version == 2
     assert len(st.accounts) == 1
     a = st.accounts[0]
     assert a.org_type == "claude_max"
@@ -278,8 +333,13 @@ async def test_status_pokazuje_konto_z_planem_i_aktywnym_limitem(db):
     assert by["bucket:five_hour"].utilization == pytest.approx(REAL["five_hour"]["utilization"])
 
     aktywne = [s for s in a.series if s.is_active]
-    assert len(aktywne) == 1 and aktywne[0].kind_ok if False else True
-    assert any(s.is_active and "weekly_all" in s.series_key for s in a.series)
+    assert len(aktywne) == 1
+    assert aktywne[0].kind == "weekly_all"
+
+    # Semantyka serii, bez ktorej UI musialoby zgadywac, ktora seria jest oknem 5 h.
+    assert by["bucket:five_hour"].bucket_key == "five_hour"
+    sesja = [s for s in a.series if s.kind == "session"]
+    assert len(sesja) == 1 and sesja[0].group == "session"
 
 
 async def test_duplikaty_bucket_limit_sa_wykrywane_z_danych(db):

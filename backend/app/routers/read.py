@@ -12,11 +12,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db import get_session
 from app.models import (
     Account, IngestBatch, IngestEvent, LimitSample, Machine, MachineAccount,
     RawPayload, UsageSeries,
 )
+from app.parsing import same_reset_window
 from app.schemas import HistoryGap, HistoryPoint, HistoryResponse, StatusResponse
 from app.services.ingest import utcnow
 from app.services.status import build_status
@@ -113,6 +115,93 @@ def _auto_bucket(seconds: float) -> str:
     return "1h"
 
 
+Interval = tuple[datetime, datetime]
+
+
+def _quiet_intervals(times: list[datetime], from_: datetime, to: datetime,
+                     threshold: timedelta) -> list[Interval]:
+    """Przerwy dluzsze niz `threshold` w ciagu znacznikow, wliczajac poczatek i koniec
+    zakresu. Pusta lista znacznikow => cisza na calym zakresie."""
+    out: list[Interval] = []
+    prev = from_
+    for t in times:
+        if t - prev > threshold:
+            out.append((prev, t))
+        prev = t
+    if to - prev > threshold:
+        out.append((prev, to))
+    return out
+
+
+def _subtract(spans: list[Interval], holes: list[Interval],
+              min_len: timedelta) -> list[Interval]:
+    """spans minus holes. Odcinki krotsze niz `min_len` odrzucamy — inaczej na styku
+    dwoch okresow ciszy zostawaly kilkusekundowe drzazgi udajace awarie."""
+    out: list[Interval] = []
+    for a, b in spans:
+        cur = a
+        for ha, hb in sorted(holes):
+            if hb <= cur or ha >= b:
+                continue
+            if ha > cur and ha - cur >= min_len:
+                out.append((cur, min(ha, b)))
+            cur = max(cur, hb)
+            if cur >= b:
+                break
+        if cur < b and b - cur >= min_len:
+            out.append((cur, b))
+    return out
+
+
+def _reset_boundaries(rows: list[tuple[datetime, datetime | None]]) -> list[datetime]:
+    """Momenty, w ktorych okno sie zresetowalo — czyli w ktorych zmienil sie `resets_at`.
+
+    Liczone z probek, a NIE wewnatrz konkretnego koszyka: wczesniej siedzialo to w gale zi
+    trybu `raw`, wiec kazdy zakres powyzej 6 h (w tym domyslne 24 h) wracal bez ani jednej
+    granicy. Pierwsza zaobserwowana wartosc nie jest resetem — to tylko punkt odniesienia.
+
+    Porownanie idzie przez `same_reset_window`, czyli Z TOLERANCJA — granica podawana przez
+    Anthropic kolysze sie o okolo 2 s w obrebie jednego okna. Na rownosc historia rysowala
+    granice resetu przy kazdej probce: zmierzone 61 "resetow" na dobe dla okna, ktore
+    resetuje sie 5 razy.
+    """
+    out: list[datetime] = []
+    prev: datetime | None = None
+    for captured_at, resets_at in rows:
+        if resets_at is None:
+            continue
+        if prev is None:
+            prev = resets_at
+            continue
+        if not same_reset_window(prev, resets_at, settings.reset_window_eps_sec):
+            out.append(captured_at)
+        # Punkt odniesienia przesuwamy zawsze, zeby powolne kolysanie nie sumowalo sie
+        # do przekroczenia progu po kilku godzinach.
+        prev = resets_at
+    return out
+
+
+def _find_gaps(from_: datetime, to: datetime, batch_times: list[datetime],
+               sample_times: list[datetime], threshold: timedelta) -> list[HistoryGap]:
+    """Dwa rodzaje dziur, bo znacza dwie rozne rzeczy.
+
+    `client_silent` — nie bylo batchy. Nie pracowales, wiec nie ma czego mierzyc.
+    `no_samples`    — batche przychodzily, ale dla TEJ serii nie bylo ani jednej probki.
+
+    Drugi przypadek to AWARIA, dokladnie ta sama, ktora w /status daje `unknown`. Wykres,
+    ktory maluje oba tak samo, klamie w jedynym miejscu, w ktorym to narzedzie klamac nie
+    moze — bo bezczynnosc wyglada wtedy identycznie jak zepsuty klient.
+    """
+    silent = _quiet_intervals(batch_times, from_, to, threshold)
+    no_samples = _subtract(
+        _quiet_intervals(sample_times, from_, to, threshold), silent, threshold
+    )
+    gaps = ([HistoryGap(from_=a, to=b, kind="client_silent") for a, b in silent]
+            + [HistoryGap(from_=a, to=b, kind="no_samples") for a, b in no_samples])
+    gaps.sort(key=lambda g: g.from_)
+    return gaps
+
+
 @router.get("/history", response_model=HistoryResponse)
 async def history(
     account: str = Query(..., description="account_uuid"),
@@ -148,17 +237,11 @@ async def history(
             .order_by(LimitSample.captured_at))
 
     points: list[HistoryPoint] = []
-    resets: list[datetime] = []
     if width == 0:
         rows = (await db.execute(base)).scalars().all()
-        prev_reset = None
         for r in rows:
             u = float(r.utilization) if r.utilization is not None else None
             points.append(HistoryPoint(t=r.captured_at, min=u, max=u, avg=u, last=u, n=1))
-            if r.resets_at is not None and r.resets_at != prev_reset:
-                if prev_reset is not None:
-                    resets.append(r.captured_at)
-                prev_reset = r.resets_at
     else:
         # Downsampling z min/max, zeby piki przezyly agregacje — bez tego wykres klamie.
         slot = func.floor(func.unix_timestamp(LimitSample.captured_at) / width) * width
@@ -186,24 +269,31 @@ async def history(
                 last=float(last) if last is not None else None,
                 n=int(n)))
 
-    # Dziury: liczone z ingest_batches, nie z limit_samples. Brak probek przy dzialajacym
-    # kliencie to co innego niz milczenie klienta — i na wykresie musi wygladac inaczej.
-    batches = (await db.execute(
-        select(IngestBatch.received_at)
-        .where(IngestBatch.account_id == acc.id,
-               IngestBatch.received_at >= from_, IngestBatch.received_at <= to)
-        .order_by(IngestBatch.received_at)
-    )).scalars().all()
-    gaps: list[HistoryGap] = []
-    threshold = timedelta(minutes=15)
-    prev = from_
-    for t in batches:
-        if t - prev > threshold:
-            gaps.append(HistoryGap(from_=prev, to=t, kind="client_silent"))
-        prev = t
-    if to - prev > threshold:
-        gaps.append(HistoryGap(from_=prev, to=to, kind="client_silent"))
+    # Granice resetow: z KAZDEJ probki w zakresie, niezaleznie od koszyka. Wczesniej
+    # liczylo sie to tylko w trybie `raw`, wiec kazdy zakres powyzej 6 h (czyli domyslne
+    # 24 h) wracal bez ani jednej granicy — a to najwazniejsza linia na tym wykresie.
+    sample_rows = (await db.execute(
+        select(LimitSample.captured_at, LimitSample.resets_at)
+        .where(LimitSample.account_id == acc.id,
+               LimitSample.series_id == series_id,
+               LimitSample.captured_at >= from_,
+               LimitSample.captured_at <= to,
+               LimitSample.stale_read.is_(False))
+        .order_by(LimitSample.captured_at)
+    )).all()
 
+    resets = _reset_boundaries(list(sample_rows))
+    gaps = _find_gaps(
+        from_=from_, to=to,
+        batch_times=(await db.execute(
+            select(IngestBatch.received_at)
+            .where(IngestBatch.account_id == acc.id,
+                   IngestBatch.received_at >= from_, IngestBatch.received_at <= to)
+            .order_by(IngestBatch.received_at)
+        )).scalars().all(),
+        sample_times=[t for t, _ in sample_rows],
+        threshold=timedelta(seconds=settings.history_gap_sec),
+    )
     return HistoryResponse(bucket=bucket, points=points, resets=resets, gaps=gaps)
 
 

@@ -32,7 +32,7 @@ from app.models import (
     Account, IngestBatch, IngestEvent, LimitSample, Machine, MachineAccount,
     RawPayload, SeriesState, UsageSeries,
 )
-from app.parsing import Observation, parse_ts, parse_usage
+from app.parsing import Observation, parse_ts, parse_usage, same_reset_window
 
 _ACCOUNT_FIELDS = {
     "email": "email", "display_name": "display_name", "org_uuid": "org_uuid",
@@ -118,6 +118,14 @@ async def get_or_create_series(db: AsyncSession, o: Observation,
         await db.flush()
         created = True
     s.last_seen_at = utcnow()
+    # Etykieta i kolejnosc sa OPISEM, nie danymi — odswiezamy je przy kazdym pomiarze.
+    # Bez tego poprawka slownika etykiet (albo nowa nazwa modelu w scope) nigdy nie
+    # doszlaby do serii zarejestrowanych wczesniej i UI pokazywalby stara tresc do konca
+    # zycia bazy.
+    if s.display_label != o.display_label:
+        s.display_label = o.display_label
+    if s.sort_order != o.sort_order:
+        s.sort_order = o.sort_order
     if o.utilization is not None:
         s.ever_non_null = True
     cache[o.series_key] = s
@@ -175,7 +183,11 @@ async def _write_observation(
 
     if st is not None and st.last_captured_at is not None:
         prev_u = float(st.last_utilization) if st.last_utilization is not None else None
-        same_reset = st.last_resets_at == o.resets_at
+        # Z TOLERANCJA, nie na rownosc: granica okna podawana przez Anthropic kolysze sie
+        # o ~2 s, wiec porownanie doslowne bylo zawsze falszywe i po cichu wylaczalo
+        # zarowno dedup, jak i guard monotonicznosci ponizej.
+        same_reset = same_reset_window(st.last_resets_at, o.resets_at,
+                                      settings.reset_window_eps_sec)
         changed = (prev_u != o.utilization) or not same_reset
 
         # (2) guard monotonicznosci — nieaktualny odczyt z innej maszyny

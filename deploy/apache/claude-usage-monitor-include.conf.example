@@ -36,5 +36,15 @@ RequestHeader set X-Forwarded-Proto "https"
 RequestHeader set X-Forwarded-Port "443"
 
 # --- UI ---------------------------------------------------------------------
-# Do dopisania w fazie 7, po makietach. Wtedy tu ladauje regula na /claude-usage
-# wskazujaca kontener frontendu.
+# Statyki serwuje TEN SAM backend (FastAPI montuje /assets i oddaje index.html jako
+# fallback SPA) — nie ma osobnego kontenera z nginx. Dwa powody: host moze miec wyczerpane pule
+# adresowe Dockera, a wariant nginx + auth_request niesie znana pulapke, w ktorej
+# `$scheme` w kontenerze to http i `$request_uri` jest bez prefiksu, wiec `rd=` po
+# logowaniu wyrzuca uzytkownika na korzen serwisu. Tu brama SSO zostaje w backendzie,
+# ktory buduje redirect_url z jawnych PUBLIC_ORIGIN + APP_BASE_PATH.
+#
+# TA REGULA MUSI BYC PONIZEJ regul /api — ProxyPass sprawdzany jest w kolejnosci zapisu
+# i wygrywa pierwsze dopasowanie. Odwrotna kolejnosc przechwycilaby cale API.
+RedirectMatch 301 ^/claude-usage$ /claude-usage/
+ProxyPass        /claude-usage/ http://claude_usage_monitor_backend:8000/
+ProxyPassReverse /claude-usage/ http://claude_usage_monitor_backend:8000/

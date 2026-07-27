@@ -1,12 +1,22 @@
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from app.logging_config import configure
 from app.routers import ingest as ingest_router
 from app.routers import read as read_router
+
+# Zbudowany frontend. Kopiowany do obrazu z etapu `node` (patrz backend/Dockerfile);
+# przy uruchomieniu bez buildu UI katalog po prostu nie istnieje i API dziala samo.
+# STATIC_DIR pozwala wskazac inny katalog — uzywaja tego testy i dev z lokalnym `dist`.
+STATIC_DIR = Path(
+    os.environ.get("STATIC_DIR") or Path(__file__).resolve().parent.parent / "static"
+)
 
 configure()
 
@@ -45,3 +55,52 @@ app.include_router(read_router.router, prefix="/api")
 async def unhandled(request, exc: Exception):
     logger.exception("Nieobsluzony wyjatek: {}", exc)
     return JSONResponse(status_code=500, content={"reason": "internal-error"})
+
+
+# --------------------------------------------------------------------------- UI
+# Statyki serwuje backend, bez osobnego kontenera z nginx. Powody: host wyczerpal
+# pule adresowe Dockera, a wariant z nginx `auth_request` niesie znana pulapke
+# (`$scheme` w kontenerze to http, `$request_uri` jest bez prefiksu, wiec `rd=` po
+# logowaniu wyrzuca na korzen serwisu). Tutaj brama SSO zostaje w backendzie.
+#
+# KOLEJNOSC MA ZNACZENIE: routery /api sa dopiete WYZEJ, wiec 404 z API zostaje 404
+# z API i nie wraca jako index.html.
+if STATIC_DIR.is_dir():
+    INDEX = STATIC_DIR / "index.html"
+
+    # Nazwy plikow w /assets sa hashowane przez Vite, wiec moga lezec w cache dlugo.
+    app.mount(
+        "/assets",
+        StaticFiles(directory=STATIC_DIR / "assets"),
+        name="assets",
+    )
+
+    @app.middleware("http")
+    async def static_cache(request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+    async def spa(full_path: str):
+        """Fallback SPA. Powloka HTML idzie BEZ SSO — swiadomie.
+
+        Nie ma w niej danych, a caly kontrakt stoi na tym, ze aplikacja dostaje
+        `401 + redirect_url` z /api/status i sama przekierowuje. Bramkowanie samego
+        index.html oddawaloby JSON zamiast strony przy pierwszym wejsciu.
+        """
+        # Nieznana sciezka /api MUSI zostac bledem API. Routery sa dopiete wyzej, ale
+        # to ta funkcja lapie wszystko, czego nie dopasowaly — bez tego waruntku literowka
+        # w adresie endpointu oddawalaby HTTP 200 i strone HTML zamiast 404, a klient
+        # (albo sonda) probowalby to sparsowac jako JSON.
+        if full_path == "api" or full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail={"reason": "not-found"})
+
+        # Plik z katalogu dist (favicon, robots) — jesli istnieje, oddaj go wprost.
+        candidate = (STATIC_DIR / full_path).resolve()
+        if full_path and candidate.is_file() and candidate.is_relative_to(STATIC_DIR):
+            return FileResponse(candidate)
+        if not INDEX.is_file():
+            raise HTTPException(status_code=404, detail={"reason": "ui-not-built"})
+        return FileResponse(INDEX, headers={"Cache-Control": "no-store"})

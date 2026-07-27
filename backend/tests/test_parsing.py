@@ -26,10 +26,25 @@ def test_parse_pct(raw, expected):
 
 
 def test_parse_ts_iso_z_mikrosekundami():
-    # dokladnie taki format zwraca endpoint
+    # dokladnie taki format zwraca endpoint; mikrosekundy OBCINAMY (patrz test nizej)
     dt = parse_ts("2026-07-26T19:59:59.822592+00:00")
-    assert dt == datetime(2026, 7, 26, 19, 59, 59, 822592)
+    assert dt == datetime(2026, 7, 26, 19, 59, 59)
     assert dt.tzinfo is None          # trzymamy naiwny UTC
+
+
+def test_parse_ts_obcina_mikrosekundy_odpowiedzi():
+    """Anthropic stempluje `resets_at` mikrosekundami SWOJEJ ODPOWIEDZI, nie granicy okna.
+    W jednej realnej odpowiedzi `five_hour` konczy sie na `.056340`, a `seven_day`
+    na `.056361` — 21 us roznicy, bo pola licza sie po kolei.
+
+    Bez obciecia porownanie `last_resets_at == o.resets_at` jest praktycznie zawsze
+    falszywe, co po cichu wylacza dedup, guard monotonicznosci i wykrywanie granic resetu.
+    Zmierzone: 63 probki w 6 h dawaly 63 rozne `resets_at`; po obcieciu 2.
+    """
+    a = parse_ts("2026-07-27T00:59:59.056340+00:00")
+    b = parse_ts("2026-07-27T00:59:59.981119+00:00")
+    assert a == b, "dwie odpowiedzi o tej samej granicy okna musza dac ten sam moment"
+    assert a is not None and a.microsecond == 0
 
 
 def test_parse_ts_offset_przeliczany_na_utc():
@@ -45,6 +60,28 @@ def test_parse_ts_epoch_i_iso_daja_ten_sam_moment():
     iso = parse_ts("2026-07-26T20:59:59+00:00")
     epoch = parse_ts(1785099599)
     assert iso == epoch
+
+
+def test_same_reset_window_odroznia_kolysanie_od_prawdziwego_resetu():
+    """Realne wartosci z produkcji: jedno okno sesji, 49 probek w 3 h."""
+    from app.parsing import same_reset_window
+    EPS = 300
+
+    a = parse_ts("2026-07-27T00:59:59.014384+00:00")
+    b = parse_ts("2026-07-27T01:00:00.982268+00:00")
+    assert same_reset_window(a, b, EPS), "2 s kolysania to wciaz to samo okno"
+
+    # reset sesji przesuwa granice o 5 h, tygodniowy o 7 dni — nie do pomylenia z szumem
+    assert not same_reset_window(a, parse_ts("2026-07-27T05:59:59+00:00"), EPS)
+    assert not same_reset_window(a, parse_ts("2026-08-03T00:59:59+00:00"), EPS)
+
+
+def test_same_reset_window_traktuje_brak_resetu_jako_stan():
+    """`spend` nie ma granicy okna. Dwa braki to ten sam stan, pojawienie sie granicy
+    to zmiana — inaczej seria bez resetu pisalaby nowy wiersz przy kazdej probce."""
+    from app.parsing import same_reset_window
+    assert same_reset_window(None, None, 300)
+    assert not same_reset_window(None, parse_ts("2026-07-27T00:59:59+00:00"), 300)
 
 
 def test_parse_ts_smieci_nie_wywalaja():

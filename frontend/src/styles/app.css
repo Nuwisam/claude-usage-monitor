@@ -1,0 +1,843 @@
+/* Klasy wyjete z inline'ow makiety v2 (2a/2b/2c/2d).
+
+   Wymiary sa PRZEPISANE, nie wymyslone — jesli cos tu nie zgadza sie z makieta, makieta
+   ma racje. Skala odstepow, promienie i cienie ida z tokenow Nocturne; twarde piksele
+   zostaja tylko tam, gdzie makieta podaje je wprost (wysokosc toru, rozmiar liczby hero,
+   szerokosci kolumn wiersza serii).
+
+   Ukladu 2b nie budujemy osobno: to ten sam DOM przy jednej kolumnie, mniejszym hero
+   i kaskadzie 2x2. Przelacznik siedzi w jednym @media na koncu pliku. */
+
+@keyframes noctPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* ─── rama aplikacji ───────────────────────────────────────────────────── */
+/* Nocturne: "content hugs the left edge with whitespace on the right" — dlatego
+   max-width bez auto-marginesow, a nie wyciagniete na cala szerokosc monitora. */
+.app {
+  max-width: 1180px;
+  min-height: 100vh;
+}
+
+.app-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-8);
+}
+.app-nav .nav-brand,
+.app-nav a {
+  margin-right: 0;
+  white-space: nowrap;
+}
+.app-nav-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-left: auto;
+}
+
+.pill-contract {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+.pill-contract[data-mismatch="true"] {
+  color: var(--color-accent-200);
+}
+
+.live-dot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 12px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.live-dot::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--color-accent);
+  animation: noctPulse 2.4s ease-in-out infinite;
+}
+/* Odswiezanie stoi (blad, utracone polaczenie) — kropka gasnie i przestaje pulsowac,
+   zeby "zywy" wskaznik nigdy nie klamal o swiezosci danych. */
+.live-dot[data-stalled="true"]::before {
+  background: var(--color-neutral-600);
+  animation: none;
+}
+
+/* ─── baner ostrzezen ─────────────────────────────────────────────────── */
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin: 0 var(--space-8) var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-800);
+}
+.banner-icon {
+  margin-top: 1px;
+  flex: none;
+  color: var(--color-accent-200);
+}
+.banner-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.banner-text {
+  font-size: 13px;
+  color: var(--color-accent-100);
+}
+.banner-source {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+
+/* ─── przelaczniki widoku ─────────────────────────────────────────────── */
+.view-toggles {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: 0 var(--space-8) var(--space-4);
+}
+.check {
+  font-size: 12px;
+}
+.check .dot {
+  border-radius: 3px;
+  border-color: color-mix(in srgb, var(--color-text) 30%, transparent);
+}
+.check span:last-child {
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+}
+
+/* ─── siatka kont ─────────────────────────────────────────────────────── */
+/* Kreski miedzy kolumnami rysuja same karty: pierscien 1px w szczelinie 1px daje ostra
+   wlosowa linie miedzy sasiadami. Makieta malowala je tlem kontenera, ale wtedy przy
+   NIEPARZYSTEJ liczbie kont ostatnia komorka siatki zostaje pusta i swieci kolorem
+   dzielnika jak widmowy panel — a trzecie konto to realna przyszlosc tego projektu. */
+.accounts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
+  gap: 1px;
+  background: var(--color-bg);
+}
+.account {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-6);
+  background: var(--color-bg);
+  box-shadow: 0 0 0 1px var(--color-divider);
+  min-width: 0;
+}
+
+.account-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.account-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.account-title h5 {
+  margin: 0;
+  font-size: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-machine {
+  font-size: 11px;
+  margin-left: auto;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+.account-tags {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.tag-mono {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* ─── hero: sesja 5 h ─────────────────────────────────────────────────── */
+.hero {
+  gap: var(--space-3);
+  padding: var(--space-6);
+}
+.hero-top {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.hero-binds {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-accent-200);
+}
+.hero-fresh {
+  font-size: 11px;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+.hero-main {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+.hero-labels {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.hero-label {
+  font-size: 15px;
+}
+.hero-reset {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+}
+.hero-reset .ph {
+  color: var(--color-accent-300);
+  vertical-align: -2px;
+}
+.hero-value {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  flex: none;
+}
+.hero-number {
+  font-size: 62px;
+  line-height: 0.86;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.035em;
+}
+.hero-unit {
+  font-size: 20px;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+/* Hero bez liczby (unknown) — ten sam blok, ale slowami. Nigdy zero. */
+.hero-nodata {
+  font-size: 24px;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.hero-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-1);
+}
+.hero-note {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  text-wrap: pretty;
+}
+.tag-num {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── naglowek sekcji z kreska ────────────────────────────────────────── */
+.section-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.section-label > span {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  flex: none;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+.section-label::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--color-divider);
+}
+
+/* ─── kaskada ─────────────────────────────────────────────────────────── */
+.cascade {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+.rung {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-sunken);
+  min-width: 0;
+}
+.rung-label {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.rung-value {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.rung[data-state="off"] .rung-value {
+  text-decoration: line-through;
+  color: color-mix(in srgb, var(--color-text) 45%, transparent);
+  font-variant-numeric: normal;
+}
+.rung[data-state="unknown"] .rung-value {
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  font-variant-numeric: normal;
+}
+/* Szczebel, ktory ogranicza CIEBIE teraz. Krotka kreska akcentu — w tym systemie akcent
+   jest linia i poswiata, nie zalewa. */
+.rung-current {
+  height: 2px;
+  border-radius: 1px;
+  background: var(--color-accent);
+}
+
+/* ─── wiersz serii ────────────────────────────────────────────────────── */
+.series-list {
+  display: flex;
+  flex-direction: column;
+}
+/* Cztery obszary, bo waski uklad (2b) przestawia je bez zmiany DOM:
+   szeroko   [etykieta | tor | liczba]      z notatka pod etykieta
+   wasko     [etykieta | liczba] / tor / notatka                      */
+.series-row {
+  display: grid;
+  grid-template-columns: 1fr 104px 62px;
+  grid-template-areas:
+    "title bar value"
+    "sub   bar value";
+  column-gap: var(--space-4);
+  align-items: center;
+  padding: var(--space-3) 0;
+  /* Regula wiersza gasnie na koncach — sygnatura Nocturne, tu skrocona do 12px, bo
+     wiersz jest wezszy niz tabela z systemu. */
+  background: linear-gradient(
+      to right,
+      transparent,
+      color-mix(in srgb, var(--color-text) 10%, transparent) 12px,
+      color-mix(in srgb, var(--color-text) 10%, transparent) calc(100% - 12px),
+      transparent
+    )
+    no-repeat bottom / 100% 1px;
+}
+.series-row[data-dup="true"] {
+  opacity: 0.5;
+}
+.series-title {
+  grid-area: title;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.series-sub {
+  grid-area: sub;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.series-row .bar {
+  grid-area: bar;
+}
+.series-value {
+  grid-area: value;
+}
+.series-label {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.series-active-mark {
+  width: 2px;
+  height: 13px;
+  border-radius: 1px;
+  flex: none;
+  background: var(--color-accent);
+}
+.series-binds {
+  font-size: 10px;
+  flex: none;
+  color: var(--color-accent-200);
+}
+.tag-dup {
+  font-size: 9px;
+  padding: 1px 6px;
+  flex: none;
+}
+.series-key {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: color-mix(in srgb, var(--color-text) 45%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.series-note {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.series-pct {
+  text-align: right;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.series-nodata {
+  text-align: right;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+
+/* ─── tor wypelnienia: cztery stany, cztery rysunki ───────────────────── */
+/* To jest miejsce, w ktorym zasada "unknown nie jest zerem" zamienia sie w piksele.
+   Kazde wypelnienie da sie przeczytac jako wartosc — dlatego przy `unknown` nie ma
+   ZADNEGO wypelnienia, a przy `inferred_reset` jest kontur bez masy. */
+.bar {
+  position: relative;
+  height: 8px;
+}
+.bar-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  background: var(--color-neutral-900);
+}
+.bar-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 4px;
+  background: var(--color-accent-500);
+}
+/* stale: ten sam ksztalt, przygaszone wypelnienie. Liczba nadal jest prawdziwa —
+   zuzycie nie rosnie samo, starzeje sie wylacznie odczyt. */
+.bar-fill[data-fresh="stale"] {
+  background: var(--color-accent-700);
+}
+.bar-outline {
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  border: 1px dashed color-mix(in srgb, var(--color-text) 26%, transparent);
+}
+.bar-outline[data-hatch="true"] {
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-text) 10%, transparent) 0 3px,
+    transparent 3px 8px
+  );
+}
+/* inferred_reset: kikut przy zerze — ksztalt pomiaru, ale bez masy. */
+.bar-stub {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-accent) 50%, transparent);
+}
+/* Kreska-duch: ostatni ZMIERZONY punkt przy stanie unknown. Celowo nie wyglada jak
+   pasek, bo to nie jest "teraz". */
+.bar-ghost {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: color-mix(in srgb, var(--color-text) 45%, transparent);
+}
+.bar-full {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  right: 0;
+  width: 3px;
+  border-radius: 1px;
+  background: var(--color-accent-100);
+}
+.bar-hero {
+  height: 12px;
+}
+.bar-hero .bar-track,
+.bar-hero .bar-fill,
+.bar-hero .bar-outline {
+  border-radius: 6px;
+}
+.bar-hero .bar-fill[data-fresh="live"] {
+  background: var(--color-accent);
+}
+
+/* Konto, ktore raportuje, ale nie ma ani jednej serii z wartoscia. */
+.empty-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 62px;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px dashed color-mix(in srgb, var(--color-text) 22%, transparent);
+  font-size: 12px;
+  text-align: center;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+
+/* ─── historia: sterowanie ────────────────────────────────────────────── */
+.hist-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-8) var(--space-6);
+  border-bottom: 1px solid var(--color-divider);
+}
+.hist-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-left: auto;
+  text-align: right;
+}
+.hist-meta-mono {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+.hist-meta-range {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+
+/* ─── historia: facet per konto ───────────────────────────────────────── */
+.facet {
+  padding: var(--space-6) var(--space-8) var(--space-8);
+  border-bottom: 1px solid var(--color-divider);
+}
+.facet-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+.facet-head h5 {
+  margin: 0;
+  font-size: 15px;
+}
+.facet-plan {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+.facet-stats {
+  font-size: 11px;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.facet-now {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+.facet-now[data-nodata="true"] {
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+.chart-y {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 2px 0 14px;
+}
+.chart-y span {
+  font-size: 10px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+.chart-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.chart-svg {
+  display: block;
+  width: 100%;
+  height: 208px;
+  overflow: visible;
+}
+.chart-x {
+  position: relative;
+  height: 14px;
+}
+.chart-x span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+.facet-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+  margin-left: 42px;
+  flex-wrap: wrap;
+}
+.facet-gap {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.facet-note {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  text-wrap: pretty;
+}
+
+/* ─── historia: legenda ───────────────────────────────────────────────── */
+.legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+  padding: var(--space-6) var(--space-8);
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.sw-line {
+  width: 22px;
+  height: 2px;
+  background: var(--color-accent-300);
+}
+.sw-reset {
+  width: 0;
+  height: 14px;
+  border-left: 1px dashed var(--color-accent-300);
+}
+.sw-silent {
+  width: 22px;
+  height: 14px;
+  border-radius: 2px;
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--color-text) 18%, transparent) 0 3px,
+    transparent 3px 8px
+  );
+}
+.sw-nosamples {
+  width: 22px;
+  height: 14px;
+  border-radius: 2px;
+  background: radial-gradient(
+      color-mix(in srgb, var(--color-text) 28%, transparent) 1px,
+      transparent 1.2px
+    )
+    0 0 / 7px 7px;
+}
+.legend-closing {
+  font-size: 11px;
+  margin-left: auto;
+  max-width: 290px;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  text-wrap: pretty;
+}
+
+/* ─── stany calego widoku ─────────────────────────────────────────────── */
+.state-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-8);
+  max-width: 620px;
+}
+.state-block h4 {
+  margin: 0;
+}
+.state-block p {
+  font-size: 13px;
+  color: color-mix(in srgb, var(--color-text) 65%, transparent);
+  text-wrap: pretty;
+}
+.state-block pre {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-sunken);
+  color: color-mix(in srgb, var(--color-text) 70%, transparent);
+}
+
+/* ═══ 2b — waska kolumna. Ten sam DOM, inne proporcje. ═════════════════ */
+@media (max-width: 900px) {
+  .app-nav {
+    padding: var(--space-4);
+    gap: var(--space-3);
+  }
+  /* Waski naglowek to marka + puls, jak w makiecie 2b. Wersja kontraktu znika —
+     ALE tylko gdy sie zgadza; rozjazd musi byc widoczny na kazdej szerokosci. */
+  .pill-contract[data-mismatch="false"] {
+    display: none;
+  }
+  .live-cadence {
+    display: none;
+  }
+  .banner {
+    margin: 0 var(--space-4) var(--space-4);
+  }
+  .view-toggles {
+    padding: 0 var(--space-4) var(--space-4);
+    gap: var(--space-4);
+  }
+  .accounts {
+    grid-template-columns: 1fr;
+  }
+  .account {
+    gap: var(--space-4);
+    padding: var(--space-4);
+    /* W waskim ukladzie karty sa jedna pod druga — pierscien zamieniamy na pojedyncza
+       kreske u gory, inaczej sasiedzi rysowaliby podwojne linie. */
+    box-shadow: none;
+    border-top: 1px solid var(--color-divider);
+  }
+  .account-title h5 {
+    font-size: 14px;
+  }
+  .tag-mono {
+    font-size: 9px;
+    padding: 2px 7px;
+  }
+  .account-machine {
+    font-size: 10px;
+  }
+
+  .hero {
+    gap: var(--space-2);
+    padding: var(--space-4);
+  }
+  .hero-number {
+    font-size: 44px;
+    letter-spacing: -0.03em;
+  }
+  .hero-unit {
+    font-size: 16px;
+  }
+  .hero-label {
+    font-size: 13px;
+  }
+  .bar-hero {
+    height: 10px;
+  }
+  .bar-hero .bar-track,
+  .bar-hero .bar-fill,
+  .bar-hero .bar-outline {
+    border-radius: 5px;
+  }
+
+  /* Kaskada 2x2 — cztery szczeble w wezszej kolumnie nadal czytelne. */
+  .cascade {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+  }
+  .rung {
+    padding: var(--space-2) var(--space-3);
+  }
+  .rung-label {
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .rung-value {
+    font-size: 11px;
+  }
+
+  /* Wiersz serii przestaje byc trojkolumnowy: etykieta z liczba w jednej linii,
+     tor pod nia, notatka na dole (makieta 2b). Cel dotkniecia >= 44px. */
+  .series-row {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "title value"
+      "bar   bar"
+      "sub   sub";
+    row-gap: var(--space-2);
+    align-items: baseline;
+    min-height: 44px;
+  }
+  .series-row .series-title {
+    align-items: baseline;
+  }
+  .series-pct {
+    font-size: 15px;
+  }
+
+  .hist-controls,
+  .legend {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+  }
+  .facet {
+    padding: var(--space-4);
+  }
+  .facet-foot {
+    margin-left: 0;
+  }
+  .chart-svg {
+    height: 168px;
+  }
+  .legend-closing {
+    margin-left: 0;
+  }
+}

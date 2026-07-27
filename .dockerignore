@@ -1,0 +1,28 @@
+# Kontekst budowania to caly katalog repo (etap `ui` potrzebuje frontend/), a w repo
+# lezy TAKZE katalog danych MariaDB — bez tego pliku kazdy `docker compose build`
+# przesylalby setki MB bazy do daemona.
+data/
+backups/
+.git/
+node_modules/
+frontend/node_modules/
+frontend/dist/
+__pycache__/
+**/__pycache__/
+*.pyc
+.venv/
+venv/
+logs/
+*.log
+*.jsonl
+
+# Sekrety nie maja prawa wejsc do obrazu.
+.env
+
+# Rzeczy nieuzywane przy budowaniu obrazu.
+docs/
+scripts/
+deploy/
+client/
+backend/tests/
+*.md

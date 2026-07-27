@@ -8,18 +8,20 @@ monitora **sam wynik pomiaru**. Token nigdy nie opuszcza maszyny, a endpoint tok
 jest wołany nigdy — odświeżanie należy do Claude Code. Dzięki temu nie ma tu głównego
 wektora utraty konta, czyli rotacji jednorazowego refresh tokenu.
 
-## Stan: faza 1 wdrożona
+## Stan: wdrożone
+
+**<https://usage.example.org/claude-usage/>** — za SSO.
 
 | Element | Stan |
 |---|---|
 | Sonda + hooki (`PostToolUse` async, `Stop`) | działa |
 | Backend + MariaDB na `192.0.2.10` | działa |
 | Apache `/claude-usage` + filtr brzegowy | działa |
-| API odczytu za SSO | działa |
-| UI | **nie zaczęte** — czeka na makiety (faza 7) |
+| API odczytu za SSO, kontrakt v2 | działa |
+| UI — **Live** i **Historia** | działa |
 
-Do czasu powstania UI system jest w pełni użyteczny przez API:
-<https://usage.example.org/claude-usage/api/status> (otwórz w przeglądarce zalogowanej do SSO).
+UI pokrywa dwa widoki z makiet. Diagnostyka (zdarzenia, batche, maszyny, surowe payloady)
+została świadomie przy `curl` — patrz `docs/UI-HANDOUT.md` § 10.
 
 ## Architektura
 
@@ -31,14 +33,21 @@ maszyna z Claude Code                              192.0.2.10
 │        ↓                     │      HTTPS + Bearer + X-Ingest-Key
 │ client/usage-probe.py        │ ───────────────────────────────────►  Apache
 │  · czyta token (read-only)   │                                         │
-│  · GET /api/oauth/usage      │                    /claude-usage/api/ingest ──► backend
-│  · throttle 60 s             │                    /claude-usage/api/*    ──► backend (SSO)
-│  · spool przy awarii         │                                         │
+│  · GET /api/oauth/usage      │              /claude-usage/api/ingest ──► backend
+│  · throttle 60 s             │              /claude-usage/api/*     ──► backend (SSO)
+│  · spool przy awarii         │              /claude-usage/          ──► backend (statyki)
 └──────────────────────────────┘                          ┌──────────────┴──────────────┐
                                                           │ backend  FastAPI :8000       │
+                                                          │   + zbudowany frontend       │
                                                           │ mariadb  (sieć internal)     │
                                                           └──────────────────────────────┘
 ```
+
+**Dwa kontenery, nie trzy.** Statyki UI serwuje backend (etap `node` w jego Dockerfile).
+Host moze miec wyczerpane pule adresowe Dockera, a wariant z osobnym nginx-em i `auth_request` niesie
+pułapkę, w której `$scheme` w kontenerze to `http`, a `$request_uri` nie zawiera prefiksu —
+przez co powrót po zalogowaniu wyrzuca na korzeń serwisu. Tu bramą SSO zostaje backend,
+budujący `redirect_url` z jawnych `PUBLIC_ORIGIN` + `APP_BASE_PATH`.
 
 ## Dlaczego tak, a nie inaczej
 
@@ -115,10 +124,16 @@ apachectl configtest && systemctl reload apache2
 cd backend
 pip install -e ".[dev]"
 DATABASE_URL="sqlite+aiosqlite:///:memory:" INGEST_TOKENS="t:m" ALLOWED_EMAILS="a@b.pl" pytest
+
+cd ../frontend && npm run typecheck
 ```
 
-64 testy, w tym normalizator i ścieżka zapisu uruchamiane na **realnym payloadzie** z konta Max
-(`backend/tests/fixtures/usage_max.json`), nie na wymyślonym.
+107 testów, w tym normalizator i ścieżka zapisu uruchamiane na **realnym payloadzie** z konta
+Max (`backend/tests/fixtures/usage_max.json`), nie na wymyślonym.
+
+Kilka z nich pilnuje błędów, które raz już przeszły niezauważone na produkcję — dedup i guard
+monotoniczności przy kołyszącym się `resets_at`, fallback SPA zjadający błędy API, `unknown`
+renderowane jako zero. Przy zmianach w tych okolicach zacznij od przeczytania ich nazw.
 
 ## Licencja
 

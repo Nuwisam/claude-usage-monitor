@@ -31,21 +31,24 @@ _SORT = {
     "extra:usage": 40,
 }
 
+# Etykiety sa TRESCIA WIDOCZNA W UI — w odroznieniu od komentarzy w kodzie pisze sie je
+# z polskimi znakami. Nieznany klucz dostaje etykiete z samego klucza (patrz `humanize`),
+# wiec nowy bucket u Anthropic wyswietli sie sam, bez wpisu w tej tabeli.
 _LABELS = {
     "five_hour": "Sesja (5 h)",
-    "seven_day": "Tydzien (wszystkie modele)",
-    "seven_day_opus": "Tydzien - Opus",
-    "seven_day_sonnet": "Tydzien - Sonnet",
-    "seven_day_omelette": "Tydzien - Design",
-    "seven_day_cowork": "Tydzien - Cowork",
-    "seven_day_oauth_apps": "Tydzien - aplikacje OAuth",
-    "seven_day_overage_included": "Tydzien - z nadwyzka",
+    "seven_day": "Tydzień (wszystkie modele)",
+    "seven_day_opus": "Tydzień — Opus",
+    "seven_day_sonnet": "Tydzień — Sonnet",
+    "seven_day_omelette": "Tydzień — Design",
+    "seven_day_cowork": "Tydzień — Cowork",
+    "seven_day_oauth_apps": "Tydzień — aplikacje OAuth",
+    "seven_day_overage_included": "Tydzień — z nadwyżką",
 }
 
 _KIND_LABELS = {
     "session": "Sesja",
-    "weekly_all": "Tydzien (wszystkie modele)",
-    "weekly_scoped": "Tydzien",
+    "weekly_all": "Tydzień (wszystkie modele)",
+    "weekly_scoped": "Tydzień",
 }
 
 
@@ -93,14 +96,27 @@ def parse_pct(v: Any) -> float | None:
 
 
 def parse_ts(v: Any) -> datetime | None:
-    """ISO-8601 (surowa odpowiedz) albo epoch w sekundach (statusline). Zwraca naiwny UTC,
-    bo kolumny w bazie sa naiwne i wszystko trzymamy w UTC."""
+    """ISO-8601 (surowa odpowiedz) albo epoch w sekundach (statusline). Zwraca naiwny UTC
+    OBCIETY DO PELNYCH SEKUND, bo kolumny w bazie sa naiwne i wszystko trzymamy w UTC.
+
+    Obciecie mikrosekund nie jest kosmetyka i nie gubi informacji. Anthropic stempluje
+    `resets_at` mikrosekundami SWOJEJ ODPOWIEDZI, nie granicy okna — w jednej odpowiedzi
+    `five_hour` konczy sie na `00:59:59.056340`, a `seven_day` na `15:59:59.056361`
+    (21 us roznicy, bo pola sa liczone po kolei). Efekt zmierzony: 63 probki
+    w 6 h dawaly 63 rozne `resets_at`, a po obcieciu do sekundy zostaja 2 wartosci.
+
+    Przez to porownanie `last_resets_at == o.resets_at` bylo praktycznie zawsze falszywe,
+    co po cichu wylaczalo TRZY mechanizmy naraz: dedup (kazda probka zapisywana jako
+    zmiana), guard monotonicznosci (odpalal sie tylko przy niezmienionym resets_at)
+    i wykrywanie granic resetu w historii (61 "resetow" na dobe zamiast pieciu).
+    """
     if v is None or isinstance(v, bool):
         return None
     if isinstance(v, (int, float)):
         # >1e12 => milisekundy; endpoint tego nie robi, ale tanio sie zabezpieczyc
         secs = float(v) / 1000.0 if float(v) > 1e12 else float(v)
-        return datetime.fromtimestamp(secs, tz=timezone.utc).replace(tzinfo=None)
+        dt = datetime.fromtimestamp(secs, tz=timezone.utc).replace(tzinfo=None)
+        return dt.replace(microsecond=0)
     if isinstance(v, str):
         s = v.strip().replace("Z", "+00:00")
         # fromisoformat w 3.12 radzi sobie z mikrosekundami i offsetem, ale nie z >6 cyframi
@@ -113,8 +129,31 @@ def parse_ts(v: Any) -> datetime | None:
             return None
         if dt.tzinfo is not None:
             dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-        return dt
+        return dt.replace(microsecond=0)
     return None
+
+
+def same_reset_window(a: datetime | None, b: datetime | None, eps_sec: float) -> bool:
+    """Czy dwa `resets_at` opisuja TO SAMO okno.
+
+    Nie da sie tego sprawdzic rownoscia, bo granica okna podawana przez Anthropic KOLYSZE
+    SIE. Zmierzone: 49 probek w ciagu 3 godzin, jedno okno sesji, wartosci od
+    `00:59:59.014384` do `01:00:00.982268` — rozstrzal niespelna 2 sekundy, przechodzacy
+    przy okazji przez granice minuty (wiec obcinanie do sekundy ani do minuty tego nie
+    zalatwia; obcinanie zostaje, ale tylko zeby nie trzymac w bazie szumu).
+
+    Tolerancja rozstrzyga to jednoznacznie: prawdziwy reset przesuwa granice o CALE OKNO —
+    5 godzin dla sesji, 7 dni dla tygodnia. Kilkuminutowy prog jest o dwa rzedy wielkosci
+    wiekszy od kolysania i o dwa rzedy mniejszy od najkrotszego okna.
+
+    Brak wartosci po obu stronach traktujemy jako to samo okno (np. `spend` nie ma resetu);
+    brak po jednej stronie to zmiana.
+    """
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    return abs((a - b).total_seconds()) <= eps_sec
 
 
 def _slug(s: Any) -> str:
@@ -195,8 +234,9 @@ def parse_usage(payload: Any) -> ParseResult:
                    if isinstance(scope, dict) else None)
         kind, group = lim.get("kind"), lim.get("group")
         label = _KIND_LABELS.get(kind or "", (kind or "limit").replace("_", " "))
+        # Pauza, nie dywiz — etykieta jest tresci widoczna w UI ("Tydzień — Fable").
         if model:
-            label = "%s - %s" % (label, model)
+            label = "%s — %s" % (label, model)
         if surface:
             label = "%s / %s" % (label, surface)
         obs.append(Observation(
@@ -232,7 +272,7 @@ def parse_usage(payload: Any) -> ParseResult:
     if isinstance(sp, dict):
         obs.append(Observation(
             series_key="spend:org", source="spend",
-            display_label="Limit wydatkow organizacji",
+            display_label="Limit wydatków organizacji",
             utilization=parse_pct(sp.get("percent")),
             severity=sp.get("severity"),
             sort_order=_SORT["spend:org"],

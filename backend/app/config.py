@@ -29,10 +29,18 @@ class Settings(BaseSettings):
     # --- Dedup i spojnosc ---
     sample_heartbeat_sec: int = Field(300, alias="SAMPLE_HEARTBEAT_SEC")
     monotonic_eps: float = Field(0.5, alias="MONOTONIC_EPS")
+    # Do jakiej roznicy `resets_at` uznajemy, ze to TO SAMO okno. Granica podawana przez
+    # Anthropic kolysze sie o ~2 s; najkrotsze okno ma 5 h. Patrz parsing.same_reset_window.
+    reset_window_eps_sec: int = Field(300, alias="RESET_WINDOW_EPS_SEC")
 
     # --- Swiezosc ---
     fresh_window_sec: int = Field(300, alias="FRESH_WINDOW_SEC")
     client_silent_sec: int = Field(21600, alias="CLIENT_SILENT_SEC")
+
+    # --- Historia ---
+    # Od jakiej przerwy uznajemy dziure w danych. Throttle sondy to 60 s, heartbeat 300 s,
+    # wiec 15 min to kilkukrotnosc normalnego odstepu — nie zglasza szumu.
+    history_gap_sec: int = Field(900, alias="HISTORY_GAP_SEC")
 
     @property
     def allowed_emails(self) -> set[str]:

@@ -28,7 +28,13 @@ services:
       start_period: 30s
 
   claude_usage_monitor_backend:
-    build: ./backend
+    # Kontekst to katalog repo, nie ./backend — etap `ui` w Dockerfile buduje frontend/.
+    # Bez tego COPY frontend/... nie widzi zrodel. Wielkosc kontekstu trzyma .dockerignore.
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        VITE_BASE_PATH: ${APP_BASE_PATH:-/claude-usage}/
     container_name: claude_usage_monitor_backend
     restart: unless-stopped
     environment:

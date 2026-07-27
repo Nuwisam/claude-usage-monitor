@@ -3,6 +3,10 @@
 Host: `192.0.2.10` (`usage.example.org`). Katalog: `/var/lib/claude-usage-monitor`
 == `Z:/projects/claude-usage-monitor`. **Kopia robocza jest wdrożeniem.**
 
+UI: <https://usage.example.org/claude-usage/> — serwowane przez **ten sam kontener
+backendu** (statyki z etapu `node` w `backend/Dockerfile`), więc nie ma osobnego kontenera
+frontendu i nie ma nic do restartowania osobno.
+
 ## Codzienna obsługa
 
 ```bash
@@ -57,6 +61,10 @@ nieudanych POST-ach) i sekcję o certyfikatach w `client/README.md`.
 | `docker compose up` → *„all predefined address pools have been fully subnetted"* | Docker wyczerpał pule (limit ~31 sieci). Usuń osieroconą sieć: `docker network ls`, sprawdź `docker network inspect <n> -f '{{len .Containers}}'` |
 | Zdarzenia `clock_skew` | Zegar klienta rozjechany >5 min. Backend użył czasu serwera — dane są poprawne, ale warto zsynchronizować zegar |
 | Zdarzenia `schema_drift` | Anthropic zmienił kształt odpowiedzi. Payload jest zapisany w całości; obejrzyj `GET /api/batches/{id}/raw` i zaktualizuj `app/parsing.py` + fixture |
+| UI daje **404** na `/claude-usage/` | Obraz zbudowany bez etapu `node` albo `dist` pusty. `docker exec claude_usage_monitor_backend ls /app/static` — powinien być `index.html` i `assets/`. Jeśli pusto: `docker compose build --no-cache` |
+| UI ładuje się, ale **pusta strona** i błąd w konsoli | Rozjazd `base` Vite z regułą Apache. Assety muszą wisieć pod `/claude-usage/assets/…`; `APP_BASE_PATH` w `.env`, `VITE_BASE_PATH` w build-argu i `ProxyPass` muszą mówić to samo |
+| Nagłówek UI pokazuje **`kontrakt vN ≠ v2`** | Backend i frontend rozjechały się wersją kontraktu — zbudowane z różnych commitów. `docker compose up -d --build` |
+| **Liczba próbek rośnie przy każdym pomiarze** mimo braku zmian | Zepsuty dedup. Sprawdź, czy porównanie `resets_at` idzie przez `same_reset_window` (tolerancja), a nie na równość — granica okna kołysze się o ~2 s i porównanie dosłowne wyłącza dedup, guard monotoniczności i granice resetu naraz |
 
 ## Backup
 
@@ -119,5 +127,18 @@ chmod 600 /etc/apache2/sites-available/claude-usage-monitor-include.conf
 apachectl configtest && systemctl reload apache2
 ```
 
-Weryfikacja: 401 z `redirect_url` na `/api/status`, 403 na `/api/ingest` bez `X-Ingest-Key`,
+Weryfikacja API: 401 z `redirect_url` na `/api/status`, 403 na `/api/ingest` bez `X-Ingest-Key`,
 401 z kluczem brzegowym ale bez tokenu, 200 z kompletem.
+
+Weryfikacja UI (żadna nie wymaga sesji SSO):
+```bash
+B=https://usage.example.org/claude-usage
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' $B/          # 200 text/html
+curl -s -o /dev/null -w '%{http_code}\n' $B/historia                  # 200 — fallback SPA
+curl -s $B/api/nieistnieje                                            # 404 JSON, NIE index.html
+curl -sI $B | grep -i location                                        # 301 na /claude-usage/
+```
+
+Ostatnie z nich jest istotne: fallback SPA łapie wszystko, czego nie dopasowały routery, więc
+literówka w adresie endpointu może zacząć oddawać stronę HTML zamiast błędu. Pilnuje tego
+`backend/tests/test_static_spa.py`.
