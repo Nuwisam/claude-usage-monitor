@@ -1,16 +1,11 @@
 /** Stan swiezosci -> wyglad. JEDYNE miejsce, w ktorym ta decyzja zapada.
  *
- *  Zasada 4 z AGENTS.md w postaci pikseli: `unknown` NIGDY nie jest zerem. Kazde
- *  wypelnienie toru da sie przeczytac jako wartosc, wiec przy `unknown` nie ma zadnego
- *  wypelnienia i w kolumnie procentow nie ma liczby — jest slowo "nie wiem".
- *
- *  Najgorszy tryb awarii tego narzedzia to falszywe, pewnie wygladajace zero: na jego
- *  podstawie odpalasz duze zadanie i trafiasz w sciane. Dlatego rozne stany musza wygladac
- *  ROZNIE, a nie tylko miec inny tooltip.
- */
+ *  Zasada 4 z AGENTS.md w pikselach: `unknown` nie ma zadnego wypelnienia toru ani liczby
+ *  w kolumnie procentow, bo kazde wypelnienie da sie przeczytac jako wartosc. Stany musza
+ *  roznic sie rysunkiem, nie tylko tooltipem. */
 import type { SeriesStatus } from "../api/types";
 import { clampPct, pct } from "./format";
-import { hm, hms, parseUtc } from "./time";
+import { countdown, hm, hms, parseUtc } from "./time";
 
 export interface SeriesView {
   /** Tor z tlem i wypelnieniem — tylko dla realnych pomiarow (live, stale). */
@@ -39,9 +34,17 @@ export interface SeriesView {
 
 export function describeSeries(s: SeriesStatus, extraNote?: string | null): SeriesView {
   const f = s.freshness;
-  const captured = parseUtc(s.capturedAt);
+  // Czas bierzemy z POTWIERDZENIA, nie z zapisu probki: dedup nie zapisuje probki przy
+  // niezmienionej wartosci, wiec `capturedAt` bywa o godziny starsze niz ostatni pomiar.
+  const confirmed = parseUtc(s.confirmedAt ?? s.capturedAt);
+  const stable = parseUtc(s.valueSince);
   const suffix = extraNote ? ` · ${extraNote}` : "";
   const rawText = pct(s.rawUtilization);
+  // Prog 2 min, inaczej „bez zmian od" wisialoby przy kazdym wierszu.
+  const held =
+    stable && confirmed && confirmed.getTime() - stable.getTime() >= 120_000
+      ? ` · bez zmian od ${hm(stable)}`
+      : "";
 
   const base = {
     measured: f === "live" || f === "stale",
@@ -61,21 +64,24 @@ export function describeSeries(s: SeriesStatus, extraNote?: string | null): Seri
         ...base,
         number: pct(s.utilization),
         words: null,
-        note: `odczyt o ${hm(captured)}${suffix}`,
-        heroNote: `odczyt o ${hms(captured)}`,
+        note: `odczyt o ${hm(confirmed)}${held}${suffix}`,
+        heroNote: `odczyt o ${hms(confirmed)}${held}`,
       };
     case "stale":
+      // Brak potwierdzenia od 5 min — nie synonim awarii: hooki chodza tylko przy pracy,
+      // wiec przerwa daje ten sam stan co martwy klient (awarie lapie `unknown`).
+      // „moze byc juz wyzsza", bo w trwajacym oknie utilization tylko rosnie.
       return {
         ...base,
         number: pct(s.utilization),
         words: null,
-        note: `odczyt o ${hm(captured)} · okno trwa, wartość wciąż aktualna`,
-        heroNote: `odczyt o ${hm(captured)}`,
+        note: `ostatnie potwierdzenie o ${hm(confirmed)} · wartość może być już wyższa${suffix}`,
+        heroNote: `ostatnie potwierdzenie o ${hm(confirmed)}`,
       };
     case "inferred_reset":
       return {
         ...base,
-        // Tylda jest tu istotna: to wynik wnioskowania, nie pomiar.
+        // Tylda odroznia wnioskowanie od pomiaru.
         number: "~0",
         words: null,
         note: "wyliczone ~0%, nie zmierzone",
@@ -87,18 +93,38 @@ export function describeSeries(s: SeriesStatus, extraNote?: string | null): Seri
         number: null,
         words: "nie wiem",
         note: rawText
-          ? `ostatni odczyt ${rawText}% o ${hm(captured)} — teraz nie wiemy`
+          ? `ostatni odczyt ${rawText}% o ${hm(confirmed)} — teraz nie wiemy`
           : "brak danych dla tej serii — sprawdź klienta",
         heroNote: rawText
-          ? `ostatni odczyt ${rawText}% o ${hm(captured)}`
+          ? `ostatni odczyt ${rawText}% o ${hm(confirmed)}`
           : "brak danych dla tej serii",
       };
   }
 }
 
-/** Doklejka do podpisu serii wydatkow: kwoty z jej wlasnego `extra`.
- *  Backend zostawia je w jednostkach mniejszych i nietypowane — czytamy defensywnie,
- *  bo to jedyne pole w kontrakcie bez schematu. */
+/** Podpis odliczania w hero, w dwoch czesciach: `at` idzie do spana, ktory waski uklad chowa,
+ *  wiec `lead` musi bronic sie sam.
+ *
+ *  `resetsAt: null` ma DWA powody i „bez resetu" zlewalo je w napis czytany jak „to okno sie
+ *  nie resetuje": (a) Anthropic nie podaje granicy dla okna z 0% zuzycia, (b) sonda zeruje
+ *  przedawniona granice z cache (`reset-w-toku`, do ~5 min). */
+export function resetNote(s: SeriesStatus, nowMs: number): { lead: string; at: string | null } {
+  // `source` to enum kontraktu; nazwa bucketu byla by zlamaniem zasady 5.
+  if (s.source === "spend" || s.source === "extra_usage") return { lead: "bez resetu", at: null };
+  const r = parseUtc(s.resetsAt);
+  if (r) {
+    // Prog zaokraglenia TEN SAM co w countdown(), inaczej przy roznicy 300 ms wychodzi
+    // sklejka „reset za po resecie".
+    const secs = Math.round((r.getTime() - nowMs) / 1000);
+    return secs > 0
+      ? { lead: `reset za ${countdown(r, nowMs)}`, at: hm(r) }
+      : { lead: "reset minął", at: hm(r) };
+  }
+  if (s.utilization === 0) return { lead: "okno nie wystartowało", at: null };
+  return { lead: "czas resetu nieznany", at: null };
+}
+
+/** Kwoty z `extra` serii wydatkow. Jedyne pole kontraktu bez schematu — czytamy defensywnie. */
 export function spendNote(s: SeriesStatus): string | null {
   if (s.source !== "spend" || !s.extra) return null;
   const m = (v: unknown): [number, string | null, number] | null => {

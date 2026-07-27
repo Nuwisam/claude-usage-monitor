@@ -1,9 +1,5 @@
-/** Warstwa dostepu do API.
- *
- *  Backend jest JEDYNA brama SSO — nie ma nginx auth_request, wiec nikt nie zwroci 302.
- *  Brak sesji to `401 {detail: {reason, redirect_url}}` i przekierowanie jest zadaniem
- *  tego pliku. To czesc kontraktu, nie szczegol implementacji (patrz backend/app/sso.py).
- */
+/** Backend jest jedyna brama SSO — nikt nie zwroci 302. Brak sesji to
+ *  `401 {detail:{reason, redirect_url}}`, a przekierowanie robi ten plik. */
 import type { ApiErrorBody, HistoryResponse, StatusResponse } from "./types";
 
 /** Vite podstawia tu `base` z vite.config.ts. Jedna wartosc dla routera i dla API. */
@@ -31,8 +27,8 @@ function reasonOf(body: unknown): string | null {
   return null;
 }
 
-/** Nawigacja wyjmuje strone z pod stop Reacta, wiec zwracamy obietnice, ktora nigdy sie
- *  nie rozwiazuje — React Query zamiera zamiast migotac stanem bledu w trakcie wyjscia. */
+/** Obietnica, ktora nigdy sie nie rozwiazuje — React Query zamiera zamiast migotac
+ *  bledem w trakcie wychodzenia ze strony. */
 function leaveTo(url: string): Promise<never> {
   window.location.assign(url);
   return new Promise<never>(() => {});
@@ -42,8 +38,7 @@ async function handle401(body: unknown): Promise<never> {
   const b = body as ApiErrorBody | null;
   const redirect = typeof b?.detail === "object" ? b.detail?.redirect_url : null;
   if (redirect) return leaveTo(redirect);
-  // Zapas, gdyby backend nie zdazyl zbudowac URL-a: window.location.href NIESIE prefiks,
-  // wiec powrot po logowaniu trafia w aplikacje, a nie w korzen serwisu.
+  // `location.href` niesie prefiks, wiec powrot trafia w aplikacje, nie w korzen serwisu.
   return leaveTo(`/oauth2/start?rd=${encodeURIComponent(window.location.href)}`);
 }
 
@@ -56,8 +51,7 @@ async function getJson<T>(path: string): Promise<T> {
   if (res.ok) return (await res.json()) as T;
 
   const body = await res.json().catch(() => null);
-  // TYLKO 401 nawiguje. 403/429/503 pokazujemy w miejscu — inaczej chwilowa awaria SSO
-  // albo niedozwolony email wyrzucaja z aplikacji w petle przekierowan.
+  // Tylko 401 nawiguje — 403/429/503 w miejscu, inaczej awaria SSO daje petle przekierowan.
   if (res.status === 401) return handle401(body);
   throw new ApiError(res.status, reasonOf(body));
 }

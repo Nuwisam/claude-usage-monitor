@@ -1,4 +1,5 @@
 /** Formatowanie liczb i kwot. Polskie separatory, wszedzie tabelarycznie. */
+import { hm } from "./time";
 
 /** 31 -> "31", 30.5 -> "30,5". null zostaje nullem — o tym, co pokazac zamiast liczby,
  *  decyduje komponent, bo w stanie `unknown` odpowiedzia jest slowo, nie zero. */
@@ -21,11 +22,20 @@ export function money(
   return currency ? `${text} ${currency}` : text;
 }
 
-/** "+2 pp w ciągu godziny" / "-1,5 pp ..." / "±0 pp ..." */
-export function delta(v: number | null): string {
+/** Powyzej tego progu wolno napisac „w ciągu godziny" — sonda melduje sie co <= 60 s. */
+const HOURISH_MS = 45 * 60_000;
+
+/** "+2 pp w ciągu godziny" / "−1,5 pp od 14:03" / "±0 pp ..."
+ *
+ *  Rozpietosc jest w napisie, bo baseline jest przyciety do biezacego okna: „w ciągu godziny"
+ *  nad liczba z pieciu minut zaniza tempo palenia limitu. `from === null` => brzmienie
+ *  godzinowe (starszy backend). */
+export function delta(v: number | null, from: Date | null, nowMs: number): string {
   if (v === null) return "brak danych z ostatniej godziny";
   const sign = v > 0 ? "+" : v < 0 ? "−" : "±";
-  return `${sign}${pct(Math.abs(v)) ?? "0"} pp w ciągu godziny`;
+  const n = `${sign}${pct(Math.abs(v)) ?? "0"} pp`;
+  if (from === null || nowMs - from.getTime() >= HOURISH_MS) return `${n} w ciągu godziny`;
+  return `${n} od ${hm(from)}`;
 }
 
 export function severityLabel(s: string | null): string {

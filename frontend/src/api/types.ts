@@ -1,17 +1,11 @@
-/** Kontrakt /api — wersja 2. Odbicie 1:1 backend/app/schemas.py.
- *
- *  Zmiana ktoregokolwiek z tych typow bez zmiany schematu w backendzie jest bledem;
- *  zrodlem prawdy jest `docs/UI-HANDOUT.md` i `CONTRACT_VERSION` w services/status.py.
- */
+/** Kontrakt /api — odbicie 1:1 backend/app/schemas.py, opisane w docs/UI-HANDOUT.md. */
 
-export const CONTRACT_VERSION = 2;
+/** Musi isc w tym samym commicie co `CONTRACT_VERSION` w services/status.py — Nav
+ *  porownuje obie i przy rozjezdzie zapala ostrzezenie w naglowku. */
+export const CONTRACT_VERSION = 3;
 
-/** Cztery stany swiezosci. NIE WOLNO ich zlewac — kazdy znaczy co innego:
- *  live           — pomiar swiezszy niz FRESH_WINDOW_SEC
- *  stale          — okno trwa, odczyt jest starszy; wartosc NADAL prawdziwa
- *  inferred_reset — okno sie zresetowalo i nikt nie pracowal; WNIOSKOWANIE, nie pomiar
- *  unknown        — klient raportuje, ale probek dla serii nie ma; AWARIA
- */
+/** live — pomiar swiezszy niz FRESH_WINDOW_SEC · stale — brak potwierdzenia od 5 min ·
+ *  inferred_reset — wnioskowanie, nie pomiar · unknown — brak probek serii, awaria. */
 export type Freshness = "live" | "stale" | "inferred_reset" | "unknown";
 
 export type SeriesSource = "bucket" | "limit" | "extra_usage" | "spend";
@@ -32,11 +26,19 @@ export interface SeriesStatus {
   rawUtilization: number | null;
   resetsAt: string | null;
   secondsToReset: number | null;
+  /** Ostatnia zapisana PROBKA. Dedup pomija niezmienione, wiec bywa starsze niz pomiar. */
   capturedAt: string | null;
+  /** Kiedy ostatnio POTWIERDZONO te wartosc. Z tego liczy sie swiezosc. */
+  confirmedAt: string | null;
+  /** Odkad wartosc jest niezmienna. */
+  valueSince: string | null;
   freshness: Freshness;
   isActive: boolean | null;
   severity: string | null;
   deltaPct1h: number | null;
+  /** Od ktorej PROBKI liczy sie deltaPct1h — baseline jest przyciety do biezacego okna,
+   *  wiec rozpietosc bywa krotsza niz godzina. Null razem z deltaPct1h. */
+  deltaFrom: string | null;
   primary: boolean;
   duplicateOf: string | null;
   extra: Record<string, unknown> | null;
@@ -94,9 +96,8 @@ export interface HistoryPoint {
   n: number;
 }
 
-/** client_silent — klient milczal (nie pracowales).
- *  no_samples    — klient raportowal, ale dla TEJ serii nie bylo probek: awaria.
- *  Dwa rodzaje = dwa rozne cieniowania. Zlanie ich sprawia, ze awaria wyglada jak przerwa. */
+/** client_silent — nie pracowales; no_samples — klient raportowal, ale bez probek TEJ
+ *  serii, czyli awaria. Dwa cieniowania; zlanie ich robi z awarii zwykla przerwe. */
 export type GapKind = "client_silent" | "no_samples";
 
 export interface HistoryGap {

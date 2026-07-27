@@ -4,7 +4,7 @@ import { pct } from "../lib/format";
 import { describeSeries } from "../lib/freshness";
 import { hm } from "../lib/time";
 import { ErrorBlock } from "./Blocks";
-import { HistoryChart } from "./HistoryChart";
+import { GAP_LABEL, HistoryChart } from "./HistoryChart";
 
 interface Props {
   account: AccountStatus;
@@ -14,17 +14,8 @@ interface Props {
   to: Date;
 }
 
-const KIND_LABEL: Record<string, string> = {
-  client_silent: "cisza klienta",
-  no_samples: "brak próbek dla serii",
-};
-
-/** Facet per konto — nigdy jedna os dla obu kont bez etykiet planu.
- *
- *  Limit Team zalezy od tier miejsca i jest dzielony z Claude chat oraz Cowork, a Max ma
- *  wlasny tier. Te same 40% to inne ilosci bezwzgledne, wiec nakladanie ich na jedna os
- *  bez planu w legendzie produkowaloby porownanie, ktore nic nie znaczy.
- */
+/** Facet per konto, nigdy wspolna os: limit Team zalezy od tier miejsca i jest dzielony
+ *  z Claude chat i Cowork, Max ma wlasny — te same 40% to inne ilosci bezwzgledne. */
 export function HistoryFacet({ account, series, from, to }: Props) {
   const q = useHistory(account.uuid, series?.seriesId ?? null, from, to);
   const plan = [account.orgType, account.rateLimitTier].filter(Boolean).join(" · ");
@@ -64,7 +55,7 @@ export function HistoryFacet({ account, series, from, to }: Props) {
           <div className="facet-foot">
             {(q.data?.gaps ?? []).map((g) => (
               <span className="facet-gap" key={`${g.kind}-${g.from}`}>
-                {KIND_LABEL[g.kind] ?? g.kind} · {hm(new Date(g.from))}–{hm(new Date(g.to))}
+                {GAP_LABEL[g.kind] ?? g.kind} · {hm(new Date(g.from))}–{hm(new Date(g.to))}
               </span>
             ))}
             {q.data && q.data.points.length === 0 && (
@@ -84,5 +75,6 @@ function statsLabel(points: Parameters<typeof statsOf>[0] | undefined, loading: 
   if (!points) return "";
   const s = statsOf(points);
   if (!s) return "brak danych w zakresie";
-  return `min ${pct(s.min)} · max ${pct(s.max)} · ostatnia ${pct(s.last) ?? "—"} · n = ${s.n}`;
+  const n = s.n.toLocaleString("pl-PL");
+  return `min ${pct(s.min)} · max ${pct(s.max)} · ostatnia ${pct(s.last) ?? "—"} · n = ${n}`;
 }

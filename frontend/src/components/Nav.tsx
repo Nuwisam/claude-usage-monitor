@@ -35,15 +35,21 @@ export function Nav({ contractVersion, updatedAtMs, nowMs, stalled }: Props) {
           kontrakt v{contractVersion ?? "?"}
           {mismatch ? ` ≠ v${CONTRACT_VERSION}` : ""}
         </span>
+        {/* Caly napis w JEDNYM spanie: `.live-dot` jest flexem z `gap`, wiec rozbicie go
+            na rodzenstwo rozpychaloby odstepy miedzy slowami. Wasko zostaje samo
+            „3 s temu" (makieta 2b) — reszte chowa @media. */}
         <span className="live-dot" data-stalled={stalled}>
-          {updatedAtMs === null ? (
-            "brak odczytu"
-          ) : (
-            <>
-              odświeżono {ago(updatedAtMs, nowMs)}
-              <span className="live-cadence"> · co {STATUS_REFETCH_MS / 1000} s</span>
-            </>
-          )}
+          <span>
+            {updatedAtMs === null ? (
+              "brak odczytu"
+            ) : (
+              <>
+                <span className="live-verb">odświeżono </span>
+                {ago(updatedAtMs, nowMs)}
+                <span className="live-cadence"> · co {STATUS_REFETCH_MS / 1000} s</span>
+              </>
+            )}
+          </span>
         </span>
       </div>
     </div>

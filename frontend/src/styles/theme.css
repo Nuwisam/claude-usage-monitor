@@ -1,16 +1,12 @@
-/* Paleta z makiety — ciepla, w barwach Claude.
+/* Paleta z makiety — struktura zostaje z Nocturne, kolor przychodzi stad.
 
-   Makieta trzyma te tokeny na <div> opakowujacym; tutaj ida na :root, bo w aplikacji cala
-   strona JEST aplikacja. Struktura zostaje z Nocturne, kolor przychodzi stad.
-
-   WAZNE: makieta nadpisuje tylko CZESC rampy (neutral 900/800/600/400/100, accent
-   800/700/500/300/200/100). Pozostale kroki zostawaly blurple z Nocturne — w makiecie
-   nieszkodliwie, bo ich nie uzywa, ale w aplikacji z hoverami i stanami :focus-visible
-   komponenty Nocturne siegaja po nie same (.btn, .seg, .radio, .table). Domykamy wiec
-   cala rampe w tej samej cieplej rodzinie, zeby zaden krok nie wpuscil chlodnego granatu.
-   Kroki dopisane przez nas sa oznaczone. */
+   Makieta nadpisuje tylko czesc rampy; reszta kroków zostawala blurple z Nocturne, po
+   ktore komponenty (.btn, .seg, .radio, .table) siegaja same w hoverach i :focus-visible.
+   Domykamy wiec cala rampe — kroki dopisane przez nas sa oznaczone. */
 
 :root {
+  /* Tlo POD karta aplikacji. Makieta trzyma je na <body>, karta ekranu lezy na nim. */
+  --color-canvas: #141312;
   --color-bg: #1c1b19;
   --color-surface: #262523;
   --color-sunken: #211f1d;          /* token nieobecny w Nocturne, wprowadzony przez makiete */
@@ -64,7 +60,7 @@
 
 html,
 body {
-  background: var(--color-bg);
+  background: var(--color-canvas);
   color: var(--color-text);
   min-height: 100%;
 }

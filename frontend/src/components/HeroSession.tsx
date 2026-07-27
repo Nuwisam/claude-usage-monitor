@@ -2,16 +2,12 @@ import { ClockCountdown } from "@phosphor-icons/react";
 
 import type { SeriesStatus } from "../api/types";
 import { delta, severityLabel } from "../lib/format";
-import { describeSeries } from "../lib/freshness";
-import { countdown, hm, parseUtc } from "../lib/time";
+import { describeSeries, resetNote } from "../lib/freshness";
+import { parseUtc } from "../lib/time";
 import { UtilBar } from "./UtilBar";
 
-/** Wybor serii na pierwszy plan: okno 5 h.
- *
- *  Bierzemy wpis z `limits[]` o `kind === "session"`, bo to on niesie `isActive`
- *  i `severity`; bucket `five_hour` jest jego duplikatem i sluzy jako zapas. Zaden
- *  z warunkow nie patrzy w tresc klucza ani w etykiete — zasada 5 z AGENTS.md.
- */
+/** Okno 5 h na pierwszy plan. Wpis z `limits[]` przed bucketem, bo niesie `isActive`
+ *  i `severity`. Zaden warunek nie patrzy w tresc klucza — zasada 5 z AGENTS.md. */
 export function pickSession(series: SeriesStatus[]): SeriesStatus | null {
   const primary = series.filter((s) => s.primary);
   return (
@@ -22,11 +18,11 @@ export function pickSession(series: SeriesStatus[]): SeriesStatus | null {
   );
 }
 
-/** Hero: okno, w ktorym pracujesz TERAZ. Stale na pierwszym planie — gdyby przeskakiwalo
- *  za `isActive`, ten sam ekran znaczylby co innego w zaleznosci od pory tygodnia. */
+/** Hero stoi na sesji 5 h na stale. Gdyby przeskakiwal za `isActive`, ten sam ekran
+ *  znaczylby co innego w zaleznosci od pory tygodnia. */
 export function HeroSession({ s, nowMs }: { s: SeriesStatus; nowMs: number }) {
   const v = describeSeries(s);
-  const resets = parseUtc(s.resetsAt);
+  const reset = resetNote(s, nowMs);
 
   return (
     <div className="card elev-sm hero">
@@ -34,7 +30,11 @@ export function HeroSession({ s, nowMs }: { s: SeriesStatus; nowMs: number }) {
         <span className="card-kicker" style={{ color: "var(--color-accent-200)" }}>
           Sesja 5 h
         </span>
-        {s.isActive && <span className="hero-binds">wiąże teraz</span>}
+        {s.isActive && (
+          <span className="hero-binds">
+            wiąże<span className="hero-binds-now"> teraz</span>
+          </span>
+        )}
         <span className="hero-fresh">{v.heroNote}</span>
       </div>
 
@@ -43,9 +43,8 @@ export function HeroSession({ s, nowMs }: { s: SeriesStatus; nowMs: number }) {
           <span className="hero-label">{s.label}</span>
           <span className="hero-reset">
             <ClockCountdown size={14} className="ph" />{" "}
-            {resets
-              ? `reset za ${countdown(resets, nowMs)} · o ${hm(resets)}`
-              : "bez resetu"}
+            {reset.lead}
+            {reset.at && <span className="hero-reset-at"> · o {reset.at}</span>}
           </span>
         </div>
         {v.number !== null ? (
@@ -54,17 +53,21 @@ export function HeroSession({ s, nowMs }: { s: SeriesStatus; nowMs: number }) {
             <span className="hero-unit">%</span>
           </div>
         ) : (
-          // Brak liczby jest tu jedyna poprawna odpowiedzia. Zero bylo by klamstwem,
-          // na podstawie ktorego odpalisz duze zadanie i trafisz w sciane.
+          // Nigdy zero — zasada 4 z AGENTS.md.
           <span className="hero-nodata">{v.words}</span>
         )}
       </div>
 
       <UtilBar v={v} hero />
 
+      {/* `hero-fresh-narrow` dubluje tresc z `hero-top`, bo w waskim ukladzie odczyt idzie
+          do stopki, a CSS nie przeniesie wezla miedzy rodzicami. Widoczny zawsze jeden. */}
       <div className="hero-foot">
-        <span className="tag tag-neutral tag-num">{delta(s.deltaPct1h)}</span>
-        <span className="tag tag-neutral tag-num">{severityLabel(s.severity)}</span>
+        <span className="hero-fresh-narrow">{v.heroNote} · </span>
+        <span className="tag tag-neutral tag-num tag-delta">
+          {delta(s.deltaPct1h, parseUtc(s.deltaFrom), nowMs)}
+        </span>
+        <span className="tag tag-neutral tag-num tag-sev">{severityLabel(s.severity)}</span>
         <span className="hero-note">okno, w którym pracujesz teraz</span>
       </div>
     </div>

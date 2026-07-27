@@ -1,12 +1,11 @@
-/** Legenda wykresu. Ostatnie zdanie nie jest ozdoba: pokrycie tego narzedzia jest z natury
- *  dziurawe (dane przyrastaja tylko wtedy, gdy pracujesz), wiec dziura na wykresie jest
- *  informacja, a nie usterka rysowania. */
-export function Legend() {
+/** Legenda wykresu. Zdanie na koncu nie jest ozdoba — pokrycie tego narzedzia jest
+ *  z natury dziurawe, wiec dziura jest informacja, a nie usterka rysowania. */
+export function Legend({ bucket }: { bucket?: string }) {
   return (
     <div className="legend">
       <span className="legend-item">
         <span className="sw-line" />
-        średnia w koszyku
+        średnia w koszyku{bucket ? ` ${bucket}` : ""}
       </span>
       <span className="legend-item">
         <span className="sw-reset" />

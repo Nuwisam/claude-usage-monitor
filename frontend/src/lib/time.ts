@@ -1,13 +1,9 @@
 /** Czas: kotwiczenie w `serverNow` i formaty z makiety.
  *
- *  Countdownow NIE liczymy z zegara przegladarki. Zegar klienta bywa rozjechany (backend
- *  ma na to osobny guard i zdarzenie `clock_skew`), a `resets_at` przychodzi z zegara
- *  Anthropic. Jedyna sensowna kotwica to `serverNow` z odpowiedzi — od niej liczymy, a
- *  lokalnie tylko TYKAMY.
- */
+ *  Countdownow nie liczymy z zegara przegladarki — bywa rozjechany, a `resets_at`
+ *  przychodzi z zegara Anthropic. Kotwica to `serverNow`, lokalnie tylko tykamy. */
 
-/** Backend v2 wysyla ISO-8601 z 'Z'. Gdyby kiedys wrocil bez strefy, dopinamy ja tutaj,
- *  bo `new Date("2026-07-26T19:07:37")` to w JS czas LOKALNY — cichy blad o cala strefe. */
+/** Bez strefy dopinamy 'Z': `new Date("2026-07-26T19:07:37")` to w JS czas LOKALNY. */
 export function parseUtc(iso: string | null): Date | null {
   if (!iso) return null;
   const hasZone = /(Z|[+-]\d{2}:?\d{2})$/.test(iso);
@@ -28,18 +24,29 @@ export function serverClock(offsetMs: number): number {
 
 const p2 = (n: number) => String(n).padStart(2, "0");
 
-/** Formaty UTC — celowo nie lokalne. Wszystkie granice okien podaje Anthropic w UTC,
- *  a mieszanie stref na jednym ekranie to najkrotsza droga do bledu w interpretacji. */
+/** Formaty w STREFIE PRZEGLADARKI — dane jada w UTC, ale „odczyt o 06:35" przy zegarze
+ *  8:35 jest nieczytelny. Tam, gdzie widac surowe godziny, strefa jest podpisana
+ *  (`tzLabel`); konwersje robi `Date`, wiec DST wychodzi samo. */
 export function hm(d: Date | null): string {
-  return d ? `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}` : "—";
+  return d ? `${p2(d.getHours())}:${p2(d.getMinutes())}` : "—";
 }
 
 export function hms(d: Date | null): string {
-  return d ? `${hm(d)}:${p2(d.getUTCSeconds())}` : "—";
+  return d ? `${hm(d)}:${p2(d.getSeconds())}` : "—";
 }
 
 export function dm(d: Date | null): string {
-  return d ? `${p2(d.getUTCDate())}.${p2(d.getUTCMonth() + 1)}` : "—";
+  return d ? `${p2(d.getDate())}.${p2(d.getMonth() + 1)}` : "—";
+}
+
+/** "UTC+2" / "UTC+5:30" / "UTC" dla DANEJ chwili — przy zakresie 30 d konce moga wypasc
+ *  po dwoch stronach zmiany czasu i jedna etykieta na oba klamalaby o godzine. */
+export function tzLabel(d: Date = new Date()): string {
+  const min = -d.getTimezoneOffset();
+  if (min === 0) return "UTC";
+  const abs = Math.abs(min);
+  const rest = abs % 60;
+  return `UTC${min < 0 ? "−" : "+"}${Math.floor(abs / 60)}${rest ? `:${p2(rest)}` : ""}`;
 }
 
 /** "2 d 4 h" / "3 h 05 min" / "12 min 34 s" / "po resecie" — dokladnie jak w makiecie. */

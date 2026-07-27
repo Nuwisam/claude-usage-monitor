@@ -6,7 +6,7 @@ import { HistoryFacet } from "../components/HistoryFacet";
 import { Legend } from "../components/Legend";
 import { RANGES } from "../hooks/useHistory";
 import { useStatus } from "../hooks/useStatus";
-import { dm, hm, parseUtc } from "../lib/time";
+import { dm, hm, parseUtc, tzLabel } from "../lib/time";
 
 /** Wybor serii jest BUDOWANY Z DANYCH, nie z zaszytej listy (zasada 5 z AGENTS.md).
  *
@@ -96,7 +96,7 @@ export function History() {
         <div className="hist-meta">
           <span className="hist-meta-mono">bucket=auto → {bucketHint}</span>
           <span className="hist-meta-range">
-            {dm(from)} {hm(from)} → {dm(to)} {hm(to)} UTC
+            {dm(from)} {hm(from)} → {dm(to)} {hm(to)} {tzLabel(to)}
           </span>
         </div>
       </div>
@@ -118,9 +118,9 @@ export function History() {
         ))
       )}
 
-      <Legend />
+      <Legend bucket={bucketHint} />
       {q.data.accounts.some((a) => a.series.some((s) => s.freshness === "unknown")) && (
-        <div className="state-block" style={{ paddingTop: 0 }}>
+        <div className="state-block hist-caveat" style={{ paddingTop: 0 }}>
           <p>
             Uwaga przy czytaniu: część serii jest w stanie <code>unknown</code>. Wykres pokazuje
             to, co zmierzone — luka na końcu nie znaczy zera. Zerknij na{" "}

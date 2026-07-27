@@ -1,12 +1,6 @@
-/* Klasy wyjete z inline'ow makiety v2 (2a/2b/2c/2d).
-
-   Wymiary sa PRZEPISANE, nie wymyslone — jesli cos tu nie zgadza sie z makieta, makieta
-   ma racje. Skala odstepow, promienie i cienie ida z tokenow Nocturne; twarde piksele
-   zostaja tylko tam, gdzie makieta podaje je wprost (wysokosc toru, rozmiar liczby hero,
-   szerokosci kolumn wiersza serii).
-
-   Ukladu 2b nie budujemy osobno: to ten sam DOM przy jednej kolumnie, mniejszym hero
-   i kaskadzie 2x2. Przelacznik siedzi w jednym @media na koncu pliku. */
+/* Klasy wyjete z inline'ow makiety v2 (2a/2b/2c/2d). Wymiary sa przepisane — jesli cos
+   tu nie zgadza sie z makieta, makieta ma racje. Ukladu 2b nie budujemy osobno: ten sam
+   DOM, przelacznik w jednym @media na koncu pliku. */
 
 @keyframes noctPulse {
   0%,
@@ -19,11 +13,15 @@
 }
 
 /* ─── rama aplikacji ───────────────────────────────────────────────────── */
-/* Nocturne: "content hugs the left edge with whitespace on the right" — dlatego
-   max-width bez auto-marginesow, a nie wyciagniete na cala szerokosc monitora. */
+/* Calosc jest JEDNA karta na ciemniejszym plotnie, jak w makiecie — nie luzem w korzeniu.
+   Karta wypelnia okno; `overflow: hidden` przycina do niej siatke kont i kreski sekcji. */
 .app {
-  max-width: 1180px;
-  min-height: 100vh;
+  margin: var(--space-4);
+  min-height: calc(100vh - 2 * var(--space-4));
+  background: var(--color-bg);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
 }
 
 .app-nav {
@@ -32,10 +30,13 @@
   gap: var(--space-4);
   padding: var(--space-4) var(--space-8);
 }
+/* NIE kasuj `margin-right: auto` z .nav-brand — razem z `auto` prawej grupy centruje linki. */
 .app-nav .nav-brand,
 .app-nav a {
-  margin-right: 0;
   white-space: nowrap;
+}
+.app-nav a[aria-current="page"] {
+  color: var(--color-accent-200);
 }
 .app-nav-right {
   display: flex;
@@ -107,34 +108,16 @@
   color: color-mix(in srgb, var(--color-text) 50%, transparent);
 }
 
-/* ─── przelaczniki widoku ─────────────────────────────────────────────── */
-.view-toggles {
-  display: flex;
-  align-items: center;
-  gap: var(--space-6);
-  padding: 0 var(--space-8) var(--space-4);
-}
-.check {
-  font-size: 12px;
-}
-.check .dot {
-  border-radius: 3px;
-  border-color: color-mix(in srgb, var(--color-text) 30%, transparent);
-}
-.check span:last-child {
-  color: color-mix(in srgb, var(--color-text) 60%, transparent);
-}
-
 /* ─── siatka kont ─────────────────────────────────────────────────────── */
-/* Kreski miedzy kolumnami rysuja same karty: pierscien 1px w szczelinie 1px daje ostra
-   wlosowa linie miedzy sasiadami. Makieta malowala je tlem kontenera, ale wtedy przy
-   NIEPARZYSTEJ liczbie kont ostatnia komorka siatki zostaje pusta i swieci kolorem
-   dzielnika jak widmowy panel — a trzecie konto to realna przyszlosc tego projektu. */
+/* Szczeline maluje cien JEDNEJ karty (lewo/gora), nie pelny pierscien obu sasiadow —
+   dwa pierscienie sumuja sie w szczelinie 1px na podwojna jasnosc. `overflow: hidden`
+   scina cienie skrajnych kart, wiec siatka nie dostaje obwodki. */
 .accounts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
   gap: 1px;
   background: var(--color-bg);
+  overflow: hidden;
 }
 .account {
   display: flex;
@@ -142,7 +125,9 @@
   gap: var(--space-6);
   padding: var(--space-6);
   background: var(--color-bg);
-  box-shadow: 0 0 0 1px var(--color-divider);
+  box-shadow:
+    -1px 0 0 var(--color-divider),
+    0 -1px 0 var(--color-divider);
   min-width: 0;
 }
 
@@ -255,10 +240,17 @@
   flex-wrap: wrap;
   margin-top: var(--space-1);
 }
+/* Makieta daje `margin-top` osobno paskowi (2a:119, 2b:264), nie tylko stopce. */
+.bar-hero {
+  margin-top: var(--space-1);
+}
 .hero-note {
   font-size: 11px;
   color: color-mix(in srgb, var(--color-text) 55%, transparent);
   text-wrap: pretty;
+}
+.hero-fresh-narrow {
+  display: none;
 }
 .tag-num {
   font-size: 10px;
@@ -341,10 +333,10 @@
     "title bar value"
     "sub   bar value";
   column-gap: var(--space-4);
+  row-gap: 3px;
   align-items: center;
   padding: var(--space-3) 0;
-  /* Regula wiersza gasnie na koncach — sygnatura Nocturne, tu skrocona do 12px, bo
-     wiersz jest wezszy niz tabela z systemu. */
+  /* Regula gasnie na koncach — sygnatura Nocturne, tu 12px zamiast 48px z systemu. */
   background: linear-gradient(
       to right,
       transparent,
@@ -353,9 +345,6 @@
       transparent
     )
     no-repeat bottom / 100% 1px;
-}
-.series-row[data-dup="true"] {
-  opacity: 0.5;
 }
 .series-title {
   grid-area: title;
@@ -394,19 +383,6 @@
   font-size: 10px;
   flex: none;
   color: var(--color-accent-200);
-}
-.tag-dup {
-  font-size: 9px;
-  padding: 1px 6px;
-  flex: none;
-}
-.series-key {
-  font-size: 10px;
-  font-family: var(--font-mono);
-  color: color-mix(in srgb, var(--color-text) 45%, transparent);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .series-note {
   font-size: 11px;
@@ -527,6 +503,10 @@
   padding: var(--space-2) var(--space-8) var(--space-6);
   border-bottom: 1px solid var(--color-divider);
 }
+/* Pin, bo dziedziczona interlinia dawala segment o 1px wyzszy niz makieta (36px). */
+.hist-controls .seg-opt {
+  line-height: 20px;
+}
 .hist-meta {
   display: flex;
   flex-direction: column;
@@ -604,11 +584,80 @@
   gap: 3px;
   min-width: 0;
 }
+/* Kontener kursora i dymka. Musi obejmowac SAM wykres, bez podzialki pod nim — pozycja
+   kropki jest liczona w procentach wysokosci viewBoxa (0..200), wiec kazdy dodatkowy
+   piksel w tym pudelku przesuwalby ja wzgledem sciezki. */
+.chart-plot {
+  position: relative;
+}
 .chart-svg {
   display: block;
   width: 100%;
   height: 208px;
   overflow: visible;
+}
+.chart-cursor {
+  position: absolute;
+  top: 11%;                     /* y=22 w viewBoxie 0..200 */
+  height: 84%;                  /* do osi na y=190 */
+  width: 1px;
+  background: color-mix(in srgb, var(--color-text) 28%, transparent);
+  pointer-events: none;
+}
+.chart-point {
+  position: absolute;
+  width: 4.4px;
+  height: 4.4px;
+  border-radius: 50%;
+  background: var(--color-accent-300);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.chart-dot {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.chart-tip {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;         /* dymek nie moze przechwytywac wlasnego hovera */
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px var(--space-2);
+  background: var(--color-sunken);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  white-space: nowrap;
+}
+.chart-tip b {
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-accent-200);
+}
+.chart-tip span {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.chart-tip i {
+  font-style: normal;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text) 40%, transparent);
+}
+/* Dziura to nie odczyt — dymek nad nia nie moze wygladac jak wartosc. */
+.chart-tip[data-muted] b {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-text) 62%, transparent);
 }
 .chart-x {
   position: relative;
@@ -722,24 +771,33 @@
 
 /* ═══ 2b — waska kolumna. Ten sam DOM, inne proporcje. ═════════════════ */
 @media (max-width: 900px) {
+  /* Na telefonie karta idzie od krawedzi do krawedzi — margines kosztowalby 22 z 390 px. */
+  .app {
+    margin: 0;
+    min-height: 100vh;
+    border-radius: 0;
+    box-shadow: none;
+  }
   .app-nav {
     padding: var(--space-4);
     gap: var(--space-3);
   }
-  /* Waski naglowek to marka + puls, jak w makiecie 2b. Wersja kontraktu znika —
-     ALE tylko gdy sie zgadza; rozjazd musi byc widoczny na kazdej szerokosci. */
+  .app-nav .nav-brand {
+    font-size: 15px;
+  }
+  /* Wersja kontraktu znika, ALE tylko gdy sie zgadza — rozjazd musi byc widoczny zawsze. */
   .pill-contract[data-mismatch="false"] {
     display: none;
   }
-  .live-cadence {
+  .live-cadence,
+  .live-verb {
     display: none;
+  }
+  .live-dot {
+    font-size: 11px;
   }
   .banner {
     margin: 0 var(--space-4) var(--space-4);
-  }
-  .view-toggles {
-    padding: 0 var(--space-4) var(--space-4);
-    gap: var(--space-4);
   }
   .accounts {
     grid-template-columns: 1fr;
@@ -747,25 +805,70 @@
   .account {
     gap: var(--space-4);
     padding: var(--space-4);
-    /* W waskim ukladzie karty sa jedna pod druga — pierscien zamieniamy na pojedyncza
-       kreske u gory, inaczej sasiedzi rysowaliby podwojne linie. */
     box-shadow: none;
     border-top: 1px solid var(--color-divider);
   }
+  /* Makieta 2b schodzi tu z naglowka na tekst tresci — `h5` zostaje dla semantyki. */
   .account-title h5 {
+    font-family: var(--font-body);
     font-size: 14px;
+    font-weight: 400;
+    line-height: 1.55;
+    letter-spacing: normal;
   }
   .tag-mono {
     font-size: 9px;
     padding: 2px 7px;
   }
-  .account-machine {
-    font-size: 10px;
+  /* Host, seatTier i naglowki sekcji odpadaja (makieta 2b) — kazde kosztuje caly wiersz. */
+  .account-machine,
+  .tag-seat,
+  .section-label {
+    display: none;
   }
 
   .hero {
     gap: var(--space-2);
     padding: var(--space-4);
+  }
+  .hero-binds-now,
+  .hero-reset-at,
+  .hero-fresh,
+  .tag-sev,
+  .hero-note {
+    display: none;
+  }
+  /* Stopka hero schodzi do jednej linii „{odczyt} · {delta}", bez pigulek (2b:268). */
+  .hero-fresh-narrow {
+    display: inline;
+  }
+  .hero-foot {
+    /* Odstep niesie spacja w tekscie separatora, wiec `gap` musi byc zerowy — inaczej
+       po „·" jest o pikselu wiecej niz przed nim. `pre` chroni spacje przed flexem. */
+    gap: 0;
+    margin-top: 0;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  }
+  .hero-fresh-narrow {
+    white-space: pre;
+  }
+  .hero-foot .tag-delta {
+    padding: 0;
+    font-size: 11px;
+    letter-spacing: normal;
+    background: none;
+    color: inherit;
+  }
+  /* 2b zmniejsza wewnetrzne odstepy z 3 na 2 px. */
+  .hero-labels,
+  .hero-value,
+  .rung {
+    gap: 2px;
+  }
+  .series-active-mark {
+    height: 12px;
   }
   .hero-number {
     font-size: 44px;
@@ -815,6 +918,14 @@
     row-gap: var(--space-2);
     align-items: baseline;
     min-height: 44px;
+    background: linear-gradient(
+        to right,
+        transparent,
+        color-mix(in srgb, var(--color-text) 10%, transparent) 8px,
+        color-mix(in srgb, var(--color-text) 10%, transparent) calc(100% - 8px),
+        transparent
+      )
+      no-repeat bottom / 100% 1px;
   }
   .series-row .series-title {
     align-items: baseline;
@@ -822,11 +933,34 @@
   .series-pct {
     font-size: 15px;
   }
+  /* Znak procentu tylko wasko (2b:300) — szeroko makieta zostawia sama liczbe (2a:205). */
+  .series-pct::after {
+    content: "%";
+  }
 
   .hist-controls,
-  .legend {
+  .legend,
+  .hist-caveat {
     padding-left: var(--space-4);
     padding-right: var(--space-4);
+  }
+  /* Etykiety serii sa dlugie („Tydzien (wszystkie modele)") i przy 390 px lamia sie na
+     trzy wiersze. Zamiast lamac — przewijamy segment w poziomie. */
+  .hist-controls .field {
+    max-width: 100%;
+    min-width: 0;
+  }
+  .hist-controls .seg {
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .hist-controls .seg::-webkit-scrollbar {
+    display: none;
+  }
+  .hist-controls .seg-opt {
+    white-space: nowrap;
+    flex: none;
   }
   .facet {
     padding: var(--space-4);

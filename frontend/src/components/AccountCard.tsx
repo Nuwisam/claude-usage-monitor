@@ -9,22 +9,16 @@ import { SeriesRow } from "./SeriesRow";
 interface Props {
   a: AccountStatus;
   nowMs: number;
-  showDuplicates: boolean;
-  showKeys: boolean;
 }
 
-/** Kolumna jednego konta.
- *
- *  Plan jest widoczny przy KAZDYM koncie (orgType, rateLimitTier, seatTier) i nie jest
- *  ozdoba: 40% na Max 20x i 40% na miejscu Team to rozne ilosci bezwzgledne, wiec bez
- *  etykiety planu te same procenty klamia. Z tego samego powodu nigdzie nie sumujemy
- *  ani nie sredniujemy procentow miedzy kontami.
- */
-export function AccountCard({ a, nowMs, showDuplicates, showKeys }: Props) {
+/** Kolumna jednego konta. Plan (orgType, rateLimitTier, seatTier) jest przy kazdym koncie,
+ *  bo 40% na Max 20x i 40% na miejscu Team to rozne ilosci — dlatego tez nigdzie nie
+ *  sumujemy ani nie sredniujemy procentow miedzy kontami. */
+export function AccountCard({ a, nowMs }: Props) {
   const hero = pickSession(a.series);
+  // Tylko `primary` — API raportuje czesc limitow dwa razy (bucket + wpis w limits[]).
   const rest = a.series
-    .filter((s) => s !== hero)
-    .filter((s) => showDuplicates || s.primary)
+    .filter((s) => s !== hero && s.primary)
     .sort((x, y) => x.sortOrder - y.sortOrder || x.seriesKey.localeCompare(y.seriesKey));
 
   return (
@@ -37,14 +31,17 @@ export function AccountCard({ a, nowMs, showDuplicates, showKeys }: Props) {
             {hms(parseUtc(a.lastBatchAt))}
           </span>
         </div>
+        {/* `tag-seat` osobno, bo waski uklad go ukrywa (makieta 2b). Przez @media, nie
+            przez warunek w JS — inaczej uklad zalezalby od szerokosci znanej po montowaniu. */}
         <div className="account-tags">
-          {[a.orgType, a.rateLimitTier, a.seatTier ? `seatTier: ${a.seatTier}` : "seatTier: —"]
-            .filter((t): t is string => Boolean(t))
-            .map((t) => (
-              <span className="tag tag-neutral tag-mono" key={t}>
-                {t}
-              </span>
-            ))}
+          {[a.orgType, a.rateLimitTier].filter((t): t is string => Boolean(t)).map((t) => (
+            <span className="tag tag-neutral tag-mono" key={t}>
+              {t}
+            </span>
+          ))}
+          <span className="tag tag-neutral tag-mono tag-seat">
+            seatTier: {a.seatTier ?? "—"}
+          </span>
         </div>
       </div>
 
@@ -68,7 +65,7 @@ export function AccountCard({ a, nowMs, showDuplicates, showKeys }: Props) {
           </div>
           <div className="series-list">
             {rest.map((s) => (
-              <SeriesRow key={s.seriesKey} s={s} showKey={showKeys} />
+              <SeriesRow key={s.seriesKey} s={s} />
             ))}
           </div>
         </>
