@@ -1,0 +1,93 @@
+#!/bin/sh
+# Straznik sondy przy wypchnieciu. Dwa pytania o roznym ciezarze gatunkowym:
+#
+#   1. Czy `client/usage-probe.py` zmienil sie BEZ podbicia SCRIPT_VERSION?
+#      -> ODMOWA. Wersja jedzie w kazdym batchu i jest jedynym sposobem, zeby z
+#         /api/machines odczytac, ktora maszyna chodzi na ktorym kodzie. Bez podbicia
+#         dwie rozne sondy sa nierozroznialne, a "dlaczego tamta maszyna raportuje
+#         inaczej" staje sie pytaniem bez odpowiedzi. Furtka: `git push --no-verify`.
+#
+#   2. Czy WYDANIE w repo skilli zostalo w tyle?
+#      -> OSTRZEZENIE. Wydanie ma prawo byc starsze: publikacja jest decyzja, nie
+#         skutkiem ubocznym pushu — inaczej kazda wersja robocza jechalaby na wszystkie
+#         maszyny. Ale maszyna zdalna widzi WYLACZNIE wydanie, wiec cicha rozbieznosc
+#         konczy sie tym, ze zdalne sondy siedza na starym kodzie i nikt tego nie wie.
+#
+# Wlaczany przez:  git config core.hooksPath scripts/git-hooks
+# Musi byc POSIX sh i miec konce linii LF (patrz .gitattributes): jeden katalog .git
+# obsluguje dwa systemy — Git Bash na Windows i /bin/sh na hoscie.
+set -u
+
+PROBE='client/usage-probe.py'
+# Wydanie lokalizujemy przez dowiazanie skilla, nie przez sciezke dysku: na Windows to
+# junction na X:, na Linuksie zwykly symlink. Gdy skilla nie ma (host), po prostu nie
+# widzimy wydania stad i zostaje samo ostrzezenie.
+RELEASE="$HOME/.claude/kopia wydania usage-probe.py"
+ZERO='0000000000000000000000000000000000000000'
+
+status=0
+
+ver_of_rev() {   # $1 = rewizja
+    git show "$1:$PROBE" 2>/dev/null |
+        sed -n 's/^SCRIPT_VERSION[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1
+}
+
+ver_of_file() {  # $1 = sciezka
+    sed -n 's/^SCRIPT_VERSION[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$1" 2>/dev/null | head -1
+}
+
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    [ "$local_sha" = "$ZERO" ] && continue      # kasowanie galezi — nie ma czego sprawdzac
+
+    if [ "$remote_sha" = "$ZERO" ]; then
+        # Nowa galaz: zdalny SHA to same zera, wiec nie ma od czego liczyc zakresu.
+        # Bierzemy to, czego nie ma na ZADNYM zdalnym refie, a punktem odniesienia
+        # robimy rodzica najstarszego z tych commitow.
+        oldest=$(git rev-list "$local_sha" --not --remotes | tail -1)
+        [ -n "$oldest" ] || continue
+        base=$(git rev-parse --verify --quiet "${oldest}^") || base=''
+        touched=$(git log --format=%H "$local_sha" --not --remotes -- "$PROBE" | head -1)
+    else
+        base="$remote_sha"
+        touched=$(git log --format=%H "${remote_sha}..${local_sha}" -- "$PROBE" | head -1)
+    fi
+
+    [ -n "$touched" ] || continue               # sonda nietknieta w tym zakresie
+
+    new_ver=$(ver_of_rev "$local_sha")
+    old_ver=''
+    [ -n "$base" ] && old_ver=$(ver_of_rev "$base")
+
+    if [ -n "$old_ver" ] && [ "$old_ver" = "$new_ver" ]; then
+        echo "pre-push: ODMOWA — $PROBE zmieniony, a SCRIPT_VERSION dalej $new_ver." >&2
+        echo "  Wersja jedzie w kazdym batchu; bez podbicia /api/machines nie odrozni maszyn" >&2
+        echo "  na starym kodzie od tych na nowym." >&2
+        echo "  Podbij SCRIPT_VERSION albo, jesli zmiana nie dotyczy zachowania: git push --no-verify" >&2
+        status=1
+        continue
+    fi
+
+    if [ ! -f "$RELEASE" ]; then
+        echo "pre-push: sonda zmieniona (SCRIPT_VERSION=${new_ver:-?}); wydania nie widac stad." >&2
+        echo "  Jesli to wersja finalna, opublikuj z maszyny deweloperskiej: polecenie publikujace wydanie" >&2
+        continue
+    fi
+
+    # Porownanie odporne na konce linii: blob jest zawsze LF, kopia w repo skilli
+    # moze byc wynikiem checkoutu z autocrlf. Rozne CR nie sa rozjazdem wersji.
+    a=$(mktemp) && b=$(mktemp) || continue
+    git show "$local_sha:$PROBE" | tr -d '\r' > "$a"
+    tr -d '\r' < "$RELEASE" > "$b"
+    if cmp -s "$a" "$b"; then
+        rm -f "$a" "$b"
+        continue                                 # wydanie zgodne z tym, co leci
+    fi
+    rm -f "$a" "$b"
+
+    rel_ver=$(ver_of_file "$RELEASE")
+    echo "pre-push: wydanie rozni sie od wypychanej sondy (wydanie: ${rel_ver:-?}, push: ${new_ver:-?})." >&2
+    echo "  Maszyny zdalne widza WYLACZNIE wydanie w repo skilli." >&2
+    echo "  Jesli to wersja finalna: polecenie publikujace wydanie" >&2
+done
+
+exit $status

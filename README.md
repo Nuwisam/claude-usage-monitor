@@ -111,8 +111,17 @@ połowę próbek do złego konta i cicho zatruwał historię obu.
 
 ## Instalacja klienta na nowej maszynie
 
-1. Skopiuj `client/usage-probe.py` na **dysk lokalny** (nie sieciowy — zmierzone +19 ms na
-   wywołanie z dysku sieciowego).
+Robi to skill **`/usage-monitor-enrollment`** z repo `repozytorium skilli` — sonda jedzie razem z nim,
+więc maszyna zdalna nie potrzebuje ani tego repo, ani dostępu do hosta. Poniżej to samo ręcznie.
+
+1. Pod ścieżką z hooków połóż **przekierowanie**, nie kopię sondy — wtedy zmiana u źródła
+   działa od razu, bez kopiowania:
+   ```python
+   SRC = r"<pełna ścieżka do usage-probe.py>"    # tutaj: repo; zdalnie: katalog skilla
+   if not os.path.isfile(SRC):
+       sys.exit(0)
+   runpy.run_path(SRC, run_name="__main__")
+   ```
 2. Utwórz `%LOCALAPPDATA%\claude-usage-monitor\config.json`:
    ```json
    {"ingest_url": "https://usage.example.org/claude-usage/api/ingest",

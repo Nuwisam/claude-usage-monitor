@@ -49,19 +49,41 @@ normalny, płatny turn modelu. Sonda wykrywa to po `num_turns>0` i taki zrzut od
 
 | Plik | Rola |
 |---|---|
-| `usage-probe.py` | **Produkcyjny.** Sonda wpinana w hooki |
+| `usage-probe.py` | **Źródło prawdy.** Sonda wpinana w hooki — tu się ją edytuje |
 | `analyze-samples.py` | Analiza lokalnego logu — tempo zmian, błędy, konta |
-| `probe-usage.py` | Diagnostyczny, **historyczny** — woła endpoint bezpośrednio. Nie wpinać w hooki |
+
+Sonda ma **dwa adresy i dwie role**. Tutaj jest źródłem: ładuje ją `backend/tests/test_probe_parsing.py`
+po sztywnej ścieżce i tutaj trafiają zmiany. Kopia w `kopia wydania usage-probe.py`
+(repo `repozytorium skilli`) jest **wydaniem** — jedynym, co widzi maszyna zdalna. Wydanie **może być
+starsze** od HEAD i to jest poprawne; różnicę widać w `/api/machines` po `scriptVersion`, bo każdy
+batch niesie `SCRIPT_VERSION`. Publikuje wyłącznie `polecenie publikujace wydanie`, świadomie —
+automat wypchnąłby na maszyny zdalne wersję roboczą.
 
 ## Instalacja
 
-**1. Skopiuj na dysk LOKALNY.** Uruchomienie z dysku sieciowego kosztuje +19 ms przy każdym
-wywołaniu (zmierzone: 27 ms lokalnie vs 46 ms z dysku sieciowego), a skrypt startuje przy każdym użyciu
-narzędzia. Źródłem prawdy jest repo; na dysku lokalnym leży kopia wykonywana.
+**1. Pod ścieżką z hooków stawiamy przekierowanie, nie kopię.** Ścieżka
+`%LOCALAPPDATA%\claude-usage-monitor\usage-probe.py` jest **kontraktem** — wskazuje na nią każdy
+wpis w `settings.json`. Leży tam kilkanaście linijek Pythona, które wykonują prawdziwą sondę
+spod `SRC`:
 
-```powershell
-Copy-Item client\usage-probe.py "$env:LOCALAPPDATA\claude-usage-monitor\usage-probe.py"
+```python
+SRC = r"Z:\projects\claude-usage-monitor\client\usage-probe.py"   # tutaj: repo projektu
+if not os.path.isfile(SRC):        # zasada 5: brak źródła to cisza, nie traceback
+    sys.exit(0)
+runpy.run_path(SRC, run_name="__main__")
 ```
+
+Dzięki temu **edycja w repo działa natychmiast**, bez kopiowania po każdej zmianie. Docelowo
+miało tam stać dowiązanie symboliczne, ale Windows odmawia jego utworzenia bez trybu dewelopera
+albo praw administratora (`Administrator privilege required`) — przekierowanie robi to samo bez
+żadnych uprawnień i tak samo na maszynie zdalnej. Różni je **wyłącznie `SRC`**: tutaj repo
+projektu, na maszynie zdalnej wydanie w repo skilli. Sondę odnajduje po `%LOCALAPPDATA%`, nie po
+`__file__`, więc przekierowanie niczego jej nie przesuwa.
+
+Koszt: jeden odczyt pliku więcej, a przy `SRC` na dysku sieciowym +19 ms na wywołanie (zmierzone:
+27 ms lokalnie vs 46 ms z dysku sieciowego). W wersji 3 to margines — dominującym kosztem jest odpalenie
+`claude` (~3,4 s, odłączone), a większość przebiegów kończy się na throttlu po ~30 ms. Maszyna
+zdalna czyta z dysku lokalnego i nie płaci nawet tego.
 
 **2. Konfiguracja** — `%LOCALAPPDATA%\claude-usage-monitor\config.json` (Windows)
 albo `~/.local/state/claude-usage-monitor/config.json` (Linux):
@@ -94,9 +116,15 @@ Bez `config.json` sonda działa w **trybie tylko lokalnym**: mierzy i loguje, ni
 przez Git Bash (widać to w `claude --debug`: `Using bash path: C:\Program Files\Git\bin\bash.exe`),
 a bash nie rozwija składni `%ZMIENNA%`.
 
-`PostToolUse` z `"async": true` to główny wyzwalacz — jedyne zdarzenie z prawdziwym
-fire-and-forget, zmierzone 0,24 ms narzutu. `Stop` domyka lukę dla tur bez wywołań narzędzi.
-**`UserPromptSubmit` odpada** — blokuje wysłanie promptu z 30-sekundowym timeoutem.
+`PostToolUse` z `"async": true` to główny wyzwalacz — zmierzone 0,24 ms narzutu. `Stop` domyka
+lukę dla tur bez wywołań narzędzi. Zarejestrowanych jest dziewięć zdarzeń
+(dochodzą `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUseFailure`, `PostToolBatch`,
+`SubagentStop`, `Notification`/`idle_prompt`) — przy throttlu 60 s gęstsze wyzwalanie nic nie
+kosztuje, a skraca lukę po wznowieniu sesji.
+
+**`UserPromptSubmit` wymaga `"async": true`.** Synchronicznie blokuje wysłanie promptu aż do
+30-sekundowego timeoutu — to jest zdarzenie, w którym hook *może* dopisać kontekst do promptu,
+więc Claude Code czeka na jego wynik. Z `async` nie ma na co czekać.
 
 **4. Wymagane:** `claude` w `PATH` (albo `claude_bin` w konfiguracji). Bez tego sonda nie ma
 czym zlecić pomiaru i loguje `brak-claude-w-path`.
@@ -150,7 +178,8 @@ python client/analyze-samples.py          # tempo zmian, błędy, konta, przeł�
 
 Pliki robocze w `%LOCALAPPDATA%\claude-usage-monitor\`:
 `usage-samples.jsonl` (log), `spool.jsonl` (zaległości), `last-probe.txt` (throttle),
-`usage-cli.json` (zrzut stdout z `/usage`), `config.json`, `usage-probe.py` (kopia wykonywana).
+`usage-cli.json` (zrzut stdout z `/usage`), `config.json`, `usage-probe.py` (**przekierowanie**
+do źródła, nie sonda — patrz Instalacja).
 
 Pole `measurement` w każdym wpisie logu mówi, skąd wzięty jest pomiar: `source`
 (`cli_merged` / `cli_usage_cache`), `cache_age_s`, `fresh_age_s`, `fresh_applied` (które serie

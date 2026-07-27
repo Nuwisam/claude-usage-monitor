@@ -86,6 +86,8 @@ HTTP 200 i poprawnie wyglądającej odpowiedzi. Oba typy leżą obok siebie w `a
 
 ```
 client/     sonda (stdlib-only) + narzędzia analizy; zasady 1-3
+              usage-probe.py — ŹRÓDŁO PRAWDY; wydanie żyje w repo repozytorium skilli
+scripts/git-hooks/  pre-push: strażnik SCRIPT_VERSION i rozjazdu z wydaniem
 backend/    FastAPI + SQLAlchemy async + Alembic; MariaDB; serwuje też statyki UI
   app/parsing.py     czyste funkcje, cała logika normalizacji  <- tu zaczynaj przy zmianach API
   app/freshness.py   czyste funkcje, cztery stany świeżości
@@ -126,7 +128,24 @@ Kopia robocza **jest** wdrożeniem: `/var/lib/claude-usage-monitor` == `Z:/proje
 cd /var/lib/claude-usage-monitor && git pull && docker compose up -d --build
 ```
 
-Zmiana w kliencie wymaga skopiowania na dysk lokalny maszyny — patrz `client/README.md`.
+**Sonda nie jest kopiowana.** Pod ścieżką z hooków
+(`%LOCALAPPDATA%\claude-usage-monitor\usage-probe.py`) leży kilkanaście linijek przekierowania,
+które `runpy` wykonuje prawdziwy plik spod `SRC` — tutaj `client/usage-probe.py`, na maszynie
+zdalnej wydanie w repo skilli. Edycja w repo działa od razu, bez `Copy-Item`. Miało tam stać
+dowiązanie symboliczne; Windows odmawia jego utworzenia bez trybu dewelopera albo praw
+administratora. Szczegóły w `client/README.md`.
+
+**Sonda ma dwa adresy i dwie role.** `client/usage-probe.py` to źródło (ładuje je
+`backend/tests/test_probe_parsing.py` po sztywnej ścieżce), a kopia w
+`skills/usage-monitor-enrollment/` w repo `repozytorium skilli` to **wydanie** — jedyne, co widzi maszyna
+zdalna, bo tam sonda przyjeżdża zwykłym `git pull` razem ze skillem. Wydanie **może być starsze**
+od HEAD i to jest poprawne: publikuje wyłącznie `polecenie publikujace wydanie`, świadomie.
+Różnicę widać w `/api/machines` po `scriptVersion`.
+
+Pilnuje tego `scripts/git-hooks/pre-push` (włączony przez `git config core.hooksPath
+scripts/git-hooks`, jeden `.git` dla obu systemów): **odmawia**, gdy sonda się zmieniła bez
+podbicia `SCRIPT_VERSION`, i **ostrzega**, gdy wydanie zostało w tyle. Z hosta, gdzie repo skilli
+nie jest widoczne, zostaje samo ostrzeżenie. Furtka: `git push --no-verify`.
 
 ## Pułapki tego środowiska
 
@@ -147,5 +166,20 @@ Zmiana w kliencie wymaga skopiowania na dysk lokalny maszyny — patrz `client/R
   `MSYS_NO_PATHCONV=1`. Kosztowało to dwa przypadkowe wywołania po ~$0,10.
 - **Magazyn CA Windows** odrzuca łańcuch Let's Encrypt niektorych hostow, choć każde ogniwo jest ważne.
   Klient używa `certifi`; nie wyłączaj weryfikacji.
-- **Skrypt uruchamiany z dysku sieciowego kosztuje +19 ms** na wywołanie. Wykonywana kopia
-  zawsze na dysku lokalnym.
+- **Skrypt uruchamiany z dysku sieciowego kosztuje +19 ms** na wywołanie (27 ms lokalnie vs
+  46 ms z dysku sieciowego). W wersji 3 to margines — dominuje odpalenie `claude` (~3,4 s, odłączone),
+  a większość przebiegów kończy się na throttlu po ~30 ms — dlatego przekierowanie na `Z:`
+  jest do przyjęcia. Maszyna zdalna czyta z dysku lokalnego i nie płaci nawet tego.
+- **Windows odmawia tworzenia dowiązań symbolicznych** bez trybu dewelopera albo praw
+  administratora (`Administrator privilege required`), a `Remote to local symbolic links` bywa **wyłączone** — dowiązanie *wewnątrz* repo na `Z:` nie rozwiązałoby
+  się nawet po utworzeniu. Stąd przekierowanie w Pythonie zamiast symlinka.
+- **Pliki wykonywane po obu stronach muszą mieć LF i bit `+x`.** Bit wykonywalny w indeksie
+  gita (`100755`) nie przekłada się na katalog roboczy widziany przez Sambę — hook trzeba
+  było `chmod +x` z hosta, inaczej git po stronie Linuksa **po cichu go pomija**.
+  Końce linii pilnuje `.gitattributes`.
+- **`core.filemode` musi być `false`.** Git po stronie Windows nie odczytuje trybu z udzialu sieciowego
+  i zgłaszał `mode change 100755 => 100644` dla wszystkich trzech skryptów — `git status`
+  pokazywał je jako zmodyfikowane, choć treść była identyczna. Groźniejsza jest druga strona
+  tego samego: `git add -A` z Windows zdejmowałby bit wykonywalny, a wtedy `pre-push`
+  przestaje działać na hoście **bez jednego słowa ostrzeżenia**. Tryby w indeksie zostają
+  poprawne, bo `filemode=false` każe gitowi ignorować to, co widzi w katalogu roboczym.

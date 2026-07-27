@@ -104,13 +104,30 @@ stracić.
 
 ## Zmiana klienta na maszynie
 
-```powershell
-Copy-Item Z:\projects\claude-usage-monitor\client\usage-probe.py `
-          X:\Projekty\repozytorium skilli\tools\usage-probe.py
+**Nic nie kopiujesz.** Pod ścieżką z hooków leży przekierowanie, które wykonuje
+`client/usage-probe.py` prosto z repo, więc edycja działa od następnego przebiegu. Nie trzeba
+nic restartować — hook czyta skrypt i `config.json` przy każdym uruchomieniu. Pamiętaj tylko,
+że **pierwszy przebieg nie mierzy**: sonda nie czeka na `claude -p "/usage"`, wynik konsumuje
+następny cykl.
+
+## Wydanie sondy dla maszyn zdalnych
+
+Maszyna zdalna nie widzi tego repo — bierze sondę z `repozytorium skilli`
+(`kopia wydania usage-probe.py`) razem ze skillem. To jest **wydanie** i ma prawo
+być starsze od HEAD; publikacja jest decyzją, nie skutkiem ubocznym pushu.
+
+```
+polecenie publikujace wydanie      # pokazuje diff, kopiuje, commituje w repo skilli
 ```
 
-Źródłem prawdy jest repo na `Z:`, kopia wykonywana **musi** leżeć na dysku lokalnym.
-Nie trzeba nic restartować — hook czyta skrypt i `config.json` przy każdym uruchomieniu.
+Przypomina o tym `pre-push`: **odmawia**, gdy sonda się zmieniła bez podbicia `SCRIPT_VERSION`,
+i **ostrzega**, gdy wydanie zostało w tyle. Która maszyna chodzi na której wersji — widać
+w `/api/machines` po `scriptVersion`.
+
+Gdy hook nie odzywa się mimo zmiany sondy, sprawdź w tej kolejności:
+`git config core.hooksPath` (ma być `scripts/git-hooks`) oraz `ls -l scripts/git-hooks/pre-push`
+po stronie hosta — **bez bitu `+x` git na Linuksie pomija hook bez słowa**, a bit z indeksu
+gita nie przechodzi przez Sambę do katalogu roboczego.
 
 ## Wyłączenie zbierania
 
