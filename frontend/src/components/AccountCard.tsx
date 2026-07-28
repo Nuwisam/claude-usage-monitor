@@ -65,7 +65,7 @@ export function AccountCard({ a, nowMs }: Props) {
           </div>
           <div className="series-list">
             {rest.map((s) => (
-              <SeriesRow key={s.seriesKey} s={s} />
+              <SeriesRow key={s.seriesKey} s={s} nowMs={nowMs} />
             ))}
           </div>
         </>

@@ -389,6 +389,9 @@
   font-variant-numeric: tabular-nums;
   color: color-mix(in srgb, var(--color-text) 55%, transparent);
 }
+.series-reset {
+  color: color-mix(in srgb, var(--color-text) 75%, transparent);
+}
 .series-pct {
   text-align: right;
   font-size: 16px;
@@ -833,6 +836,7 @@
   }
   .hero-binds-now,
   .hero-reset-at,
+  .series-reset-at,
   .hero-fresh,
   .tag-sev,
   .hero-note {

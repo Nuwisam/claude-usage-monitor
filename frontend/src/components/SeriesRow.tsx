@@ -1,12 +1,13 @@
 import type { SeriesStatus } from "../api/types";
-import { describeSeries, spendNote } from "../lib/freshness";
+import { describeSeries, resetNote, spendNote } from "../lib/freshness";
 import { UtilBar } from "./UtilBar";
 
 /** Wiersz serii. `isActive` nie przestawia hierarchii widoku — jest kreska i slowem.
  *  Cztery obszary siatki zamiast zagniezdzonych blokow, zeby waski uklad przestawil je
  *  bez zmiany DOM (grid-template-areas w app.css). */
-export function SeriesRow({ s }: { s: SeriesStatus }) {
+export function SeriesRow({ s, nowMs }: { s: SeriesStatus; nowMs: number }) {
   const v = describeSeries(s, spendNote(s));
+  const reset = resetNote(s, nowMs);
 
   return (
     <div className="series-row">
@@ -27,7 +28,10 @@ export function SeriesRow({ s }: { s: SeriesStatus }) {
       )}
 
       <div className="series-sub">
-        <span className="series-note">{v.note}</span>
+        <span className="series-note">
+          {v.note} · <span className="series-reset">{reset.lead}</span>
+          {reset.at && <span className="series-reset-at"> · o {reset.at}</span>}
+        </span>
       </div>
     </div>
   );
