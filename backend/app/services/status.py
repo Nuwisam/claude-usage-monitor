@@ -39,6 +39,20 @@ async def _last_batch_times(db: AsyncSession) -> dict[int, datetime]:
     return {aid: t for aid, t in rows}
 
 
+async def last_batch_time(db: AsyncSession, account_id: int) -> datetime | None:
+    """Single-account variant for the SSE publisher — hits `ix_batches_acct_time` instead
+    of grouping the whole table.
+
+    The CALLER computes this fact and passes it into `build_account_status`. If the card
+    builder fetched it itself there would be two queries for the same thing and two places
+    to get it wrong — and the entire value of this refactor is that exactly one function
+    assembles a card."""
+    return (await db.execute(
+        select(func.max(IngestBatch.received_at))
+        .where(IngestBatch.account_id == account_id)
+    )).scalar_one_or_none()
+
+
 async def _recent_samples(db: AsyncSession, account_id: int,
                           since: datetime) -> dict[int, list[Sample]]:
     """Przebieg serii konta z ostatniej godziny, jednym zapytaniem — baseline delty trzeba
@@ -106,6 +120,106 @@ def _mark_duplicates(series: list[SeriesStatus]) -> None:
                 break
 
 
+async def build_account_status(
+    db: AsyncSession, account: Account, *, now: datetime, last_batch_at: datetime | None,
+) -> tuple[AccountStatus, list[str]]:
+    """The card for ONE account — the only place where one is assembled.
+
+    Two paths call this: `/api/status` (a loop over accounts) and the SSE publisher (a
+    single account, after ingest). Splitting them into two implementations would produce
+    two cards for the same account that would have to stay identical forever — and no test
+    watches over that indefinitely.
+
+    `now` and `last_batch_at` come from outside on purpose: `/api/status` computes them
+    once for the whole response (one consistent timestamp across accounts, one grouped
+    query), the publisher for a single account. If this function fetched them itself, both
+    facts would have two sources.
+
+    Also returns this account's warnings — `warnings` in the response is a list across
+    accounts, but every entry in it originates at one specific account.
+    """
+    a = account
+    rows = (await db.execute(
+        select(SeriesState, UsageSeries)
+        .join(UsageSeries, UsageSeries.id == SeriesState.series_id)
+        .where(SeriesState.account_id == a.id)
+        .order_by(UsageSeries.sort_order, UsageSeries.series_key)
+    )).all()
+
+    lb = last_batch_at
+    recent = await _recent_samples(db, a.id, now - timedelta(hours=1))
+    warnings: list[str] = []
+    series: list[SeriesStatus] = []
+    facts: list[SeriesFacts] = []
+    for st, s in rows:
+        raw_all = float(st.last_utilization) if st.last_utilization is not None else None
+        # Fakty dla kaskady zbieramy PRZED filtrem widoku: `extra:usage` na koncie bez
+        # kredytow ma utilization = null i za chwile wypadnie, a kaskada z niego czyta.
+        facts.append(SeriesFacts(
+            series_key=s.series_key, source=s.source, kind=s.kind,
+            bucket_key=s.bucket_key, utilization=raw_all,
+            is_active=st.last_is_active, extra=st.last_extra,
+        ))
+
+        # Serie, ktore nigdy nie mialy wartosci (np. seven_day_opus na koncie bez Opusa)
+        # rejestrujemy, ale nie zasmiecamy nimi widoku.
+        if not s.ever_non_null and st.last_utilization is None:
+            continue
+
+        # Fallback na last_captured_at dla wierszy sprzed migracji dodajacej
+        # last_confirmed_at — dla nich oba znaczenia sa i tak tozsame.
+        confirmed = st.last_confirmed_at or st.last_captured_at
+        state = freshness(
+            now=now,
+            confirmed_at=confirmed,
+            resets_at=st.last_resets_at,
+            last_batch_at=lb,
+            fresh_window_sec=settings.fresh_window_sec,
+            client_silent_sec=settings.client_silent_sec,
+        )
+        raw_u = raw_all
+        shown = display_utilization(state, raw_u)
+        secs = (int((st.last_resets_at - now).total_seconds())
+                if st.last_resets_at is not None else None)
+        # `shown`, nie `raw_u`: delta towarzyszy liczbie widocznej na ekranie, a przy
+        # `unknown` liczby nie ma.
+        d_pct, d_from = _delta_1h(recent.get(s.id, ()), now=now, current=shown,
+                                  resets_at=st.last_resets_at)
+
+        series.append(SeriesStatus(
+            series_id=s.id, series_key=s.series_key, label=s.display_label,
+            source=s.source, sort_order=s.sort_order,
+            kind=s.kind, group=s.group_key, bucket_key=s.bucket_key,
+            utilization=shown, raw_utilization=raw_u,
+            resets_at=st.last_resets_at, seconds_to_reset=secs,
+            captured_at=st.last_captured_at, confirmed_at=confirmed,
+            value_since=st.value_since, freshness=state,
+            is_active=st.last_is_active, severity=st.last_severity,
+            delta_pct_1h=d_pct, delta_from=d_from,
+            extra=st.last_extra,
+        ))
+
+    _mark_duplicates(series)
+
+    if any(x.freshness == "unknown" for x in series):
+        warnings.append(
+            "Część serii na koncie %s jest w stanie „unknown” — sprawdź klienta"
+            % (a.email or a.label or a.account_uuid[:8])
+        )
+
+    card = AccountStatus(
+        uuid=a.account_uuid, label=a.label, email=a.email,
+        display_name=a.display_name, color=a.color,
+        org_type=a.org_type, seat_tier=a.seat_tier,
+        rate_limit_tier=a.org_rate_limit_tier or a.user_rate_limit_tier,
+        subscription_type=a.subscription_type, is_enabled=a.is_enabled,
+        last_sample_at=a.last_sample_at, last_batch_at=lb,
+        last_client_host=a.last_client_host,
+        cascade=build_cascade(facts), series=series,
+    )
+    return card, warnings
+
+
 async def build_status(db: AsyncSession) -> StatusResponse:
     now = utcnow()
     warnings: list[str] = []
@@ -117,83 +231,11 @@ async def build_status(db: AsyncSession) -> StatusResponse:
 
     out: list[AccountStatus] = []
     for a in accounts:
-        rows = (await db.execute(
-            select(SeriesState, UsageSeries)
-            .join(UsageSeries, UsageSeries.id == SeriesState.series_id)
-            .where(SeriesState.account_id == a.id)
-            .order_by(UsageSeries.sort_order, UsageSeries.series_key)
-        )).all()
-
-        lb = last_batch.get(a.id)
-        recent = await _recent_samples(db, a.id, now - timedelta(hours=1))
-        series: list[SeriesStatus] = []
-        facts: list[SeriesFacts] = []
-        for st, s in rows:
-            raw_all = float(st.last_utilization) if st.last_utilization is not None else None
-            # Fakty dla kaskady zbieramy PRZED filtrem widoku: `extra:usage` na koncie bez
-            # kredytow ma utilization = null i za chwile wypadnie, a kaskada z niego czyta.
-            facts.append(SeriesFacts(
-                series_key=s.series_key, source=s.source, kind=s.kind,
-                bucket_key=s.bucket_key, utilization=raw_all,
-                is_active=st.last_is_active, extra=st.last_extra,
-            ))
-
-            # Serie, ktore nigdy nie mialy wartosci (np. seven_day_opus na koncie bez Opusa)
-            # rejestrujemy, ale nie zasmiecamy nimi widoku.
-            if not s.ever_non_null and st.last_utilization is None:
-                continue
-
-            # Fallback na last_captured_at dla wierszy sprzed migracji dodajacej
-            # last_confirmed_at — dla nich oba znaczenia sa i tak tozsame.
-            confirmed = st.last_confirmed_at or st.last_captured_at
-            state = freshness(
-                now=now,
-                confirmed_at=confirmed,
-                resets_at=st.last_resets_at,
-                last_batch_at=lb,
-                fresh_window_sec=settings.fresh_window_sec,
-                client_silent_sec=settings.client_silent_sec,
-            )
-            raw_u = raw_all
-            shown = display_utilization(state, raw_u)
-            secs = (int((st.last_resets_at - now).total_seconds())
-                    if st.last_resets_at is not None else None)
-            # `shown`, nie `raw_u`: delta towarzyszy liczbie widocznej na ekranie, a przy
-            # `unknown` liczby nie ma.
-            d_pct, d_from = _delta_1h(recent.get(s.id, ()), now=now, current=shown,
-                                      resets_at=st.last_resets_at)
-
-            series.append(SeriesStatus(
-                series_id=s.id, series_key=s.series_key, label=s.display_label,
-                source=s.source, sort_order=s.sort_order,
-                kind=s.kind, group=s.group_key, bucket_key=s.bucket_key,
-                utilization=shown, raw_utilization=raw_u,
-                resets_at=st.last_resets_at, seconds_to_reset=secs,
-                captured_at=st.last_captured_at, confirmed_at=confirmed,
-                value_since=st.value_since, freshness=state,
-                is_active=st.last_is_active, severity=st.last_severity,
-                delta_pct_1h=d_pct, delta_from=d_from,
-                extra=st.last_extra,
-            ))
-
-        _mark_duplicates(series)
-
-        if any(x.freshness == "unknown" for x in series):
-            warnings.append(
-                "Część serii na koncie %s jest w stanie „unknown” — sprawdź klienta"
-                % (a.email or a.label or a.account_uuid[:8])
-            )
-
-        out.append(AccountStatus(
-            uuid=a.account_uuid, label=a.label, email=a.email,
-            display_name=a.display_name, color=a.color,
-            org_type=a.org_type, seat_tier=a.seat_tier,
-            rate_limit_tier=a.org_rate_limit_tier or a.user_rate_limit_tier,
-            subscription_type=a.subscription_type, is_enabled=a.is_enabled,
-            last_sample_at=a.last_sample_at, last_batch_at=lb,
-            last_client_host=a.last_client_host,
-            cascade=build_cascade(facts), series=series,
-        ))
+        card, warn = await build_account_status(
+            db, a, now=now, last_batch_at=last_batch.get(a.id)
+        )
+        out.append(card)
+        warnings.extend(warn)
 
     return StatusResponse(contract_version=CONTRACT_VERSION, server_now=now,
                           accounts=out, warnings=warnings)

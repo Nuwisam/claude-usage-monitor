@@ -140,11 +140,41 @@ Rename-Item "$env:LOCALAPPDATA\claude-usage-monitor\config.json" config.json.off
 Po stronie serwera unieważnienie pojedynczej maszyny to usunięcie jej wpisu z `INGEST_TOKENS`
 w `.env` + `docker compose up -d`.
 
+## Klient strumienia SSE (panel AX206, skrypty)
+
+Przeglądarka nie potrzebuje niczego — `EventSource` idzie na ciasteczku SSO. Klient bez
+sesji SSO potrzebuje własnego tokenu i **UUID-ów kont**, bo subskrypcja jest po UUID, nie
+po adresie e-mail (jeden adres wskazuje kilka kont, a e-mail bywa nadpisywany).
+
+```bash
+# 1) token — OSOBNY od INGEST_TOKENS, ten drugi jest wyłącznie do zapisu
+openssl rand -hex 32
+# dopisz do .env:  STREAM_TOKENS=<hex>:panel      (potem: docker compose up -d)
+
+# 2) UUID kont, na które panel ma być zapisany (z przeglądarki zalogowanej do SSO)
+curl -s $B/api/accounts | jq -r '.[] | "\(.uuid)  \(.email)"'
+
+# 3) próba na żywo — hello + snapshot natychmiast, potem ping co 15 s
+curl -N -H "Authorization: Bearer $STREAM_TOKEN" \
+     "$B/api/stream?account=<uuid>&account=<uuid>"
+```
+
+Jeśli `hello` zwraca UUID w polu `unknown[]`, to literówka albo konto jeszcze nie
+raportowało — połączenie zostaje otwarte i ramki zaczną przychodzić, gdy konto się pojawi.
+
+**Po `/login` na nowe konto panel wymaga dopisania jego UUID.** Przeglądarka dowiaduje się
+sama (poll `/status` co 3 min przepina strumień), panel nie — bo nikt o ten UUID nie prosił.
+
+**Ramki przychodzą zlepkami co kilkadziesiąt sekund zamiast natychmiast?** To buforowanie
+Apache: sprawdź, czy reguła `/claude-usage/api/stream` stoi **przed** generyczną
+`/claude-usage/api` i czy ma `SetEnv no-gzip 1`.
+
 ## Pierwsze wdrożenie od zera
 
 ```bash
 cd /var/lib/claude-usage-monitor
 cp .env.example .env            # MARIADB_*, INGEST_TOKENS, INGEST_EDGE_KEY, ALLOWED_EMAILS
+                                # STREAM_TOKENS tylko jeśli ma być klient bez SSO
 docker compose up -d --build
 
 EDGE=$(grep -oP '^INGEST_EDGE_KEY=\K.*' .env)

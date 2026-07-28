@@ -12,10 +12,12 @@ import json
 import re
 from datetime import timedelta
 
+from sqlalchemy import select
 from tests.test_ingest_e2e import (  # noqa: F401 — fixture `db` przychodzi razem z nimi
-    REAL, db, ingest_one, payload, utcnow, with_util,
+    ACCOUNT_MAX, ACCOUNT_TEAM, REAL, db, ingest_one, payload, utcnow, with_util,
 )
 
+from app.models import Account
 from app.services.status import CONTRACT_VERSION, build_status
 
 # ISO-8601 z offsetem: "2026-07-26T19:07:37.564772Z" albo "...+00:00"
@@ -78,6 +80,56 @@ async def test_kaskada_jest_przy_koncie_i_ma_cztery_szczeble(db):
 
     assert [r["key"] for r in cascade] == ["session", "weekly", "credits", "hard_block"]
     assert sum(1 for r in cascade if r["isCurrent"]) == 1
+
+
+async def test_karte_konta_sklada_dokladnie_jedna_funkcja(db, monkeypatch):
+    """Dowod, ze `/api/status` i publikator SSE nie maja jak sie rozjechac.
+
+    Karta konta powstaje w `build_account_status`; `build_status` jest tylko petla po
+    kontach. Gdyby ktos kiedys zduplikowal skladanie karty dla strumienia — a to jest
+    naturalna pokusa, bo publikator zna juz konto i "wystarczy przepisac" — ten test
+    natychmiast pokaze rozjazd.
+
+    `utcnow` przybijamy, bo trzy pola zaleza od chwili odczytu (`freshness`,
+    `secondsToReset`, `deltaPct1h`) i bez tego porownanie lapaloby roznice sekundy
+    zamiast roznicy logiki.
+    """
+    import app.services.status as stat
+
+    await ingest_one(db, machine_name="desktop", payload=payload(account=ACCOUNT_MAX))
+    await db.commit()
+    await ingest_one(db, machine_name="laptop", payload=payload(account=ACCOUNT_TEAM))
+    await db.commit()
+
+    teraz = utcnow()
+    monkeypatch.setattr(stat, "utcnow", lambda: teraz)
+
+    zbiorczo = json.loads((await build_status(db)).model_dump_json(by_alias=True))
+    assert len(zbiorczo["accounts"]) == 2, "scenariusz mial dac dwa konta"
+
+    for karta in zbiorczo["accounts"]:
+        acc = (await db.execute(
+            select(Account).where(Account.account_uuid == karta["uuid"])
+        )).scalar_one()
+        pojedynczo, ostrzezenia = await stat.build_account_status(
+            db, acc, now=teraz, last_batch_at=await stat.last_batch_time(db, acc.id),
+        )
+        assert json.loads(pojedynczo.model_dump_json(by_alias=True)) == karta, \
+            "karta konta %s rozni sie miedzy sciezkami" % karta["uuid"]
+        assert set(ostrzezenia) <= set(zbiorczo["warnings"])
+
+
+async def test_last_batch_time_zgadza_sie_z_wariantem_grupowym(db):
+    """Publikator liczy `last_batch_at` innym zapytaniem niz `/api/status` (jedno konto
+    zamiast GROUP BY). To jedyny fakt, ktory ma dwa zrodla — wiec ma tu swoj test."""
+    await ingest_one(db, machine_name="desktop", payload=payload(account=ACCOUNT_MAX))
+    await ingest_one(db, machine_name="laptop", payload=payload(account=ACCOUNT_TEAM))
+    await db.commit()
+
+    import app.services.status as stat
+    grupowo = await stat._last_batch_times(db)
+    for acc in (await db.execute(select(Account))).scalars().all():
+        assert await stat.last_batch_time(db, acc.id) == grupowo.get(acc.id)
 
 
 async def test_unknown_nie_ma_liczby_ale_ma_ostatni_pomiar(db, monkeypatch):

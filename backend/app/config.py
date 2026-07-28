@@ -42,6 +42,26 @@ class Settings(BaseSettings):
     # wiec 15 min to kilkukrotnosc normalnego odstepu — nie zglasza szumu.
     history_gap_sec: int = Field(900, alias="HISTORY_GAP_SEC")
 
+    # --- SSE stream ---
+    # "token:label,token2:label2" — credential for headless clients (AX206 panel,
+    # scripts). A SEPARATE secret from INGEST_TOKENS: that one is WRITE-only and is
+    # already handed out on every machine running the probe. Accepting it here would
+    # silently widen the meaning of a key that is in circulation and that nobody would
+    # rotate for this reason.
+    stream_tokens_raw: str = Field("", alias="STREAM_TOKENS")
+    # Seconds, float on purpose: tests drive sub-second streams, and a duration is not
+    # inherently an integer. The ping keeps the connection alive through Apache, but its
+    # more important job is local: both middlewares in main.py are BaseHTTPMiddleware,
+    # which on a streaming response can delay client-disconnect detection until the next
+    # write. Without the ping a dead subscription would sit in the broker indefinitely.
+    stream_ping_sec: float = Field(15.0, alias="STREAM_PING_SEC")
+    # Hard connection lifetime. This is the ONLY moment an SSO session is re-verified on
+    # a long stream — without it an expired cookie would keep feeding data forever.
+    # EventSource reconnects on its own, so the browser never notices.
+    stream_max_lifetime_sec: float = Field(900.0, alias="STREAM_MAX_LIFETIME_SEC")
+    stream_max_clients: int = Field(32, alias="STREAM_MAX_CLIENTS")
+    stream_queue_max: int = Field(32, alias="STREAM_QUEUE_MAX")
+
     @property
     def allowed_emails(self) -> set[str]:
         return {e.strip().lower() for e in self.allowed_emails_raw.split(",") if e.strip()}
@@ -49,16 +69,25 @@ class Settings(BaseSettings):
     @property
     def ingest_tokens(self) -> dict[str, str]:
         """token -> nazwa maszyny."""
-        out: dict[str, str] = {}
-        for part in self.ingest_tokens_raw.split(","):
-            part = part.strip()
-            if not part:
-                continue
-            token, _, machine = part.partition(":")
-            token = token.strip()
-            if token:
-                out[token] = (machine.strip() or "unknown")
-        return out
+        return _parse_tokens(self.ingest_tokens_raw)
+
+    @property
+    def stream_tokens(self) -> dict[str, str]:
+        """token -> stream client label."""
+        return _parse_tokens(self.stream_tokens_raw)
+
+
+def _parse_tokens(raw: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        token, _, label = part.partition(":")
+        token = token.strip()
+        if token:
+            out[token] = (label.strip() or "unknown")
+    return out
 
 
 settings = Settings()

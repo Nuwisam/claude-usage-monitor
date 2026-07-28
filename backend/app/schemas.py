@@ -150,6 +150,37 @@ class StatusResponse(CamelModel):
     warnings: list[str] = []
 
 
+# --------------------------------------------------------------------------- stream
+# SSE frame envelopes. `AccountFrame` embeds `AccountStatus` VERBATIM — never a "lite"
+# variant. The model is already frozen by /api/status, so reusing it adds not a single
+# frozen field; a separate, simplified shape would be a second contract to maintain, and
+# THAT is what would break rule 8 — not this envelope.
+class HelloFrame(CamelModel):
+    contract_version: int
+    server_now: UtcDt
+    # `subscribed` are the UUIDs found in the database, `unknown` the ones that are not.
+    # An unknown UUID is NOT an error (the account may only appear later), but it must be
+    # visible: otherwise a typo in a panel's config shows up as silence indistinguishable
+    # from idleness — the failure mode this whole project is built to avoid.
+    subscribed: list[str]
+    unknown: list[str]
+    ping_sec: float
+    max_lifetime_sec: float
+
+
+class AccountFrame(CamelModel):
+    contract_version: int
+    server_now: UtcDt
+    account: AccountStatus
+    # Warnings for THIS account. The full list in /api/status is computed across accounts
+    # and stays there — the poll remains its owner.
+    warnings: list[str] = []
+
+
+class PingFrame(CamelModel):
+    server_now: UtcDt
+
+
 class HistoryPoint(CamelModel):
     t: UtcDt
     min: float | None

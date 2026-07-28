@@ -74,7 +74,8 @@ niż brak odpowiedzi.
 
 | Metoda i ścieżka | Zwraca |
 |---|---|
-| `GET /status` | **Główny endpoint.** Stan bieżący wszystkich kont i serii. Odpytywać co **15 s** |
+| `GET /status` | **Główny endpoint.** Stan bieżący wszystkich kont i serii. Odpytywać co **15 s**, a przy podłączonym strumieniu (§ 3.1) co **3 min** |
+| `GET /stream?account=<uuid>` | **SSE.** Karta konta wypychana natychmiast po pomiarze. Zob. § 3.1 |
 | `GET /history?account=&seriesId=&from=&to=&bucket=auto` | Przebieg w czasie + dziury + granice resetów |
 | `GET /accounts` | Lista kont. **`PATCH /accounts/{uuid}` NIE ISTNIEJE** — kolumny `label`, `color`, `isEnabled` są w bazie, ale nie ma ścieżki zapisu. Nie buduj na nim edycji |
 | `GET /machines` | Które maszyny raportowały które konta, z wersją **sondy** (`scriptVersion`) |
@@ -98,6 +99,71 @@ To nie jest uprzejmość dla klienta, tylko domknięcie granicy: gdy kontrakt v2
 strefę do czasu wychodzącego, przeglądarka zaczęła ją odsyłać — i widok Historia zwracał
 **500** przy każdym otwarciu, bo reszta backendu liczy na naiwnym UTC. Pilnuje tego
 `backend/tests/test_history_endpoint.py`.
+
+---
+
+## 3.1 Strumień zdarzeń (SSE)
+
+```
+GET /api/stream?account=<uuid>&account=<uuid>[&snapshot=0]
+Accept: text/event-stream
+```
+
+Serwer wypycha ramkę, gdy przez `/api/ingest` przyjdzie pomiar dla **zapisanego** konta.
+
+**Subskrypcja jest wyłącznie po `account_uuid`.** Adresu e-mail w tym kontrakcie nie ma —
+ani jako parametru, ani jako klucza dopasowania. Jeden adres wskazuje realnie kilka kont
+(konto Pro i miejsce w Teamie pod tym samym adresem), a `email` jest nadpisywany przy każdym
+pomiarze; adresowanie po nim znaczyłoby, że zbiór kont pod subskrypcją zmienia się bez
+wiedzy subskrybenta — po cichu. Co najmniej jeden `account` jest **wymagany**: brak
+parametru to `400 {"reason": "no-subscription"}`, nigdy niejawne „wszystko".
+
+**Autoryzacja: Bearer albo ciasteczko SSO.** Obecność nagłówka `Authorization` wybiera
+ścieżkę tokenową (`STREAM_TOKENS`); bez niego działa zwykła sesja SSO, więc `EventSource`
+z przeglądarki nie wymaga niczego dodatkowego. `STREAM_TOKENS` to **osobny sekret** od
+`INGEST_TOKENS` — token sondy jest poświadczeniem wyłącznie do zapisu i nie otwiera odczytu.
+
+| event | kiedy | treść |
+|---|---|---|
+| `hello` | raz, na starcie | `{contractVersion, serverNow, subscribed[], unknown[], pingSec, maxLifetimeSec}` |
+| `account` | snapshot na starcie + po każdym przyjętym pomiarze | `{contractVersion, serverNow, account, warnings[]}` |
+| `ping` | co `pingSec` (15 s) | `{serverNow}` |
+| `lag` | odbiorca nie nadążył | `{reason:"queue-overflow", dropped}` |
+| `bye` | po `maxLifetimeSec` (900 s) | `{reason:"lifetime"}`, potem czyste zamknięcie |
+
+**`account` niesie dokładnie ten sam obiekt, co element `accounts[]` w `/status`** — ten sam
+model, te same pola, ta sama funkcja składająca po stronie serwera. Nie ma wariantu „lite"
+i nie będzie: drugi kształt tych samych danych to drugi kontrakt do utrzymania.
+
+Cztery rzeczy, które trzeba wiedzieć, zanim się to podepnie:
+
+1. **`unknown[]` nie jest błędem.** To UUID-y, których nie ma w bazie — literówka albo konto,
+   które dopiero powstanie. Połączenie zostaje otwarte i subskrypcja obejmuje je dalej, więc
+   konto założone w trakcie strumienia dojdzie samo. Zgłaszamy je, bo pomyłka w konfiguracji
+   musi wyglądać inaczej niż bezczynność.
+2. **Nie ma replayu** ani `Last-Event-ID`. Po ponownym połączeniu dostajesz świeży snapshot,
+   co jest ściśle lepsze od odtwarzania historii. Każda ramka jest **pełnym** stanem konta,
+   nie przyrostem — dlatego zgubienie ramek jest nieszkodliwe i dlatego `lag` wystarczy jako
+   jedyny sygnał przerwy.
+3. **`bye` po 900 s jest normalne.** To jedyny moment, w którym długie połączenie ponownie
+   weryfikuje sesję SSO. `EventSource` wznawia sam; klient headless musi wznowić sam.
+4. **Poll zostaje.** Strumień nie przelicza świeżości przy ciszy klienta (bo cisza nie
+   generuje zdarzeń), nie niesie `warnings[]` liczonych ponad kontami i nie pokaże konta,
+   o którego UUID nikt nie prosił. `/status` co **3 min** domyka wszystkie trzy.
+
+   Dlaczego 3 min, a nie minuta: sonda ma throttle 60 s, więc minutowy poll nie mógłby
+   pokazać niczego, czego nie przyniósł już strumień. To, po co poll naprawdę jest, zmienia
+   się **z upływem czasu**, nie z nowymi danymi — a najszybsze z tych przejść to
+   `live → stale` po `FRESH_WINDOW_SEC` (300 s). Najgorszy przypadek: seria pokazuje `live`
+   przez 8 minut zamiast 5. Błąd jest ograniczony i idzie w nieszkodliwą stronę — `stale`
+   jest jawnie niealarmowe, a w trwającym oknie utilization tylko rośnie, więc widoczna
+   liczba pozostaje ograniczeniem **dolnym**.
+
+`snapshot=0` pomija karty startowe — używa tego przeglądarka, która przed otwarciem
+strumienia i tak pobrała `/status`.
+
+**Filtr to routing, nie autoryzacja.** Zalogowany użytkownik widzi wszystkie konta
+w `/status`; strumień niczego przed nikim nie zamyka.
 
 ---
 
@@ -434,6 +500,10 @@ Lokalnie, bez SSO i bez serwera:
 `/status` zwraca `contractVersion` (obecnie **`3`**). Przy zmianie łamiącej zgodność liczba
 rośnie — UI sprawdza to i **głośno protestuje** w nagłówku, zamiast po cichu renderować śmieci
 (`frontend/src/components/Nav.tsx`, stała `CONTRACT_VERSION` w `api/types.ts`).
+
+**Ta sama liczba jedzie w kopercie każdej ramki SSE** i oznacza dokładnie to samo, bo ramka
+`account` niesie ten sam model. Konsumentów jest więc dwóch: `/status` i `/stream`. Dodanie
+strumienia **nie** podbiło wersji — `/status` nie zmienił się ani o pole.
 
 Dodanie pola jest zmianą **nie**łamiącą i nie wymaga podbicia. Wersja poszła z 1 na 2 wyłącznie
 przez zmianę serializacji czasu — reszta v2 to dodatki. Tak samo doszło `deltaFrom`: wersja

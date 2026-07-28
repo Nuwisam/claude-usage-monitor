@@ -25,6 +25,24 @@
 ProxyPass        /claude-usage/api/ingest http://claude_usage_monitor_backend:8000/api/ingest
 ProxyPassReverse /claude-usage/api/ingest http://claude_usage_monitor_backend:8000/api/ingest
 
+# --- Strumien SSE: dlugie polaczenie, bez buforowania ----------------------
+# MUSI byc PRZED regula /claude-usage/api, inaczej ta generyczna przechwyci strumien.
+#
+# Brak filtru brzegowego X-Ingest-Key jest swiadomy: ten endpoint wola takze przegladarka
+# (EventSource nie doda naglowka). Broni sie sam — 401 zanim cokolwiek dotknie bazy.
+#
+# `no-gzip` jest tu wazniejsze od `flushpackets`: filtr kompresji buforuje strumien do
+# skutku i objawia sie tym, ze ramki przychodza zlepkami co kilkadziesiat sekund.
+# `timeout=` przykrywa ProxyTimeout dla tego workera; ping co 15 s i tak nie pozwala
+# polaczeniu zamilknac, ale limit ma byc powyzej STREAM_MAX_LIFETIME_SEC.
+<Location /claude-usage/api/stream>
+    SetEnv proxy-sendchunked 1
+    SetEnv no-gzip 1
+    SetEnv dont-vary 1
+</Location>
+ProxyPass        /claude-usage/api/stream http://claude_usage_monitor_backend:8000/api/stream flushpackets=on timeout=1200 retry=0
+ProxyPassReverse /claude-usage/api/stream http://claude_usage_monitor_backend:8000/api/stream
+
 # --- Reszta API: ciasteczko SSO leci do backendu ---------------------------
 # Backend sam wola /api/verify i egzekwuje ALLOWED_EMAILS. Brak sesji =>
 # 401 {reason, redirect_url}, NIE 302 — bo nie ma tu nginx auth_request.

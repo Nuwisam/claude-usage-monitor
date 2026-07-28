@@ -61,6 +61,12 @@ zatruwał historię obu, bez żadnego widocznego objawu.
 **i** aktualizacja `docs/UI-HANDOUT.md` **i** stałej `CONTRACT_VERSION` w
 `frontend/src/api/types.ts` — UI porównuje je i protestuje w nagłówku przy rozjeździe.
 
+Konsumentów tej stałej jest **dwóch**: `/api/status` i ramki `/api/stream`, bo ramka `account`
+niesie ten sam model `AccountStatus`. Osadzaj go w ramkach **dosłownie** — wariant „lite"
+byłby drugim kontraktem do utrzymania i dopiero on łamałby tę zasadę. Kartę konta składa
+jedna funkcja (`build_account_status`), a `test_status_contract.py` porównuje wynik obu
+ścieżek pole po polu.
+
 **9. `resets_at` porównuj z tolerancją, nigdy na równość.**
 Granica okna podawana przez Anthropic **kołysze się**: zmierzone 49 próbek w 3 h, jedno okno,
 wartości od `00:59:59.014384` do `01:00:00.982268`. Porównanie doslowne było zawsze fałszywe
@@ -92,6 +98,7 @@ backend/    FastAPI + SQLAlchemy async + Alembic; MariaDB; serwuje też statyki 
   app/parsing.py     czyste funkcje, cała logika normalizacji  <- tu zaczynaj przy zmianach API
   app/freshness.py   czyste funkcje, cztery stany świeżości
   app/services/      ingest (zapis), status (odczyt), cascade (szczeble limitu)
+  app/services/events.py  broker SSE — W PROCESIE, patrz pulapka o --workers nizej
   app/main.py        mount /assets + fallback SPA; powłoka HTML celowo BEZ SSO
 frontend/   React 18 + Vite + TypeScript, bez Tailwinda i bez biblioteki wykresów
   src/lib/freshness.ts   stan -> wygląd; JEDYNE miejsce tej decyzji (zasada 4 w pikselach)
@@ -149,6 +156,16 @@ nie jest widoczne, zostaje samo ostrzeżenie. Furtka: `git push --no-verify`.
 
 ## Pułapki tego środowiska
 
+- **`uvicorn --workers > 1` rozbija strumień SSE.** Broker (`app/services/events.py`) żyje
+  w pamięci procesu, więc przy wielu workerach ingest trafia do innego procesu niż
+  połączenie klienta i **część subskrybentów milknie bez jednego objawu w logach** — dane
+  nadal płyną, tylko nie do wszystkich. `entrypoint.sh` startuje jeden proces świadomie.
+  Skalowanie w poziom wymaga najpierw brokera poza procesem (Redis pub/sub albo
+  `LISTEN/NOTIFY`), nie samej flagi.
+- **`npm` nie działa z dysku sieciowego** — `npm ci` przewraca się na `spawnSync`. Typy
+  sprawdzaj z hosta linuksowego, katalog `/var/lib/claude-usage-monitor/frontend`
+  to ten sam kod. Instalacja TypeScriptu w `frontend/node_modules` na Windows bywa niepełna
+  (brak `lib/tsc.js`) i tej samej przyczyny.
 - **Docker ma wyczerpane pule adresowe** (~31 sieci to limit, host jest przy granicy).
   Nie dodawaj nowych sieci bez potrzeby.
 - **`statusLine` nie działa w rozszerzeniu VS Code** — to funkcja CLI/TUI. Nie próbuj

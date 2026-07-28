@@ -10,6 +10,7 @@ from loguru import logger
 from app.logging_config import configure
 from app.routers import ingest as ingest_router
 from app.routers import read as read_router
+from app.routers import stream as stream_router
 
 # Zbudowany frontend. Kopiowany do obrazu z etapu `node` (patrz backend/Dockerfile);
 # przy uruchomieniu bez buildu UI katalog po prostu nie istnieje i API dziala samo.
@@ -49,6 +50,7 @@ async def no_store(request, call_next):
 
 app.include_router(ingest_router.router, prefix="/api")
 app.include_router(read_router.router, prefix="/api")
+app.include_router(stream_router.router, prefix="/api")
 
 
 @app.exception_handler(Exception)

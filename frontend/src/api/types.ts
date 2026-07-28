@@ -87,6 +87,34 @@ export interface StatusResponse {
   warnings: string[];
 }
 
+/* --------------------------------------------------------------- SSE (/api/stream) */
+
+/** Frames carry `AccountStatus` VERBATIM — the same model /api/status returns, so there is
+ *  no second shape to keep in sync. Subscription is by `account.uuid` only; the email is
+ *  not part of this contract, because one address can point at several accounts. */
+export interface HelloFrame {
+  contractVersion: number;
+  serverNow: string;
+  /** UUIDs found in the database. */
+  subscribed: string[];
+  /** UUIDs that do not exist (yet). Not an error — the account may appear later — but
+   *  reported, so a typo never looks like idleness. */
+  unknown: string[];
+  pingSec: number;
+  maxLifetimeSec: number;
+}
+
+export interface AccountFrame {
+  contractVersion: number;
+  serverNow: string;
+  account: AccountStatus;
+  warnings: string[];
+}
+
+export interface PingFrame {
+  serverNow: string;
+}
+
 export interface HistoryPoint {
   t: string;
   min: number | null;

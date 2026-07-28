@@ -277,7 +277,8 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         batch.error_kind = "no_account"
         await _event(db, level="warn", event_type="no_oauth_account", batch_id=batch.id,
                      message="Payload bez account.uuid — pomiar odrzucony")
-        return {"samples_written": 0, "batch_id": batch.id, "ok": False}
+        return {"samples_written": 0, "batch_id": batch.id, "ok": False,
+                "account_uuid": None}
 
     account, created = await get_or_create_account(db, acct, token_meta)
     batch.account_id = account.id
@@ -321,7 +322,13 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         batch.error_kind = "no_usage"
         await _event(db, level="warn", event_type="parse_error", account_id=account.id,
                      batch_id=batch.id, message="Brak obiektu usage w payloadzie")
-        return {"samples_written": 0, "batch_id": batch.id, "ok": False}
+        # account_uuid despite ok=False: the batch WAS assigned to an account, so
+        # `last_batch_at` moved — and that is precisely what lets `freshness()` tell
+        # "the client was silent" apart from "the client was alive and there is still no
+        # sample" (unknown). This frame can flip a series into the failure state and must
+        # reach subscribers.
+        return {"samples_written": 0, "batch_id": batch.id, "ok": False,
+                "account_uuid": account.account_uuid}
 
     rp, digest = await store_raw(db, usage)
     batch.raw_payload_id = rp.id
@@ -364,4 +371,5 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
 
     batch.samples_written = written
     return {"samples_written": written, "batch_id": batch.id, "ok": True,
+            "account_uuid": account.account_uuid,
             "series_registered": new_series, "stale_reads": stale}

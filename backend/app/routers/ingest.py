@@ -14,6 +14,7 @@ from app.auth import require_ingest_token
 from app.config import settings
 from app.db import get_session
 from app.schemas import IngestResult
+from app.services.events import publish_accounts
 from app.services.ingest import ingest_one, utcnow
 
 router = APIRouter()
@@ -44,6 +45,7 @@ async def ingest(
                             detail={"reason": "payload-not-object"})
 
     result = await ingest_one(db, machine_name=machine, payload=payload)
+    touched: list[str] = [result.get("account_uuid")]
 
     # Backlog: partiami, z twardym capem. Klient obcina spool DOPIERO po potwierdzeniu,
     # ile wpisow przyjelismy — dzieki temu awaria w polowie nie gubi danych.
@@ -54,12 +56,30 @@ async def ingest(
             if not isinstance(entry, dict):
                 continue
             try:
-                await ingest_one(db, machine_name=machine, payload=entry, is_backlog=True)
+                r = await ingest_one(db, machine_name=machine, payload=entry,
+                                     is_backlog=True)
+                touched.append(r.get("account_uuid"))
                 accepted += 1
             except Exception as exc:                       # noqa: BLE001
                 logger.warning("Wpis z backlogu odrzucony: {}", exc)
 
     await db.commit()
+
+    # SSE stream. Three things here are deliberate:
+    #
+    # 1. AFTER the commit. A receiver processes a frame within milliseconds and before the
+    #    commit would see the pre-write state — then sit on it until the next poll.
+    # 2. The gate is "batch assigned to an account", NOT `samples_written > 0`. On an
+    #    unchanged value dedup writes no sample but does move `last_confirmed_at` — which
+    #    is exactly what keeps the state `live`. Gating on the sample count would mute
+    #    events in the most common case of all: when nothing is changing.
+    # 3. An exception must NOT bring ingest down. The probe is the only code sitting in
+    #    the path of your actual work; the chart may break, the session may not.
+    try:
+        await publish_accounts(db, [u for u in touched if u])
+    except Exception as exc:                               # noqa: BLE001
+        logger.warning("SSE publish failed: {}", exc)
+
     return IngestResult(
         ok=bool(result.get("ok")),
         samples_written=result.get("samples_written", 0),

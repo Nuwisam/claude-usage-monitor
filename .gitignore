@@ -16,4 +16,8 @@ frontend/dist/
 *.jsonl
 *.cache.json
 .env
+# Kopie robione przy wdrozeniu (`cp .env .env.bak-<data>`) niosa te same sekrety, a wzorzec
+# `.env` wyzej ich NIE lapie — to dopasowanie doslowne. Bez tego backup lezy nieusledzony
+# w katalogu repo i czeka, az ktos go zgarnie.
+.env.bak-*
 backups/
