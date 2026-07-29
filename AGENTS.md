@@ -42,6 +42,15 @@ od „klient działa, ale brak próbek" (awaria → `utilization: null`). Fałsz
 zero jest najgorszym trybem awarii tego narzędzia — użytkownik odpali duże zadanie i trafi
 w ścianę. Test regresyjny: `test_dzialajacy_klient_bez_probek_daje_unknown`.
 
+W pikselach niesie tę zasadę **etykieta wieku odczytu**, nie osobny rysunek toru. UI liczy
+wartość jako `utilization ?? rawUtilization` — czyli przy `unknown` pokazuje **ostatni
+ZMIERZONY** procent, nigdy zero i nigdy słowa zamiast znanej liczby — a o tym, ile ta liczba
+jest warta, mówi stojące obok „potwierdzone w śr. o 11:58 · 3 d 4 h temu". `live`, `stale`
+i `unknown` wyglądają więc **identycznie**; osobny rysunek zostaje dla `inferred_reset`
+(wnioskowanie, nie pomiar) i dla serii, której nie zmierzono **nigdy** — tam pusty tor
+czytałoby się jako zero. To ten sam model po obu stronach biurka: `frontend/src/lib/freshness.ts`
+i `panel/panel/view.py` są jedną decyzją w dwóch językach, a panel miał ją pierwszy.
+
 **5. Żadnych zahardkodowanych nazw bucketów.**
 Odpowiedź ma 17 kluczy najwyższego poziomu, z czego 5 nie było znanych ani z walidatora
 w binarce Claude Code, ani z repo referencyjnego. Serie są **wierszami w tabeli**. Nowy bucket
@@ -106,6 +115,7 @@ backend/    FastAPI + SQLAlchemy async + Alembic; MariaDB; serwuje też statyki 
   app/main.py        mount /assets + fallback SPA; powłoka HTML celowo BEZ SSO
 frontend/   React 18 + Vite + TypeScript, bez Tailwinda i bez biblioteki wykresów
   src/lib/freshness.ts   stan -> wygląd; JEDYNE miejsce tej decyzji (zasada 4 w pikselach)
+  src/lib/time.ts        stamp/atStamp — JEDYNE miejsce decyzji „czy dopisać dzień"
   src/mocks/             VITE_MOCKS=1: stany, których w produkcji nie da się wywołać
 docs/       POC-FINDINGS (dlaczego tak), UI-HANDOUT (kontrakt), POLLING-HANDOUT (odrzucone)
 deploy/     szablon vhosta Apache; sekret podstawiany przy deployu, NIE w repo

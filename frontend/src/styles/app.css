@@ -175,6 +175,10 @@
   display: flex;
   align-items: baseline;
   gap: var(--space-3);
+  /* Odkad `hero-fresh` niesie godzine ORAZ wiek („potwierdzone w śr. o 11:58 · 3 d 4 h temu"),
+     w wezszej kolumnie konta nie zmiesci sie obok kickera i „wiaze teraz". Zawiniecie do
+     drugiej linii jest lepsze niz sciskanie kickera. */
+  flex-wrap: wrap;
 }
 .hero-binds {
   font-size: 10px;
@@ -403,10 +407,13 @@
   color: color-mix(in srgb, var(--color-text) 55%, transparent);
 }
 
-/* ─── tor wypelnienia: cztery stany, cztery rysunki ───────────────────── */
-/* To jest miejsce, w ktorym zasada "unknown nie jest zerem" zamienia sie w piksele.
-   Kazde wypelnienie da sie przeczytac jako wartosc — dlatego przy `unknown` nie ma
-   ZADNEGO wypelnienia, a przy `inferred_reset` jest kontur bez masy. */
+/* ─── tor wypelnienia: dwa rysunki, nie cztery ────────────────────────── */
+/* To jest miejsce, w ktorym zasada "unknown nie jest zerem" zamienia sie w piksele — i po
+   zmianie modelu zamienia sie MOCNIEJ, nie slabiej. Kazdy realny pomiar dostaje ten sam
+   pelny tor, bo pokazujemy ostatnia ZMIERZONA wartosc, a nie zero; ile ta liczba jest warta,
+   mowi etykieta wieku odczytu pod wierszem. Brak wypelnienia zostaje wylacznie tam, gdzie
+   liczby nie ma: `inferred_reset` (kontur bez masy, kikut przy zerze) i seria, ktorej nigdy
+   nie zmierzono (kontur ze skosem). Tam pusty tor czytaloby sie jako zero. */
 .bar {
   position: relative;
   height: 8px;
@@ -424,11 +431,6 @@
   left: 0;
   border-radius: 4px;
   background: var(--color-accent-500);
-}
-/* stale: ten sam ksztalt, przygaszone wypelnienie. Liczba nadal jest prawdziwa —
-   zuzycie nie rosnie samo, starzeje sie wylacznie odczyt. */
-.bar-fill[data-fresh="stale"] {
-  background: var(--color-accent-700);
 }
 .bar-outline {
   position: absolute;
@@ -453,15 +455,6 @@
   border-radius: 3px;
   background: color-mix(in srgb, var(--color-accent) 50%, transparent);
 }
-/* Kreska-duch: ostatni ZMIERZONY punkt przy stanie unknown. Celowo nie wyglada jak
-   pasek, bo to nie jest "teraz". */
-.bar-ghost {
-  position: absolute;
-  top: -3px;
-  bottom: -3px;
-  width: 2px;
-  background: color-mix(in srgb, var(--color-text) 45%, transparent);
-}
 .bar-full {
   position: absolute;
   top: -3px;
@@ -479,7 +472,7 @@
 .bar-hero .bar-outline {
   border-radius: 6px;
 }
-.bar-hero .bar-fill[data-fresh="live"] {
+.bar-hero .bar-fill {
   background: var(--color-accent);
 }
 
@@ -848,14 +841,18 @@
   }
   .hero-foot {
     /* Odstep niesie spacja w tekscie separatora, wiec `gap` musi byc zerowy — inaczej
-       po „·" jest o pikselu wiecej niz przed nim. `pre` chroni spacje przed flexem. */
+       po „·" jest o pikselu wiecej niz przed nim. */
     gap: 0;
     margin-top: 0;
     font-size: 11px;
     font-variant-numeric: tabular-nums;
     color: color-mix(in srgb, var(--color-text) 55%, transparent);
   }
-  .hero-fresh-narrow {
+  /* Separator nalezy do DELTY, nie do odczytu: etykieta odczytu urosla o wiek i stopka
+     zaczyna sie zawijac, a wtedy „·" na koncu pierwszej linii zostaje sierota. Jako
+     `::before` schodzi w dol razem z tym, co oddziela. `pre` chroni same spacje. */
+  .hero-foot .tag-delta::before {
+    content: " · ";
     white-space: pre;
   }
   .hero-foot .tag-delta {
@@ -943,8 +940,7 @@
   }
 
   .hist-controls,
-  .legend,
-  .hist-caveat {
+  .legend {
     padding-left: var(--space-4);
     padding-right: var(--space-4);
   }

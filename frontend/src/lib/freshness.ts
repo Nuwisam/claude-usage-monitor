@@ -1,26 +1,29 @@
 /** Stan swiezosci -> wyglad. JEDYNE miejsce, w ktorym ta decyzja zapada.
  *
- *  Zasada 4 z AGENTS.md w pikselach: `unknown` nie ma zadnego wypelnienia toru ani liczby
- *  w kolumnie procentow, bo kazde wypelnienie da sie przeczytac jako wartosc. Stany musza
- *  roznic sie rysunkiem, nie tylko tooltipem. */
+ *  SWIEZOSC NIESIE ETYKIETA WIEKU ODCZYTU, NIE RYSUNEK TORU. `live`, `stale` i `unknown`
+ *  wygladaja identycznie: pelny tor z ostatnia PRAWDZIWA wartoscia. O tym, ile ta liczba
+ *  jest warta, mowi stojace obok „potwierdzone w śr. o 11:58 · 3 d 4 h temu".
+ *
+ *  Zasada 4 z AGENTS.md („unknown nigdy nie jest zerem") wychodzi z tego MOCNIEJSZA, nie
+ *  slabsza: przy braku swiezego pomiaru pokazujemy ostatni ZMIERZONY, a nie zero. Kreskowany
+ *  tor i slowa `nie wiem` zostaja wylacznie tam, gdzie pomiaru nie bylo NIGDY — tam pusty tor
+ *  czytaloby sie jako zero, a zero byloby klamstwem.
+ *
+ *  Ten sam model chodzi na panelu AX206 od poczatku (`panel/panel/view.py`) — to jest port
+ *  jego decyzji do WWW, nie trzeci wariant. */
 import type { SeriesStatus } from "../api/types";
 import { clampPct, pct } from "./format";
-import { countdown, hm, hms, parseUtc } from "./time";
+import { ago, atStamp, countdown, parseUtc, stamp } from "./time";
 
 export interface SeriesView {
-  /** Tor z tlem i wypelnieniem — tylko dla realnych pomiarow (live, stale). */
+  /** Tor z tlem i wypelnieniem — dla kazdego realnego pomiaru, niezaleznie od wieku. */
   measured: boolean;
-  /** Przygaszone wypelnienie: odczyt sie starzeje, ale wartosc jest nadal prawdziwa. */
-  dimmed: boolean;
   /** Kontur przerywany zamiast wypelnienia: ksztalt bez masy. */
   outline: boolean;
-  /** Skos w konturze — dodatkowy sygnal, ze to nie brak zuzycia, a brak wiedzy. */
+  /** Skos w konturze — pomiaru nie bylo NIGDY, nie ma czego narysowac. */
   hatch: boolean;
   /** Kikut przy zerze dla wywnioskowanego resetu. */
   stub: boolean;
-  /** Kreska ostatniego POMIARU przy stanie unknown. */
-  ghost: boolean;
-  ghostPct: number;
   barPct: number;
   full: boolean;
   /** Liczba do kolumny procentow. null => zamiast liczby idzie `words`. */
@@ -28,82 +31,89 @@ export interface SeriesView {
   words: string | null;
   /** Podpis pod wierszem serii. */
   note: string;
-  /** Podpis w naglowku hero (dokladniejszy czas). */
+  /** Podpis w naglowku hero (sekundy przy swiezym odczycie). */
   heroNote: string;
 }
 
-export function describeSeries(s: SeriesStatus, extraNote?: string | null): SeriesView {
-  const f = s.freshness;
+export function describeSeries(
+  s: SeriesStatus,
+  nowMs: number,
+  extraNote?: string | null,
+): SeriesView {
   // Czas bierzemy z POTWIERDZENIA, nie z zapisu probki: dedup nie zapisuje probki przy
   // niezmienionej wartosci, wiec `capturedAt` bywa o godziny starsze niz ostatni pomiar.
   const confirmed = parseUtc(s.confirmedAt ?? s.capturedAt);
   const stable = parseUtc(s.valueSince);
   const suffix = extraNote ? ` · ${extraNote}` : "";
-  const rawText = pct(s.rawUtilization);
-  // Prog 2 min, inaczej „bez zmian od" wisialoby przy kazdym wierszu.
+  // Prog 2 min, inaczej „bez zmian od" wisialoby przy kazdym wierszu. Po „od" przyimek sie
+  // nie zmienia, wiec idzie goly `stamp()`.
   const held =
     stable && confirmed && confirmed.getTime() - stable.getTime() >= 120_000
-      ? ` · bez zmian od ${hm(stable)}`
+      ? ` · bez zmian od ${stamp(stable, nowMs)}`
       : "";
 
-  const base = {
-    measured: f === "live" || f === "stale",
-    dimmed: f === "stale",
-    outline: f === "inferred_reset" || f === "unknown",
-    hatch: f === "unknown",
-    stub: f === "inferred_reset",
-    ghost: f === "unknown" && s.rawUtilization !== null,
-    ghostPct: clampPct(s.rawUtilization),
-    barPct: f === "unknown" ? 0 : clampPct(s.utilization),
-    full: s.utilization !== null && s.utilization >= 100,
-  };
+  // Wartosc: pomiar biezacy, a gdy backend go nie podal (stan `unknown`) — OSTATNI ZMIERZONY.
+  // `??`, nie `||`: przy `inferred_reset` utilization to 0.0 i ma nim zostac.
+  const value = s.utilization ?? s.rawUtilization;
 
-  switch (f) {
-    case "live":
-      return {
-        ...base,
-        number: pct(s.utilization),
-        words: null,
-        note: `odczyt o ${hm(confirmed)}${held}${suffix}`,
-        heroNote: `odczyt o ${hms(confirmed)}${held}`,
-      };
-    case "stale":
-      // Brak potwierdzenia od 5 min — nie synonim awarii: hooki chodza tylko przy pracy,
-      // wiec przerwa daje ten sam stan co martwy klient (awarie lapie `unknown`).
-      // „moze byc juz wyzsza", bo w trwajacym oknie utilization tylko rosnie.
-      return {
-        ...base,
-        number: pct(s.utilization),
-        words: null,
-        note: `ostatnie potwierdzenie o ${hm(confirmed)} · wartość może być już wyższa${suffix}`,
-        heroNote: `ostatnie potwierdzenie o ${hm(confirmed)}`,
-      };
-    case "inferred_reset":
-      return {
-        ...base,
-        // Tylda odroznia wnioskowanie od pomiaru.
-        number: "~0",
-        words: null,
-        note: "wyliczone ~0%, nie zmierzone",
-        heroNote: "okno się zresetowało, klient milczał",
-      };
-    case "unknown":
-      return {
-        ...base,
-        number: null,
-        words: "nie wiem",
-        note: rawText
-          ? `ostatni odczyt ${rawText}% o ${hm(confirmed)} — teraz nie wiemy`
-          : "brak danych dla tej serii — sprawdź klienta",
-        heroNote: rawText
-          ? `ostatni odczyt ${rawText}% o ${hm(confirmed)}`
-          : "brak danych dla tej serii",
-      };
+  if (value === null) return missingView(suffix);
+
+  if (s.freshness === "inferred_reset") {
+    return {
+      measured: false,
+      outline: true,
+      hatch: false,
+      stub: true,
+      barPct: 0,
+      full: false,
+      // Tylda odroznia wnioskowanie od pomiaru. Swiadomie BEZ stempla ostatniego pomiaru:
+      // tamten nalezy do POPRZEDNIEGO okna, a `~0` mowi o biezacym.
+      number: "~0",
+      words: null,
+      note: `wyliczone ~0%, nie zmierzone${suffix}`,
+      heroNote: "okno się zresetowało, klient milczał",
+    };
   }
+
+  const age = confirmed ? ` · ${ago(confirmed.getTime(), nowMs)}` : "";
+  return {
+    measured: true,
+    outline: false,
+    hatch: false,
+    stub: false,
+    barPct: clampPct(value),
+    full: value >= 100,
+    number: pct(value),
+    words: null,
+    note: `potwierdzone ${atStamp(confirmed, nowMs)}${age}${held}${suffix}`,
+    heroNote: `potwierdzone ${atStamp(confirmed, nowMs, true)}${age}${held}`,
+  };
+}
+
+/** Brak JAKIEGOKOLWIEK pomiaru dla tej serii. Pusty tor czytaloby sie jako zero, wiec tor
+ *  jest kreskowany ze skosem, a zamiast liczby stoja slowa. To jedyne miejsce, w ktorym to
+ *  UI mowi „nie wiem" — i jedyne, w ktorym naprawde nie wie. */
+function missingView(suffix: string): SeriesView {
+  return {
+    measured: false,
+    outline: true,
+    hatch: true,
+    stub: false,
+    barPct: 0,
+    full: false,
+    number: null,
+    words: "nie wiem",
+    note: `brak pomiaru dla tej serii${suffix}`,
+    heroNote: "brak pomiaru dla tej serii",
+  };
 }
 
 /** Podpis odliczania w hero, w dwoch czesciach: `at` idzie do spana, ktory waski uklad chowa,
  *  wiec `lead` musi bronic sie sam.
+ *
+ *  `at` NIESIE JUZ PRZYIMEK — bo przy resecie za piec dni sama godzina klamie, a dzien zmienia
+ *  polszczyzne („o 20:00", ale „w pt. o 20:00"). Wolajacy nie ma prawa wiedziec, ktory wariant
+ *  wyszedl, wiec nie dokleja wlasnego „o".
  *
  *  `resetsAt: null` ma DWA powody i „bez resetu" zlewalo je w napis czytany jak „to okno sie
  *  nie resetuje": (a) Anthropic nie podaje granicy dla okna z 0% zuzycia, (b) sonda zeruje
@@ -117,8 +127,8 @@ export function resetNote(s: SeriesStatus, nowMs: number): { lead: string; at: s
     // sklejka „reset za po resecie".
     const secs = Math.round((r.getTime() - nowMs) / 1000);
     return secs > 0
-      ? { lead: `reset za ${countdown(r, nowMs)}`, at: hm(r) }
-      : { lead: "reset minął", at: hm(r) };
+      ? { lead: `reset za ${countdown(r, nowMs)}`, at: atStamp(r, nowMs) }
+      : { lead: "reset minął", at: atStamp(r, nowMs) };
   }
   if (s.utilization === 0) return { lead: "okno nie wystartowało", at: null };
   return { lead: "czas resetu nieznany", at: null };

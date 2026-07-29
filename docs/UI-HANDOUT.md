@@ -148,16 +148,20 @@ Cztery rzeczy, które trzeba wiedzieć, zanim się to podepnie:
 3. **`bye` po 900 s jest normalne.** To jedyny moment, w którym długie połączenie ponownie
    weryfikuje sesję SSO. `EventSource` wznawia sam; klient headless musi wznowić sam.
 4. **Poll zostaje.** Strumień nie przelicza świeżości przy ciszy klienta (bo cisza nie
-   generuje zdarzeń), nie niesie `warnings[]` liczonych ponad kontami i nie pokaże konta,
-   o którego UUID nikt nie prosił. `/status` co **3 min** domyka wszystkie trzy.
+   generuje zdarzeń) i nie pokaże konta, o którego UUID nikt nie prosił. `/status`
+   co **3 min** domyka oba.
 
    Dlaczego 3 min, a nie minuta: sonda ma throttle 60 s, więc minutowy poll nie mógłby
    pokazać niczego, czego nie przyniósł już strumień. To, po co poll naprawdę jest, zmienia
-   się **z upływem czasu**, nie z nowymi danymi — a najszybsze z tych przejść to
-   `live → stale` po `FRESH_WINDOW_SEC` (300 s). Najgorszy przypadek: seria pokazuje `live`
-   przez 8 minut zamiast 5. Błąd jest ograniczony i idzie w nieszkodliwą stronę — `stale`
-   jest jawnie niealarmowe, a w trwającym oknie utilization tylko rośnie, więc widoczna
-   liczba pozostaje ograniczeniem **dolnym**.
+   się **z upływem czasu**, nie z nowymi danymi.
+
+   Odkąd świeżość niesie etykieta wieku, przejście `live → stale` **nie zmienia w UI
+   niczego** — wiek liczy się z `confirmedAt` względem lokalnie tykającego „teraz", więc
+   rośnie poprawnie także wtedy, gdy poll nie przyniósł ani jednego bajtu. Realnym
+   zadaniem polla jest jedyne przejście, które nadal **zmienia rysunek**:
+   `stale → inferred_reset` po przeturlaniu się okna. Najgorszy przypadek: seria pokazuje
+   starą liczbę o 3 minuty dłużej, niż powinna pokazywać `~0` — a stara liczba jest wyższa
+   od zera, więc błąd idzie w bezpieczną stronę.
 
 `snapshot=0` pomija karty startowe — używa tego przeglądarka, która przed otwarciem
 strumienia i tak pobrała `/status`.
@@ -167,46 +171,71 @@ w `/status`; strumień niczego przed nikim nie zamyka.
 
 ---
 
-## 4. Cztery stany świeżości — to jest kontrakt, nie sugestia stylistyczna
+## 4. Cztery stany świeżości — kontrakt danych, nie cztery rysunki
 
-Każda seria w `/status` ma pole `freshness`. **Nie wolno ich zlewać w jeden.**
+Każda seria w `/status` ma pole `freshness`. **Backend rozróżnia cztery stany i to się nie
+zmienia** — to nadal kontrakt. Zmieniło się coś innego: **UI ich nie nazywa i nie rysuje
+osobno.** Aktualność niesie w całości **etykieta wieku odczytu**.
 
 | `freshness` | Znaczenie | `utilization` | Jak pokazać |
 |---|---|---|---|
-| `live` | **Potwierdzenie** świeższe niż 5 min (od v3 — nie próbka, patrz niżej) | liczba | normalnie |
-| `stale` | Brak potwierdzenia od 5 min, ale okno wciąż trwa | liczba | czas potwierdzenia + wartość może być już wyższa |
-| `inferred_reset` | Okno się zresetowało i klient milczał — **wnioskujemy** ~0% | `0.0` | wyraźnie inaczej niż pomiar |
-| `unknown` | Klient raportuje, ale brak danych dla tej serii — **awaria** | **`null`** | „nie wiem", **nigdy 0%** |
+| `live` | **Potwierdzenie** świeższe niż 5 min (od v3 — nie próbka, patrz niżej) | liczba | pełny tor + liczba + wiek odczytu |
+| `stale` | Brak potwierdzenia od 5 min, ale okno wciąż trwa | liczba | **identycznie jak `live`** |
+| `unknown` | Klient raportuje, ale brak danych dla tej serii | **`null`** | **identycznie jak `live`**, wartość z `rawUtilization` |
+| `inferred_reset` | Okno się zresetowało i klient milczał — **wnioskujemy** ~0% | `0.0` | wyraźnie inaczej niż pomiar: `~0`, kontur bez masy |
 
-**Świeżość liczy się z `confirmedAt`, nie z `capturedAt`** — to jest ta zmiana z v3.
-Pod v2 stabilna wartość wpadała w `stale` przez sam dedup, więc „nic się nie zmienia"
-wyglądało identycznie jak „straciliśmy łączność". Odwrotnie też trzeba uważać przy
-podpisywaniu `stale`: hooki odpalają się **tylko przy pracy**, więc kwadrans przerwy daje
-ten sam stan co martwy klient. Awarię rozpoznaje osobno `unknown` (tam wchodzi w grę
-`lastBatchAt`), i dlatego przy `stale` nie wolno pisać niczego alarmowego.
+Trzy pierwsze wiersze mają **jeden rysunek i jedno brzmienie**, bo wszystkie trzy niosą
+**ostatnią prawdziwą wartość**. Różni je tylko to, jak stary jest odczyt — a to mówi podpis:
 
-Przy `stale` wartość jest **dolnym ograniczeniem**: w trwającym oknie zużycie tylko rośnie.
-„Może być już wyższa" jest prawdziwe, „wciąż aktualna" — nie. Przy decyzji „czy odpalić duże
-zadanie" mylenie się w tę stronę jest bezpieczne, w drugą nie.
+```
+potwierdzone o 11:58 · 5 min temu
+potwierdzone w ndz. o 11:58 · 3 d 2 h temu
+```
+
+**Dlaczego nie cztery rysunki.** Wcześniej `stale` dostawało przygaszone wypełnienie plus
+„wartość może być już wyższa", a `unknown` — kontur ze skosem i słowo „nie wiem" **zamiast
+liczby**. Oba były szumem nad informacją, którą wiek odczytu podaje wprost i dokładniej:
+`stale` znaczyło tylko „minęło 5 minut", a `unknown` **ukrywało znany, prawdziwy procent**.
+Panel AX206 zbudowano od początku na modelu z wiekiem
+(`panel/panel/view.py`) i to on jest tu wzorcem — WWW go dogoniło, nie odwrotnie.
 
 ### Najważniejsze zdanie w tym dokumencie
 
 **`unknown` nie może zostać wyrenderowane jako 0%.**
 
-Najgorszy tryb awarii tego narzędzia to pokazanie fałszywego, pewnie wyglądającego zera —
-bo na tej podstawie użytkownik odpali duże zadanie i trafi w ścianę. Właśnie po to backend
-zwraca w tym stanie `utilization: null`, a obok `rawUtilization` z **ostatnią zmierzoną**
-wartością. UI może pokazać „ostatnio widziane 42%, ale nie wiemy co teraz" — nie może udawać
-pomiaru.
+To zdanie zostaje i po zmianie obowiązuje **mocniej**. Najgorszy tryb awarii tego narzędzia
+to pokazanie fałszywego, pewnie wyglądającego zera — bo na tej podstawie użytkownik odpali
+duże zadanie i trafi w ścianę. Właśnie po to backend zwraca w tym stanie `utilization: null`,
+a obok `rawUtilization` z **ostatnią zmierzoną** wartością.
 
-`inferred_reset` też jest wnioskowaniem, nie pomiarem, i musi wyglądać inaczej. Zastrzeżenie
-do tooltipa: wnioskowanie jest prawdziwe, **chyba że** konto było w tym czasie używane
+Reguła dla UI brzmi więc: **`utilization ?? rawUtilization`**, nigdy `utilization ?? 0`.
+Pokazujemy ostatni **pomiar** z jego wiekiem, a nie zero i nie wymyśloną liczbę. Słowa
+„nie wiem" i kreskowany tor zostają **wyłącznie** dla serii, dla której pomiaru nie było
+**nigdy** (`utilization` i `rawUtilization` oba `null`) — tam pusty tor czytałoby się jako
+zero, a zera nie wolno.
+
+`inferred_reset` też jest wnioskowaniem, nie pomiarem, i **dalej musi wyglądać inaczej** —
+tylda przy liczbie i kontur bez wypełnienia. Świadomie nie stawiamy tam stempla ostatniego
+pomiaru: tamten należy do **poprzedniego** okna, a `~0` mówi o bieżącym. Zastrzeżenie do
+tooltipa: wnioskowanie jest prawdziwe, **chyba że** konto było w tym czasie używane
 z claude.ai, mobile albo Cowork — one czerpią z tego samego limitu, ale nie wysyłają próbek.
+
+### `warnings[]` nie niesie już nic
+
+Backend generował jedno ostrzeżenie: „część serii na koncie X jest w stanie `unknown`".
+**Zniknęło razem z pojęciem `unknown` w UI** — powtarzało nazwą stanu to, co obok stało już
+liczbą minut. Pole zostaje w kontrakcie jako miejsce na fakty ponad kontami; **puste
+`warnings[]` jest poprawnym stanem**, nie brakiem implementacji.
 
 ### Świeżość próbki ≠ świeżość liczby
 
 `capturedAt` to moment, w którym **my** zaobserwowaliśmy wartość. Etykieta brzmi
-„zaobserwowane 14:23", **nie** „stan na 14:23".
+„zaobserwowane 14:23", **nie** „stan na 14:23". Dlatego podpis mówi „potwierdzone",
+a liczy się z `confirmedAt`.
+
+**Świeżość liczy się z `confirmedAt`, nie z `capturedAt`** — to jest ta zmiana z v3.
+Pod v2 stabilna wartość wpadała w `stale` przez sam dedup, więc „nic się nie zmienia"
+wyglądało identycznie jak „straciliśmy łączność".
 
 ---
 
@@ -256,11 +285,29 @@ między zapisem cache a odczytem (do ~5 min). Podpis musi je rozróżniać:
 
 | stan serii | podpis |
 |---|---|
-| `resetsAt` w przyszłości | `reset za 2 h 05 min · o 20:00` |
+| `resetsAt` dziś | `reset za 2 h 05 min · o 20:00` |
+| `resetsAt` za kilka dni | `reset za 4 d 2 h · w pt. o 20:00` — **dzień jest obowiązkowy** |
 | `resetsAt` w przeszłości | `reset minął · o 20:00` — **nigdy** „reset za …" |
 | `resetsAt: null`, `utilization: 0` | `okno nie wystartowało` |
 | `resetsAt: null`, `utilization > 0` | `czas resetu nieznany` |
 | seria bez okna (`spend`, `extra_usage`) | `bez resetu` |
+
+**Sama godzina przy odległej chwili kłamie.** Okno tygodniowe resetuje się do 7 dni w przód,
+a odczyt bywa sprzed kilku dni — `o 20:00` nie mówi wtedy, którego dnia. Dlatego **każdy
+stempel czytany względem „teraz"** idzie przez jedną funkcję (`lib/time.ts`, `stamp` /
+`atStamp`), która dokłada dzień dokładnie wtedy, gdy chwila nie jest z dzisiaj:
+
+| odległość od „teraz" | stempel |
+|---|---|
+| dziś | `o 11:58` (z sekundami w hero, gdy < 1 h) |
+| ±1 dzień | `wczoraj o 23:50` / `jutro o 20:00` |
+| ±2…6 dni | `w śr. o 11:58`, ale **`we wt. o 11:58`** |
+| dalej | `26.07 o 11:58`, z rokiem gdy inny: `26.07.2025 o 11:58` |
+
+Przyimek jest **częścią stempla**, nie tekstu wokół — polszczyzna zmienia go razem z formatem
+(„o 11:58", ale „w śr. o 11:58"), więc miejsce wywołania nie ma prawa doklejać własnego „o".
+Różnicę dni liczy się po **lokalnych północach**, nie dzieleniem milisekund: doba przy zmianie
+czasu ma 23 albo 25 h.
 
 **Drut jest w UTC, ekran w strefie użytkownika.** Konwersję robi wyłącznie warstwa
 prezentacji (`lib/time.ts`) — żadna wartość nie jest przeliczana przed wysłaniem ani przed
@@ -285,6 +332,10 @@ dostaje `isCurrent` — a UI pisze tam „nie wiem", nie zgaduje.
 **Kwoty w kaskadzie są w jednostkach mniejszych z wykładnikiem** — `usedMinor: 3820`,
 `exponent: 2`, `currency: "USD"` znaczy `38,20 USD`. Backend **nie formatuje**; to robi UI.
 Ta sama zasada w `spend.extra`: `{"amount_minor": 0, "currency": "USD", "exponent": 2}`.
+
+To samo dotyczy **zakresów**: dwudziestogodzinna cisza klienta jest tu normą, więc podpis
+dziury regularnie przekracza północ i `21:57–17:49` czyta się jak podróż w czasie. Gdy końce
+są z różnych dni, obie strony dostają datę: `26.07 21:57 – 27.07 17:49`.
 
 **`gaps[]` w `/history` ma dwa rodzaje** i wymaga dwóch różnych cieniowań:
 - `client_silent` — nie było batchy. **Nie pracowałeś**, więc nie ma czego mierzyć.

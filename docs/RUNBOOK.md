@@ -67,8 +67,9 @@ nieudanych POST-ach) i sekcję o certyfikatach w `client/README.md`.
 | Ingest daje **401** | Zły token maszyny. Porównaj `config.json` klienta z `INGEST_TOKENS` |
 | `samplesWritten: 0`, ale `ok: true` | **Poprawne.** Dedup — wartości się nie zmieniły i nie minął heartbeat (5 min). Pomiar mimo to podbija `last_confirmed_at`, więc UI pokazuje go jako świeży |
 | Seria `live`, ale `capturedAt` sprzed godzin | **Poprawne i zamierzone.** `capturedAt` to ostatnia zapisana PRÓBKA, świeżość liczy się z `confirmedAt`. Wartość po prostu się nie zmienia — UI podpisuje to „bez zmian od” |
-| Wszystkie serie nagle `stale` | Brak potwierdzenia od 5 min. Od v3 **nie jest to już artefakt dedupu**, ale też nie musi być awaria: hooki odpalają się tylko przy pracy, więc kwadrans przerwy daje ten sam objaw. Awarię odróżnisz po tym, czy przychodzą batche — jeśli tak, a serii brak, stan przejdzie w `unknown` |
-| Seria w stanie `unknown` w `/api/status` | Klient raportuje, ale brak próbek dla tej serii. Sprawdź `events` i log lokalny. **Nie ignoruj** — to jedyny stan oznaczający awarię |
+| Wszystkie serie nagle `stale` | Brak potwierdzenia od 5 min. Od v3 **nie jest to już artefakt dedupu**, ale też nie musi być awaria: hooki odpalają się tylko przy pracy, więc kwadrans przerwy daje ten sam objaw. **W UI tego nie zobaczysz** — `stale` wygląda jak `live`, a rośnie tylko etykieta wieku odczytu |
+| Seria w stanie `unknown` w `/api/status` | Klient raportuje, ale brak próbek dla tej serii. **Nie ignoruj** — to jedyny stan oznaczający awarię. **UI go nie nazywa i nie ma już banera**: pokazuje ostatni zmierzony procent z rosnącym wiekiem odczytu, więc awarię widać po tym, że wiek rośnie mimo pracy. Do potwierdzenia: `curl -s -b "$COOKIE" .../api/status \| jq '.accounts[].series[] \| select(.freshness=="unknown") \| {label, rawUtilization, confirmedAt}'`, potem `events` i log lokalny |
+| UI pokazuje liczbę, a sondy nie ma od dni | **Poprawne.** Wartość jest ostatnim POMIAREM, nie zgadywaniem, a jej wiek stoi obok („potwierdzone w śr. o 11:58 · 3 d 4 h temu”). Zero byłoby tu kłamstwem — zasada 4 z `AGENTS.md` |
 | `docker compose up` → *„all predefined address pools have been fully subnetted"* | Docker wyczerpał pule (limit ~31 sieci). Usuń osieroconą sieć: `docker network ls`, sprawdź `docker network inspect <n> -f '{{len .Containers}}'` |
 | Zdarzenia `clock_skew` | Zegar klienta rozjechany >5 min. Backend użył czasu serwera — dane są poprawne, ale warto zsynchronizować zegar |
 | Zdarzenia `schema_drift` | Anthropic zmienił kształt odpowiedzi. Payload jest zapisany w całości; obejrzyj `GET /api/batches/{id}/raw` i zaktualizuj `app/parsing.py` + fixture |
@@ -204,6 +205,29 @@ wyświetlacz, ten drugi program musi stać. Po dołożeniu drugiego oba programy
 wtedy **każdy trzeba przypiąć do konkretnego egzemplarza** — oba mają ten sam numer
 seryjny `WCH32` (stała firmware'u), więc rozróżnia je tylko fizyczny port
 (`"device": {"location": "Port_#0004.Hub_#0006"}`). Powiązanie sprawdzaj `--identify`.
+
+### Dług: napisy panelu rozjechały się z WWW
+
+Model świeżości jest już **wspólny** (panel miał go pierwszy, WWW dogoniło), ale same napisy
+nie — WWW dostało dzień w stemplach i doby w wieku, panel został na starym porcie. Cztery
+konkretne różnice:
+
+1. `time.ts:ago` ma szczebel dobowy (`3 d 4 h temu`), `panel/panel/fmt.py:ago` nie
+   (`76 h 00 min temu`).
+2. Skróty dni: WWW `pon./wt./śr./czw./pt./sob./ndz.`, panel `pn/wt/śr/cz/pt/sb/nd`.
+   **Kolejność tablic musi zostać różna** — `getDay()` liczy od niedzieli, `weekday()` od
+   poniedziałku.
+3. Przyimek: WWW `· w pt. o 20:00`, panel `· 20:00` — `panel/panel/render.py` skleja
+   `"%s · %s"` bez `o`, więc panel **już wcześniej** pisał inaczej niż WWW i `UI-HANDOUT` §6.
+4. Docstring `panel/panel/view.py` twierdzi, że „WWW rozroznia `live`/`stale` kolorem
+   wypelnienia i daje `unknown` wlasny rysunek" — to już nieprawda.
+
+Domknięcie to port `stamp`/`atStamp` do `fmt.py` i wyrzucenie ręcznej flagi `with_day`
+z `view.py`. **Testy panelu tego nie złapią** i to jest ich znana słabość: `test_ago`
+w `test_fmt_port.py` kończy się na `1 h 25 min`, a `test_day_hm_ma_dzien` sprawdza tylko
+`.split()[0] in fmt.DAYS`, więc przeszłoby z całkowicie złym dniem tygodnia. Przy porcie
+najpierw dołóż twarde wartości do obu, potem zmieniaj kod. Uwaga na `test_render.py` —
+pinuje `"72 h 00 min temu"` i szerokość napisu w układzie 4a.
 
 ## Pierwsze wdrożenie od zera
 

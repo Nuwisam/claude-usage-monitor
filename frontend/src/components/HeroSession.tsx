@@ -21,7 +21,7 @@ export function pickSession(series: SeriesStatus[]): SeriesStatus | null {
 /** Hero stoi na sesji 5 h na stale. Gdyby przeskakiwal za `isActive`, ten sam ekran
  *  znaczylby co innego w zaleznosci od pory tygodnia. */
 export function HeroSession({ s, nowMs }: { s: SeriesStatus; nowMs: number }) {
-  const v = describeSeries(s);
+  const v = describeSeries(s, nowMs);
   const reset = resetNote(s, nowMs);
 
   return (
@@ -44,7 +44,8 @@ export function HeroSession({ s, nowMs }: { s: SeriesStatus; nowMs: number }) {
           <span className="hero-reset">
             <ClockCountdown size={14} className="ph" />{" "}
             {reset.lead}
-            {reset.at && <span className="hero-reset-at"> · o {reset.at}</span>}
+            {/* Bez „o" — przyimek jest juz w `reset.at`, bo zmienia sie razem z dniem. */}
+            {reset.at && <span className="hero-reset-at"> · {reset.at}</span>}
           </span>
         </div>
         {v.number !== null ? (
@@ -61,9 +62,11 @@ export function HeroSession({ s, nowMs }: { s: SeriesStatus; nowMs: number }) {
       <UtilBar v={v} hero />
 
       {/* `hero-fresh-narrow` dubluje tresc z `hero-top`, bo w waskim ukladzie odczyt idzie
-          do stopki, a CSS nie przeniesie wezla miedzy rodzicami. Widoczny zawsze jeden. */}
+          do stopki, a CSS nie przeniesie wezla miedzy rodzicami. Widoczny zawsze jeden.
+          Separator siedzi w `::before` delty, nie tutaj: gdy stopka sie zawinie, „·" ma isc
+          w dol razem z tym, co oddziela, a nie zostac sierota na koncu linii. */}
       <div className="hero-foot">
-        <span className="hero-fresh-narrow">{v.heroNote} · </span>
+        <span className="hero-fresh-narrow">{v.heroNote}</span>
         <span className="tag tag-neutral tag-num tag-delta">
           {delta(s.deltaPct1h, parseUtc(s.deltaFrom), nowMs)}
         </span>

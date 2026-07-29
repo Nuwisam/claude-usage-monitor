@@ -3,10 +3,14 @@
  *  Stany `unknown`, `inferred_reset`, 100% i konto bez serii wymagaja w produkcji awarii,
  *  a wlasnie one musza wygladac dokladnie tak, jak mowi katalog stanow (makieta 2d).
  *
+ *  Wiek odczytu liczony w DNIACH tez jest tu jedynym sposobem na oglad: w produkcji trzeba
+ *  na niego czekac trzy dni, a od niego zaleza wszystkie stemple z dniem tygodnia.
+ *
  *  Warianty przez `?mock=`:
  *    base   (domyslny) — dwa konta 1:1 z makiety, do porownania piksel w piksel
  *    three            — trzy pelne konta; test ukladu, nie stanow
- *    states           — dodatkowo inferred_reset, konto bez serii i rozjechany duplikat
+ *    states           — dodatkowo inferred_reset, konto bez serii, rozjechany duplikat,
+ *                       wiek w dniach, reset za kilka dni i seria nigdy nie zmierzona
  *    reset            — trzy podpisy okna zaraz po resecie sesji
  *
  *  `reset` jest osobnym wariantem, bo te stany widac WYLACZNIE w hero, a hero bierze tylko
@@ -255,11 +259,31 @@ function withEdgeCases(accounts: AccountStatus[]): AccountStatus[] {
     series(8, { key: "bucket:tangelo", label: "Tangelo", source: "bucket", sort: 100,
       bucket: "tangelo", u: 27, resetMin: 52, capturedMin: -0.3, fresh: "live" }),
   );
-  // `stale` z wartoscia — w `base` stoi na 0, wiec przygaszenia nie widac
+  // `stale` z wartoscia — musi wygladac DOKLADNIE jak `live`, roznic sie ma tylko wiek
   max.series.push(
     series(9, { key: "bucket:seven_day_opus", label: "Tydzień — Opus", source: "bucket",
       sort: 100, bucket: "seven_day_opus", u: 17, resetMin: 8453, capturedMin: -85,
       fresh: "stale" }),
+  );
+  // Wiek w DNIACH: pelny tor z ostatnim pomiarem i „potwierdzone w ... o HH:MM · 3 d 4 h temu".
+  // Do tego `valueSince` sprzed dni przy tym samym potwierdzeniu — wartosc stala, bo nikt nie
+  // pracowal, wiec „bez zmian od" tez musi niesc dzien.
+  max.series.push(
+    series(10, { key: "bucket:seven_day_haiku", label: "Tydzień — Haiku", source: "bucket",
+      sort: 100, bucket: "seven_day_haiku", u: null, raw: 42, resetMin: 4300,
+      capturedMin: -4560, sinceMin: -8880, fresh: "unknown" }),
+  );
+  // Reset za kilka dni: godzina bez dnia klamala, teraz podpis to „w pt. o 20:00".
+  max.series.push(
+    series(11, { key: "bucket:amber_ladder", label: "Amber ladder", source: "bucket",
+      sort: 100, bucket: "amber_ladder", u: 61, resetMin: 5860, capturedMin: -0.4,
+      fresh: "live" }),
+  );
+  // Pomiaru NIE BYLO NIGDY — jedyny pozostaly kreskowany tor i jedyne „nie wiem".
+  max.series.push(
+    series(12, { key: "bucket:nimbus_quill", label: "Nimbus quill", source: "bucket",
+      sort: 100, bucket: "nimbus_quill", u: null, raw: null, resetMin: null,
+      capturedMin: -30, fresh: "unknown" }),
   );
   // konto, ktore raportuje, ale zadna seria nie miala jeszcze wartosci
   return [
@@ -333,14 +357,12 @@ export function mockStatus(): StatusResponse {
   if (variant === "states") accounts = withEdgeCases(accounts);
   if (variant === "reset") accounts = afterReset();
 
-  const warnings = accounts
-    .filter((a) => a.series.some((s) => s.freshness === "unknown"))
-    .map((a) => `Część serii na koncie ${a.email} jest w stanie „unknown” — sprawdź klienta`);
-
   return {
     contractVersion: 3,
     serverNow: new Date(now()).toISOString(),
     accounts,
-    warnings,
+    // Backend nie generuje dzis zadnego ostrzezenia — bylo tu wyprowadzane z serii `unknown`
+    // i zniklo razem z samym pojeciem w UI. Puste `warnings[]` to poprawny stan.
+    warnings: [],
   };
 }

@@ -6,7 +6,7 @@ import { UtilBar } from "./UtilBar";
  *  Cztery obszary siatki zamiast zagniezdzonych blokow, zeby waski uklad przestawil je
  *  bez zmiany DOM (grid-template-areas w app.css). */
 export function SeriesRow({ s, nowMs }: { s: SeriesStatus; nowMs: number }) {
-  const v = describeSeries(s, spendNote(s));
+  const v = describeSeries(s, nowMs, spendNote(s));
   const reset = resetNote(s, nowMs);
 
   return (
@@ -30,7 +30,8 @@ export function SeriesRow({ s, nowMs }: { s: SeriesStatus; nowMs: number }) {
       <div className="series-sub">
         <span className="series-note">
           {v.note} · <span className="series-reset">{reset.lead}</span>
-          {reset.at && <span className="series-reset-at"> · o {reset.at}</span>}
+          {/* Bez „o" — przyimek jest juz w `reset.at`, bo zmienia sie razem z dniem. */}
+          {reset.at && <span className="series-reset-at"> · {reset.at}</span>}
         </span>
       </div>
     </div>

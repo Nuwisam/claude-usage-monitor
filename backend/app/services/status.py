@@ -201,11 +201,11 @@ async def build_account_status(
 
     _mark_duplicates(series)
 
-    if any(x.freshness == "unknown" for x in series):
-        warnings.append(
-            "Część serii na koncie %s jest w stanie „unknown” — sprawdź klienta"
-            % (a.email or a.label or a.account_uuid[:8])
-        )
+    # Bylo tu ostrzezenie "czesc serii na koncie X jest w stanie unknown". Zniklo razem
+    # z samym pojeciem `unknown` w UI: widok pokazuje teraz ostatni ZMIERZONY procent, a to,
+    # ile jest wart, mowi etykieta wieku odczytu przy kazdej serii. Baner powtarzal wiec
+    # nazwa stanu to, co obok stalo juz liczba minut. `warnings[]` zostaje w kontrakcie —
+    # dzis nikt go nie zapelnia i to jest poprawny stan, nie brak implementacji.
 
     card = AccountStatus(
         uuid=a.account_uuid, label=a.label, email=a.email,

@@ -6,7 +6,7 @@ import { HistoryFacet } from "../components/HistoryFacet";
 import { Legend } from "../components/Legend";
 import { RANGES } from "../hooks/useHistory";
 import { useStatus } from "../hooks/useStatus";
-import { dm, hm, parseUtc, tzLabel } from "../lib/time";
+import { dm, hm, tzLabel } from "../lib/time";
 
 /** Wybor serii jest BUDOWANY Z DANYCH, nie z zaszytej listy (zasada 5 z AGENTS.md).
  *
@@ -114,20 +114,14 @@ export function History() {
             series={a.series.find((s) => s.seriesKey === active) ?? null}
             from={from}
             to={to}
+            nowMs={to.getTime()}
           />
         ))
       )}
 
+      {/* Blok-uwaga o stanie `unknown` zostal usuniety razem z samym pojeciem w UI. Jego
+          prawdziwa tresc — ze dziura nie znaczy zera — stoi w `Legend`. */}
       <Legend bucket={bucketHint} />
-      {q.data.accounts.some((a) => a.series.some((s) => s.freshness === "unknown")) && (
-        <div className="state-block hist-caveat" style={{ paddingTop: 0 }}>
-          <p>
-            Uwaga przy czytaniu: część serii jest w stanie <code>unknown</code>. Wykres pokazuje
-            to, co zmierzone — luka na końcu nie znaczy zera. Zerknij na{" "}
-            {parseUtc(q.data.serverNow) ? hm(parseUtc(q.data.serverNow)) : "teraz"} w widoku Live.
-          </p>
-        </div>
-      )}
     </>
   );
 }

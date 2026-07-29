@@ -5,7 +5,11 @@
 export const CONTRACT_VERSION = 3;
 
 /** live — pomiar swiezszy niz FRESH_WINDOW_SEC · stale — brak potwierdzenia od 5 min ·
- *  inferred_reset — wnioskowanie, nie pomiar · unknown — brak probek serii, awaria. */
+ *  inferred_reset — wnioskowanie, nie pomiar · unknown — brak probek serii, awaria.
+ *
+ *  To jest kontrakt DANYCH, nie cztery rysunki: UI zleja `live`/`stale`/`unknown` w jeden
+ *  wyglad, bo wszystkie trzy niosa ostatnia prawdziwa wartosc, a rozni je tylko wiek odczytu
+ *  (`lib/freshness.ts`). Osobny rysunek ma wylacznie `inferred_reset`. */
 export type Freshness = "live" | "stale" | "inferred_reset" | "unknown";
 
 export type SeriesSource = "bucket" | "limit" | "extra_usage" | "spend";
@@ -22,7 +26,11 @@ export interface SeriesStatus {
   bucketKey: string | null;
   /** null WYLACZNIE przy freshness === "unknown". Nigdy nie renderuj tego jako 0. */
   utilization: number | null;
-  /** Ostatnia ZMIERZONA wartosc, bez wnioskowania. Zrodlo kreski-ducha przy unknown. */
+  /** Ostatnia ZMIERZONA wartosc, bez wnioskowania.
+   *
+   *  Regula UI to `utilization ?? rawUtilization`, NIGDY `utilization ?? 0`: przy `unknown`
+   *  pokazujemy ostatni pomiar z jego wiekiem, bo procent jest znany i prawdziwy. Slowa
+   *  „nie wiem" zostaja tylko wtedy, gdy oba pola sa null — pomiaru nie bylo nigdy. */
   rawUtilization: number | null;
   resetsAt: string | null;
   secondsToReset: number | null;

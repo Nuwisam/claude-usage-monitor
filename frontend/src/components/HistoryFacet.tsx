@@ -2,7 +2,7 @@ import type { AccountStatus, SeriesStatus } from "../api/types";
 import { statsOf, useHistory } from "../hooks/useHistory";
 import { pct } from "../lib/format";
 import { describeSeries } from "../lib/freshness";
-import { hm } from "../lib/time";
+import { stampRange } from "../lib/time";
 import { ErrorBlock } from "./Blocks";
 import { GAP_LABEL, HistoryChart } from "./HistoryChart";
 
@@ -12,14 +12,17 @@ interface Props {
   series: SeriesStatus | null;
   from: Date;
   to: Date;
+  /** Kotwica minutowa z Historii — nie zegar tykajacy co sekunde, bo widok przeladowywalby
+   *  sie przy kazdym tyknieciu. Facet czyta z widoku tylko liczbe, wiec minuta wystarcza. */
+  nowMs: number;
 }
 
 /** Facet per konto, nigdy wspolna os: limit Team zalezy od tier miejsca i jest dzielony
  *  z Claude chat i Cowork, Max ma wlasny — te same 40% to inne ilosci bezwzgledne. */
-export function HistoryFacet({ account, series, from, to }: Props) {
+export function HistoryFacet({ account, series, from, to, nowMs }: Props) {
   const q = useHistory(account.uuid, series?.seriesId ?? null, from, to);
   const plan = [account.orgType, account.rateLimitTier].filter(Boolean).join(" · ");
-  const view = series ? describeSeries(series) : null;
+  const view = series ? describeSeries(series, nowMs) : null;
 
   return (
     <section className="facet">
@@ -55,7 +58,7 @@ export function HistoryFacet({ account, series, from, to }: Props) {
           <div className="facet-foot">
             {(q.data?.gaps ?? []).map((g) => (
               <span className="facet-gap" key={`${g.kind}-${g.from}`}>
-                {GAP_LABEL[g.kind] ?? g.kind} · {hm(new Date(g.from))}–{hm(new Date(g.to))}
+                {GAP_LABEL[g.kind] ?? g.kind} · {stampRange(new Date(g.from), new Date(g.to))}
               </span>
             ))}
             {q.data && q.data.points.length === 0 && (

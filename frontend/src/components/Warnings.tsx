@@ -1,8 +1,12 @@
 import { WarningCircle } from "@phosphor-icons/react";
 
-/** Baner z `warnings[]`. Dzis backend generuje je z jednego powodu: seria w stanie
- *  `unknown`, czyli dzialajacy klient bez probek. To awaria zbierania danych i ma byc
- *  widoczna od razu, a nie dopiero po wejsciu w szczegoly konta. */
+/** Baner z `warnings[]`. Dzis backend NIE generuje zadnego — ostrzezenie o serii w stanie
+ *  `unknown` zniklo razem z samym pojeciem w UI, bo etykieta wieku odczytu mowi to samo
+ *  liczba minut, zamiast nazwa stanu.
+ *
+ *  Komponent zostaje, bo `warnings[]` zostaje w kontrakcie: pole jest miejscem na fakty
+ *  ponad kontami, ktorych karta konta nie ma jak pokazac. Puste `warnings[]` to poprawny
+ *  stan, nie brak implementacji. */
 export function Warnings({ items }: { items: string[] }) {
   if (items.length === 0) return null;
   return (
