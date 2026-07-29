@@ -1,0 +1,96 @@
+"""Log panelu.
+
+Klient chodzi pod `pythonw.exe` z zadania harmonogramu, wiec NIE MA konsoli.
+Bez przechwycenia wyjatkow i faulthandlera petla restartow co minute nie
+zostawialaby po sobie ani jednej linijki — a to jest dokladnie ta awaria,
+ktora chce sie zobaczyc po powrocie do komputera.
+"""
+import faulthandler
+import logging
+import logging.handlers
+import os
+import sys
+
+LOGGER_NAME = "panel"
+_fault_file = None
+
+
+def setup(path, level="INFO", console=None):
+    """Ustawia log pliku (rotacja 2 MB x 3) i, gdy jest konsola, take na ekran."""
+    global _fault_file
+    logger = logging.getLogger(LOGGER_NAME)
+    logger.setLevel(getattr(logging, str(level).upper(), logging.INFO))
+    logger.handlers[:] = []
+
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        handler = logging.handlers.RotatingFileHandler(
+            path, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8")
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)-7s %(message)s", "%Y-%m-%d %H:%M:%S"))
+        logger.addHandler(handler)
+    except OSError as e:
+        # Brak logu nie moze zatrzymac panelu — on ma pokazywac limity.
+        print("nie moge otworzyc logu %s: %s" % (path, e), file=sys.stderr)
+
+    if console is None:
+        console = sys.stderr is not None and sys.stderr.isatty()
+    if console:
+        stream = logging.StreamHandler()
+        stream.setFormatter(logging.Formatter("%(levelname)-7s %(message)s"))
+        logger.addHandler(stream)
+
+    # Traceback z twardej awarii (np. w ctypes) trafia do osobnego pliku —
+    # faulthandler pisze do deskryptora, wiec nie moze isc przez logging.
+    #
+    # Poprzedni uchwyt zamykamy JAWNIE. setup() wola sie w tym procesie wiecej
+    # niz raz — run.pyw konfiguruje log ponownie, lapiac AlreadyRunning albo
+    # ConfigError — a samo przypisanie do globalnej zostawialo otwarty deskryptor,
+    # do ktorego faulthandler wciaz trzymal referencje.
+    if _fault_file is not None:
+        try:
+            faulthandler.disable()
+            _fault_file.close()
+        except Exception:
+            pass
+        _fault_file = None
+    fault_path = path + ".fault"
+    try:
+        # NIE kasujemy przy starcie: sens tego pliku to slad po petli restartow,
+        # a truncate zjadalby wlasnie te wczesniejsze iteracje, ktore mowia, od
+        # czego sie zaczelo. Zamiast tego jedna rotacja przy 1 MB — glowny log
+        # jest rotowany od poczatku, ten nie byl ograniczony niczym.
+        if os.path.getsize(fault_path) > 1024 * 1024:
+            os.replace(fault_path, fault_path + ".1")
+    except OSError:
+        pass
+    try:
+        _fault_file = open(fault_path, "a", encoding="utf-8")
+        faulthandler.enable(file=_fault_file)
+    except OSError:
+        pass
+
+    def excepthook(exc_type, exc, tb):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc, tb)
+            return
+        logger.critical("nieobsluzony wyjatek", exc_info=(exc_type, exc, tb))
+
+    sys.excepthook = excepthook
+
+    def threadhook(args):
+        logger.critical("nieobsluzony wyjatek w watku %s",
+                        getattr(args.thread, "name", "?"),
+                        exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+
+    try:
+        import threading
+        threading.excepthook = threadhook
+    except Exception:
+        pass
+
+    return logger
+
+
+def get():
+    return logging.getLogger(LOGGER_NAME)

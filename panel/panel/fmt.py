@@ -1,0 +1,187 @@
+"""Formaty — port frontend/src/lib/time.ts i format.ts.
+
+Napisy MUSZA wychodzic identyczne jak w WWW, bo to ten sam produkt ogladany
+z dwoch stron biurka. Testy w tests/test_fmt_port.py trzymaja to za slowo.
+
+Czas: countdowny licza sie z zegara SERWERA (kotwica `serverNow`), ale godziny
+wyswietlane sa w strefie LOKALNEJ — dokladnie jak `time.ts:hm`, ktore uzywa
+`d.getHours()`. Dzieki temu "reset o 20:00" zgadza sie z zegarkiem na reku.
+
+Sekundy zostaja tam, gdzie sa w makiecie: w odliczaniu ponizej godziny i w wieku
+odczytu ponizej minuty. Kosztuja pelna klatke co sekunde (panel nie umie
+odswiezyc fragmentu), ale wchodza dokladnie wtedy, gdy pracujesz — a wtedy sa
+najbardziej potrzebne. Poza praca wartosci same wchodza w minuty i godziny
+i panel milknie. Jedyny wyjatek to zegar w naglowku: on tyka niezaleznie od
+pracy, wiec pokazuje HH:MM.
+"""
+import re
+from datetime import datetime, timezone
+
+_HAS_ZONE = re.compile(r"(Z|[+-]\d{2}:?\d{2})$")
+
+# Skroty dni jak w makiecie (blok text/x-dc): "pn 09:00".
+DAYS = ("pn", "wt", "śr", "cz", "pt", "sb", "nd")
+
+
+def parse_utc(iso):
+    """ISO -> datetime z tzinfo. Bez strefy dopinamy UTC, jak parseUtc w time.ts.
+
+    Nie-string zwraca None, nie wyjatek. To jedyne wejscie surowych znacznikow
+    z serwera do calego klienta (stemple serii, `resetsAt`, `serverNow`), a regula
+    jest tu twarda: zepsuta ramka nie moze zabic panelu. `re.search` na liczbie
+    rzuca TypeError, ktory przeszedlby przez tick() i run() az do excepthooka —
+    czyli jedno pole zle zserializowane przez backend gasiloby ekran.
+    """
+    if not iso or not isinstance(iso, str):
+        return None
+    text = iso if _HAS_ZONE.search(iso) else iso + "Z"
+    text = text.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def to_local(d):
+    return d.astimezone() if d is not None else None
+
+
+def ms(d):
+    """datetime -> milisekundy epoki, zeby liczyc jak w JS."""
+    return None if d is None else d.timestamp() * 1000.0
+
+
+def _p2(n):
+    return "%02d" % n
+
+
+def hm(d):
+    d = to_local(d)
+    return "%s:%s" % (_p2(d.hour), _p2(d.minute)) if d else "—"
+
+
+def hms(d):
+    d = to_local(d)
+    return "%s:%s:%s" % (_p2(d.hour), _p2(d.minute), _p2(d.second)) if d else "—"
+
+
+def dm(d):
+    d = to_local(d)
+    return "%s.%s" % (_p2(d.day), _p2(d.month)) if d else "—"
+
+
+def day_hm(d):
+    """"pn 09:00" — tydzien resetuje sie za kilka dni, wiec sama godzina klamie."""
+    d = to_local(d)
+    return "%s %s:%s" % (DAYS[d.weekday()], _p2(d.hour), _p2(d.minute)) if d else "—"
+
+
+def countdown(target_ms, now_ms):
+    """"2 d 4 h" / "3 h 05 min" / "12 min 34 s" / "po resecie" / "bez resetu"."""
+    if target_ms is None:
+        return "bez resetu"
+    s = int(round((target_ms - now_ms) / 1000.0))
+    if s <= 0:
+        return "po resecie"
+    d, rest = divmod(s, 86400)
+    h, rest = divmod(rest, 3600)
+    m, sec = divmod(rest, 60)
+    if d > 0:
+        return "%d d %d h" % (d, h)
+    if h > 0:
+        return "%d h %s min" % (h, _p2(m))
+    return "%d min %s s" % (m, _p2(sec))
+
+
+def ago(since_ms, now_ms):
+    """"3 s temu" / "5 min temu" / "1 h 25 min temu"."""
+    if since_ms is None:
+        return "—"
+    s = max(0, int(round((now_ms - since_ms) / 1000.0)))
+    if s < 60:
+        return "%d s temu" % s
+    m = s // 60
+    if m < 60:
+        return "%d min temu" % m
+    return "%d h %s min temu" % (m // 60, _p2(m % 60))
+
+
+def pct(v):
+    """31 -> "31", 30.5 -> "30,5". None zostaje None — o tym, co pokazac zamiast
+    liczby, decyduje widok, bo w stanie `unknown` odpowiedzia jest slowo."""
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if f != f:                      # NaN
+        return None
+    if f == int(f):
+        return str(int(f))
+    return ("%.1f" % f).replace(".", ",")
+
+
+def money(minor, currency=None, exponent=2):
+    """(3820, "USD", 2) -> "38,20 USD".
+
+    Liczone na liczbach CALKOWITYCH. Backend nigdy nie splaszcza kwot do floata
+    (schemas.py: "w jednostkach mniejszych z wykladnikiem, nigdy jako float")
+    i nie ma powodu, zeby robic to po drodze do ekranu.
+    """
+    if minor is None:
+        return None
+    exp = 2 if exponent is None else int(exponent)
+    sign = "-" if minor < 0 else ""
+    whole, frac = divmod(abs(int(minor)), 10 ** exp) if exp > 0 else (abs(int(minor)), 0)
+    text = "%s%d" % (sign, whole)
+    if exp > 0:
+        text += "," + str(frac).rjust(exp, "0")
+    return "%s %s" % (text, currency) if currency else text
+
+
+def clamp_pct(v):
+    """Pasek nie moze wyjechac za tor ani wjechac na minus."""
+    if v is None:
+        return 0.0
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    if f != f:
+        return 0.0
+    return max(0.0, min(100.0, f))
+
+
+class ServerClock:
+    """Zegar serwera kotwiczony na monotonicznym.
+
+    time.ts uzywa Date.now(), bo przegladarka nie ma nic lepszego. Panel chodzi
+    miesiacami, wiec kotwiczymy na time.monotonic() — skok NTP albo zmiana czasu
+    nie przesuna countdownow. Semantyka widoczna na zewnatrz jest ta sama.
+    """
+
+    def __init__(self, monotonic):
+        self._monotonic = monotonic
+        self._server_ms = None
+        self._anchor = None
+
+    def anchor(self, server_now_iso):
+        d = parse_utc(server_now_iso)
+        if d is None:
+            return False
+        self._server_ms = d.timestamp() * 1000.0
+        self._anchor = self._monotonic()
+        return True
+
+    @property
+    def anchored(self):
+        return self._server_ms is not None
+
+    def now_ms(self):
+        if self._server_ms is None:
+            return datetime.now(timezone.utc).timestamp() * 1000.0
+        return self._server_ms + (self._monotonic() - self._anchor) * 1000.0
+
+    def now(self):
+        return datetime.fromtimestamp(self.now_ms() / 1000.0, tz=timezone.utc)

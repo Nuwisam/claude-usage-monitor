@@ -67,6 +67,10 @@ byłby drugim kontraktem do utrzymania i dopiero on łamałby tę zasadę. Kart�
 jedna funkcja (`build_account_status`), a `test_status_contract.py` porównuje wynik obu
 ścieżek pole po polu.
 
+Stałą trzyma u siebie **trzeci** odbiorca: `panel/panel/model.py` (`CONTRACT_VERSION`).
+Panel czyta tylko strumień, więc rozjazd zobaczy dopiero w ramce `hello` — i wtedy przestaje
+ufać danym, zamiast rysować je dalej.
+
 **9. `resets_at` porównuj z tolerancją, nigdy na równość.**
 Granica okna podawana przez Anthropic **kołysze się**: zmierzone 49 próbek w 3 h, jedno okno,
 wartości od `00:59:59.014384` do `01:00:00.982268`. Porównanie doslowne było zawsze fałszywe
@@ -181,6 +185,11 @@ nie jest widoczne, zostaje samo ostrzeżenie. Furtka: `git push --no-verify`.
   staje się `claude -p "C:/Program Files/Git/usage"` (konwersja ścieżek MSYS) i zamiast
   komendy lokalnej dostajesz płatny turn modelu. Testuj z PowerShella albo ustaw
   `MSYS_NO_PATHCONV=1`. Kosztowało to dwa przypadkowe wywołania po ~$0,10.
+- **PowerShell 5.1 czyta `.ps1` bez BOM jako ANSI** — i wtedy myślnik `—` (U+2014, trzy bajty
+  w UTF-8) rozpada się na trzy znaki, z których `0x94` to **cudzysłów zamykający** U+201D.
+  Parser uznaje go za koniec stringa i przewraca się kilkadziesiąt linii dalej, w miejscu bez
+  związku z przyczyną („The string is missing the terminator"). Skrypty `.ps1` trzymamy
+  w **czystym ASCII** — to odporniejsze niż liczenie na to, że każda kolejna edycja zachowa BOM.
 - **Magazyn CA Windows** odrzuca łańcuch Let's Encrypt niektorych hostow, choć każde ogniwo jest ważne.
   Klient używa `certifi`; nie wyłączaj weryfikacji.
 - **Skrypt uruchamiany z dysku sieciowego kosztuje +19 ms** na wywołanie (27 ms lokalnie vs

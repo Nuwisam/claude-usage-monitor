@@ -169,6 +169,42 @@ sama (poll `/status` co 3 min przepina strumień), panel nie — bo nikt o ten U
 Apache: sprawdź, czy reguła `/claude-usage/api/stream` stoi **przed** generyczną
 `/claude-usage/api` i czy ma `SetEnv no-gzip 1`.
 
+**Piszesz własnego klienta strumienia?** Czytaj z gniazda przez `read1()`, nie `read(n)` —
+to drugie czeka na skompletowanie całych `n` bajtów, więc po pierwszej porcji kolejne karty
+i pingi zostają w buforze, a klient stoi z pierwszą ramką **wyglądając na żywego**. Ta sama
+pułapka złapała panel i kosztuje długie szukanie „gdzie ginie druga ramka".
+
+## Panel AX206 na biurku
+
+Klient: `panel/` w tym repo, szczegóły sprzętowe i diagnostyka w `panel/README.md`.
+
+```powershell
+cd Z:\projects\claude-usage-monitor\panel
+python -m panel --list                 # który moduł na którym porcie USB
+python -m panel --probe                # karta testowa: kolory, paski, ogonki
+python -m panel --once                 # jedna klatka z prawdziwych danych
+.\deploy\install-task.ps1              # venv poza repo + zadanie na logowanie
+```
+
+`install-task.ps1` jest idempotentny: zatrzymuje poprzednią instancję (czekając na **śmierć
+procesu**, nie na stan zadania — inaczej nowa wchodzi na zajęty `panel.lock` i cicho wychodzi,
+a rysuje dalej stary kod), rejestruje zadanie, **uruchamia je** i czeka, aż w logu pojawi się
+`panel: otwarty`. Sama rejestracja nic nie uruchamia: wyzwalacz jest na logowanie, więc
+instalacja na już zalogowanej sesji zostawiałaby ciemny ekran bez śladu przyczyny. Gdy zamiast
+potwierdzenia zobaczysz `PANEL ZAJETY`, moduł trzyma inny program — zatrzymaj go, a klient podejmie
+rysowanie sam w ciągu ~30 s, bez ponownej instalacji.
+
+Konfiguracja: `%LOCALAPPDATA%\claude-usage-monitor\panel.json` — **osobny plik** od
+`config.json` sondy, bo token strumienia ma inny zakres niż token ingestu, a
+`/usage-monitor-enrollment` przepisuje plik sondy. Konta to dwa nazwane pola
+(`account_1`, `account_2`), nie lista — układ ekranu ma dokładnie dwa pasy.
+
+**Uchwyt do modułu jest wyłączny: albo panel, albo inny program.** Dopóki jest jeden
+wyświetlacz, ten drugi program musi stać. Po dołożeniu drugiego oba programy chodzą równolegle, ale
+wtedy **każdy trzeba przypiąć do konkretnego egzemplarza** — oba mają ten sam numer
+seryjny `WCH32` (stała firmware'u), więc rozróżnia je tylko fizyczny port
+(`"device": {"location": "Port_#0004.Hub_#0006"}`). Powiązanie sprawdzaj `--identify`.
+
 ## Pierwsze wdrożenie od zera
 
 ```bash

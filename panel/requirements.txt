@@ -1,0 +1,14 @@
+# Panel AX206 — zaleznosci klienta.
+#
+# Piny na sztywno: to, co rysuje na biurku, nie moze zmienic sie dlatego, ze
+# ktos zrobil `pip install -U` dla innego projektu. Venv stoi POZA repo,
+# w %LOCALAPPDATA%\claude-usage-monitor\panel-venv (patrz deploy/install-task.ps1).
+#
+# Reszta klienta to stdlib: http.client, ssl, ctypes, winreg, queue, threading.
+# numpy NIE jest potrzebne — pakowanie RGB565 idzie przez bytes.translate()
+# i jedna operacje OR na duzych liczbach, 1,55 ms na pelna klatke.
+
+Pillow==12.1.0
+# certifi to magazyn CA — jego odswiezanie ma byc decyzja, nie skutkiem ubocznym.
+# Podbijaj swiadomie, gdy przestanie ufac lancuchowi usage.example.org.
+certifi==2026.7.22
