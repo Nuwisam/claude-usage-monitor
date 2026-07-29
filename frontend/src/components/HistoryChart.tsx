@@ -2,7 +2,9 @@ import { type CSSProperties, useRef, useState } from "react";
 
 import type { HistoryGap, HistoryPoint } from "../api/types";
 import { pct } from "../lib/format";
-import { dm, hm } from "../lib/time";
+// `dm`/`hm` zostaja bez `stamp()`: os i tooltip punktu czytaja chwile wzgledem SZEROKOSCI
+// zakresu (`withDay`), nie wzgledem „teraz" — `stamp()` dokleilby date przy kazdym punkcie.
+import { dm, hm, stampRange } from "../lib/time";
 
 /** Wykres z makiety 2c. Geometria przepisana z prototypu, nie dobrana na oko:
  *  viewBox 1000x200, os y=190, siatka 148/106/64/22, pole rysowania 168 px. */
@@ -78,7 +80,7 @@ export function HistoryChart({ points, resets, gaps, from, to, uid }: Props) {
       return {
         xPct: frac * 100,
         yPct: null,
-        head: `${hm(new Date(gap.from))}–${hm(new Date(gap.to))}`,
+        head: stampRange(new Date(gap.from), new Date(gap.to)),
         body: GAP_LABEL[gap.kind] ?? gap.kind,
         note: null,
         muted: true,

@@ -1,7 +1,7 @@
 import { Desktop } from "@phosphor-icons/react";
 
 import type { AccountStatus } from "../api/types";
-import { hms, parseUtc } from "../lib/time";
+import { parseUtc, stamp } from "../lib/time";
 import { Cascade } from "./Cascade";
 import { HeroSession, pickSession } from "./HeroSession";
 import { SeriesRow } from "./SeriesRow";
@@ -27,8 +27,10 @@ export function AccountCard({ a, nowMs }: Props) {
         <div className="account-title">
           <h5>{a.email ?? a.label ?? a.uuid}</h5>
           <span className="account-machine">
+            {/* Przez `stamp`, bo maszyna milczaca od trzech dni pokazywala tu samo
+                „11:58:07" — godzine bez dnia, z sekundowa precyzja. */}
             <Desktop size={13} style={{ verticalAlign: -2 }} /> {a.lastClientHost ?? "—"} ·{" "}
-            {hms(parseUtc(a.lastBatchAt))}
+            {stamp(parseUtc(a.lastBatchAt), nowMs, true)}
           </span>
         </div>
         {/* `tag-seat` osobno, bo waski uklad go ukrywa (makieta 2b). Przez @media, nie

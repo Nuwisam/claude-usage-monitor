@@ -1,5 +1,5 @@
 /** Formatowanie liczb i kwot. Polskie separatory, wszedzie tabelarycznie. */
-import { hm } from "./time";
+import { stamp } from "./time";
 
 /** 31 -> "31", 30.5 -> "30,5". null zostaje nullem — o tym, co pokazac zamiast liczby,
  *  decyduje komponent, bo w stanie `unknown` odpowiedzia jest slowo, nie zero. */
@@ -35,7 +35,9 @@ export function delta(v: number | null, from: Date | null, nowMs: number): strin
   const sign = v > 0 ? "+" : v < 0 ? "−" : "±";
   const n = `${sign}${pct(Math.abs(v)) ?? "0"} pp`;
   if (from === null || nowMs - from.getTime() >= HOURISH_MS) return `${n} w ciągu godziny`;
-  return `${n} od ${hm(from)}`;
+  // `stamp`, nie `hm`: baseline nie wyjdzie poza 45 min, ale przez polnoc „od 23:50"
+  // czytaloby sie jak dzis w nocy.
+  return `${n} od ${stamp(from, nowMs)}`;
 }
 
 export function severityLabel(s: string | null): string {
