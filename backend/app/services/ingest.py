@@ -170,8 +170,48 @@ def resolve_captured_at(raw: Any, now: datetime, is_backlog: bool) -> tuple[date
 async def _write_observation(
     db: AsyncSession, *, account: Account, series: UsageSeries, o: Observation,
     captured_at: datetime, batch: IngestBatch, session_id: str | None, source: str,
+    is_backlog: bool = False,
 ) -> tuple[bool, bool]:
     """Zwraca (zapisano, stale_read)."""
+    if is_backlog:
+        # IDEMPOTENCJA POWTORKI ZE SPOOLA. Sonda obcina spool dopiero po odpowiedzi, wiec
+        # gdy odpowiedz przepadnie (timeout, zerwane polaczenie), te same wpisy przyjda
+        # ponownie. Bez tego guardu `changed` nizej porownuje sie z BIEZACYM stanem, ktory
+        # od tamtego pomiaru poszedl dalej — powtorka wychodzi wiec jako "zmiana" i
+        # dopisuje DRUGI wiersz na tym samym captured_at. Baza tego nie zatrzyma: na
+        # (account_id, series_id, captured_at) nie ma UNIQUE, tylko zwykly indeks
+        # (models.py:230).
+        #
+        # Klucz: (konto, seria, captured_at, maszyna, sha256 payloadu).
+        #   - maszyna, bo to samo konto z DWOCH maszyn to poprawne dwa pomiary;
+        #   - sha256, bo `parse_ts` obcina czas do pelnych sekund, a rownolegle hooki
+        #     potrafia odpalic dwie sondy w tej samej sekundzie. Bez niego zderzenie po
+        #     samym czasie skasowaloby drugi, ROZNY pomiar. Z nim zwija sie wylacznie
+        #     przypadek bajt-identyczny, czyli ten sam pomiar — a zwijanie tego samego
+        #     pomiaru jest dokladnie tym, co robi dedup nizej.
+        #     `batch.payload_sha256` jest ustawione w :335, przed petla obserwacji, wiec
+        #     tutaj nigdy nie jest NULL.
+        #
+        # Per OBSERWACJA, nie raz na wpis: dedup jest per seria, wiec pierwotny zapis mogl
+        # pominac serie 1 i zapisac serie 3. Skrot "sprawdz pierwsza obserwacje i wyjdz"
+        # przepuscilby wtedy duplikat serii 3. Koszt to jeden seek po ix_samples_series_time
+        # na obserwacje (~7 na wpis, do ~1400 przy maksymalnym backlogu) — w calosci z
+        # indeksu, zwraca 0 albo 1 wiersz.
+        already = (await db.execute(
+            select(LimitSample.id)
+            .join(IngestBatch, IngestBatch.id == LimitSample.batch_id)
+            .where(LimitSample.account_id == account.id,
+                   LimitSample.series_id == series.id,
+                   LimitSample.captured_at == captured_at,
+                   IngestBatch.machine_id == batch.machine_id,
+                   IngestBatch.payload_sha256 == batch.payload_sha256)
+            .limit(1)
+        )).scalar_one_or_none()
+        if already is not None:
+            # (False, False), nie wyjatek: to jest POPRAWNY wynik — mamy ten pomiar.
+            # Wpis musi zostac policzony w `accepted`, zeby sonda go obciela.
+            return False, False
+
     st = (await db.execute(
         select(SeriesState).where(SeriesState.account_id == account.id,
                                   SeriesState.series_id == series.id)
@@ -356,6 +396,7 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         w, sr = await _write_observation(
             db, account=account, series=series, o=o, captured_at=captured_at,
             batch=batch, session_id=hook.get("session_id"), source=source,
+            is_backlog=is_backlog,
         )
         written += int(w)
         stale += int(sr)
