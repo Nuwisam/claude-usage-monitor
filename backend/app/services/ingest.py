@@ -10,11 +10,15 @@ Trzy mechanizmy, ktore nie sa oczywiste i bez ktorych system daje zle dane:
 2. GUARD MONOTONICZNOSCI. Gdy to samo konto dziala na dwoch maszynach, kazda ma WLASNY
    cache tokenu i wlasny moment odpytania. Maszyna ze starszym odczytem moze przyslac
    nizsza wartosc niz juz znamy. Naiwny zapis cofnalby stan biezacy i wygladalo to jak
-   reset okna. Reguła: przy NIEZMIENIONYM resets_at spadek > MONOTONIC_EPS zapisujemy
-   z flaga stale_read, ale NIE ruszamy series_state.
+   reset okna. Regula: przy DOWODNIE tym samym oknie (obie granice znane i zgodne w
+   tolerancji) spadek > MONOTONIC_EPS zapisujemy z flaga stale_read, ale NIE ruszamy
+   series_state. Sam brak granicy po obu stronach dowodem NIE jest i wstrzymywac zapisu
+   nie moze — patrz parsing.known_same_reset_window.
 
 3. STAN AKTUALIZUJE TYLKO NAJNOWSZA PROBKA. Chroni takze przed backlogiem, ktory po
    wielogodzinnej przerwie wlewa stare probki — te nie moga nadpisac stanu biezacego.
+   Stan trzyma tez granice okna, a pomiar bez granicy jej NIE kasuje, dopoki ta granica
+   jeszcze nie minela — patrz parsing.carry_reset_window.
 """
 from __future__ import annotations
 
@@ -32,7 +36,10 @@ from app.models import (
     Account, IngestBatch, IngestEvent, LimitSample, Machine, MachineAccount,
     RawPayload, SeriesState, UsageSeries,
 )
-from app.parsing import Observation, parse_ts, parse_usage, same_reset_window
+from app.parsing import (
+    Observation, carry_reset_window, known_same_reset_window, parse_ts, parse_usage,
+    same_reset_window,
+)
 
 _ACCOUNT_FIELDS = {
     "email": "email", "display_name": "display_name", "org_uuid": "org_uuid",
@@ -222,17 +229,39 @@ async def _write_observation(
     changed = True
     newest = st is None or st.last_captured_at is None or captured_at > st.last_captured_at
 
+    prev_r = st.last_resets_at if st is not None else None
+    # Granica, ktora WEJDZIE do stanu. Pomiar bez granicy nie kasuje granicy, ktora jeszcze
+    # nie minela — patrz parsing.carry_reset_window. Przeniesienie liczy sie wylacznie dla
+    # probki, ktora stan naprawde zapisze (`newest`); probka z backlogu stanu nie rusza, wiec
+    # dla niej porownanie musi isc do tego, co przyszlo.
+    next_r = carry_reset_window(prev_r, o.resets_at, captured_at) if newest else o.resets_at
+
     if st is not None and st.last_captured_at is not None:
         prev_u = float(st.last_utilization) if st.last_utilization is not None else None
         # Z TOLERANCJA, nie na rownosc: granica okna podawana przez Anthropic kolysze sie
         # o ~2 s, wiec porownanie doslowne bylo zawsze falszywe i po cichu wylaczalo
         # zarowno dedup, jak i guard monotonicznosci ponizej.
-        same_reset = same_reset_window(st.last_resets_at, o.resets_at,
-                                      settings.reset_window_eps_sec)
-        changed = (prev_u != o.utilization) or not same_reset
+        #
+        # Dedup pyta "czy ZMIENI SIE STAN", wiec porownuje `prev_r` z `next_r`, a nie
+        # z surowym `o.resets_at`. Inaczej przy przenoszonej granicy KAZDY kolejny pomiar bez
+        # granicy wygladalby jak zmiana (znana granica w stanie vs NULL w pomiarze) i dedup
+        # pisalby wiersz co pomiar — dokladnie to, czego ma nie robic.
+        changed = (prev_u != o.utilization
+                   or not same_reset_window(prev_r, next_r,
+                                            settings.reset_window_eps_sec))
 
-        # (2) guard monotonicznosci — nieaktualny odczyt z innej maszyny
-        if (same_reset and prev_u is not None and o.utilization is not None
+        # (2) guard monotonicznosci — nieaktualny odczyt z innej maszyny.
+        #
+        # `known_same_reset_window`, a NIE `same_reset_window`: guard wstrzymuje zapis stanu,
+        # wiec wolno mu sie odpalic tylko na DOWODZIE, ze okno jest to samo. Dwa NULL-e sa
+        # brakiem dowodu, a wziete za dowod zamrazaly stan po kazdym resecie sesji i TRWALE
+        # dla serii, ktore granicy nie maja nigdy (`spend:org`, `extra:usage`).
+        #
+        # Do guardu idzie `o.resets_at`, czyli to, co pomiar POWIEDZIAL — nie `next_r`.
+        # Przeniesiona granica jest naszym WNIOSKIEM i uzyta tutaj odtworzylaby to samo
+        # zamrozenie: kazdy pomiar bez granicy dostawalby z powrotem "to samo okno".
+        if (known_same_reset_window(prev_r, o.resets_at, settings.reset_window_eps_sec)
+                and prev_u is not None and o.utilization is not None
                 and o.utilization < prev_u - settings.monotonic_eps):
             stale_read = True
 
@@ -248,6 +277,10 @@ async def _write_observation(
             st.last_confirmed_at = captured_at
         return False, False
 
+    # `o.resets_at`, nie `next_r`: PROBKA jest zapisem pomiaru i trzyma to, co pomiar podal.
+    # Przenoszenie granicy nalezy do stanu (`series_state` jest odtwarzalnym cache'em, nie
+    # faktem), a `window_start_index` czyta wlasnie probki i na braku granicy opiera sygnal
+    # `passed` — wpisanie tam naszego wniosku zaslepiloby wykrywanie resetu w historii.
     sample = LimitSample(
         account_id=account.id, series_id=series.id, captured_at=captured_at,
         batch_id=batch.id, source=source, utilization=o.utilization,
@@ -274,7 +307,7 @@ async def _write_observation(
         if changed or st.value_since is None:
             st.value_since = captured_at
         st.last_utilization = o.utilization
-        st.last_resets_at = o.resets_at
+        st.last_resets_at = next_r
         st.last_is_active = o.is_active
         st.last_severity = o.severity
         st.last_extra = o.extra or None

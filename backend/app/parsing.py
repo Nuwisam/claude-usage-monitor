@@ -148,12 +148,85 @@ def same_reset_window(a: datetime | None, b: datetime | None, eps_sec: float) ->
 
     Brak wartosci po obu stronach traktujemy jako to samo okno (np. `spend` nie ma resetu);
     brak po jednej stronie to zmiana.
+
+    ODPOWIADA NA PYTANIE DEDUPU ("czy cokolwiek sie zmienilo"), nie guardu monotonicznosci.
+    Guard pyta o DOWOD i ma na to `known_same_reset_window` — jeden bool na oba pytania
+    zamrazal stan biezacy.
     """
     if a is None and b is None:
         return True
     if a is None or b is None:
         return False
     return abs((a - b).total_seconds()) <= eps_sec
+
+
+def known_same_reset_window(a: datetime | None, b: datetime | None, eps_sec: float) -> bool:
+    """Czy WIADOMO, ze to samo okno — w odroznieniu od `same_reset_window`, ktore przy braku
+    obu granic odpowiada "tak".
+
+    Te dwa pytania wygladaja na jedno i dlatego przez dlugi czas obsluzyl je jeden bool.
+    Roznica jest jednak zasadnicza:
+
+      * DEDUP pyta "czy cokolwiek sie zmienilo". Dwa razy brak granicy to brak zmiany, wiec
+        `same_reset_window(None, None) is True` jest tam POPRAWNE — i na tym stoi dedup serii
+        `spend:org` oraz `extra:usage`, ktore granicy nie maja NIGDY.
+      * GUARD MONOTONICZNOSCI pyta "czy mam DOWOD, ze okno sie nie przewinelo". Dwa razy brak
+        granicy to brak dowodu, a nie dowod przeciwny.
+
+    Niewiedza wzieta za dowod zamrazala stan biezacy. Zaraz po resecie Anthropic podaje
+    `resets_at: null` dla swiezego okna z 0% zuzycia, wiec spadek 92% -> 0% przy dwoch
+    NULL-ach wygladal jak nieaktualny odczyt z drugiej maszyny: probka szla do bazy z flaga
+    `stale_read`, a `series_state` stal. Produkcja 2026-07-30: piec kolejnych probek
+    11:51:05-11:55:13 UTC, stan zamrozony na 92% przy realnym zuzyciu 0-2%, odblokowany
+    dopiero nowa granica po 9,5 minuty. Dla `spend:org` i `extra:usage` bylo to TRWALE —
+    granica nie przyjdzie tam nigdy, wiec nic by tego nie odblokowalo.
+
+    Asymetria kosztow jest jednoznaczna, ale nie tak tania, jak wyglada. Przyjecie
+    nieaktualnego odczytu psuje stan do NASTEPNEGO pomiaru tej serii — zwykle minuta — z tym
+    ze gornej granicy nie wyznacza czestotliwosc sondy, tylko jej milczenie: gdy klient
+    zamilknie zaraz po zapisie, zla wartosc stoi, dopoki `freshness()` jej nie zdegraduje,
+    czyli az do `CLIENT_SILENT_SEC` (domyslnie 6 h, `app/config.py:38`), i przez caly ten
+    czas jest podawana jako `live`/`stale`, czyli jako wartosc, a nie jako niewiedza.
+    Zamrozony stan klamie dokladnie tak samo dlugo, a dodatkowo nie ma z czego wyjsc: dla
+    `spend:org` i `extra:usage` granica nie przyjdzie NIGDY. Probka trafia do bazy w obu
+    wariantach, wiec historii nie traci zaden. Guard dostaje wiec tylko dowod, nigdy domysl.
+    """
+    return a is not None and b is not None and same_reset_window(a, b, eps_sec)
+
+
+def carry_reset_window(prev: datetime | None, incoming: datetime | None,
+                       at: datetime) -> datetime | None:
+    """Ktora granice okna ma trzymac STAN, gdy pomiar granicy nie przyniosl.
+
+    Pomiar bez granicy nie znaczy "granicy nie ma", tylko "ten odczyt jej nie zna". Powody sa
+    dwa i oba sa normalne: Anthropic nie podaje granicy dla okna z 0% zuzycia, a sonda zeruje
+    granice przedawniona we WLASNYM cache (regula `reset-w-toku`, `client/usage-probe.py`).
+
+    Oba skrajne rozwiazania sa zle:
+      * nadpisac NULL-em — tracimy granice, ktora NADAL opisuje trwajace okno. Z niej zyje
+        countdown w UI, `seconds_to_reset`, przyciecie baseline'u delty do okna i wnioskowanie
+        `inferred_reset` przy dluzszej ciszy klienta (`app/freshness.py`).
+      * trzymac stara zawsze — stan twierdzi wtedy, ze biezace okno konczy sie w chwili, ktora
+        JUZ MINELA. To pewnie wygladajaca nieprawda. Zasada 4 z AGENTS.md mowi doslownie o
+        `utilization`, nie o polach czasowych, wiec nie jest to jej cytat, a analogia: ten sam
+        ruch, czyli podmiana niewiedzy na konkretna liczbe, ktorej odbiorca nie ma jak
+        podwazyc.
+
+    Rozstrzyga zegar, nie domysl. Granica z przyszlosci opisuje okno, ktore sie jeszcze nie
+    skonczylo — pomiar sprzed niej nalezy wiec do tego samego okna i granica pozostaje
+    prawdziwa. Granica, ktora minela, o oknie biezacym nie mowi NIC; wtedy stan przyznaje sie
+    do niewiedzy (NULL), zamiast podawac przedawniona liczbe.
+
+    Porownanie idzie do `at`, czyli do czasu POMIARU, a nie do "teraz": probke z backlogu
+    ocenia sie wzgledem chwili, w ktorej ja zmierzono. Bez tolerancji, dokladnie jak
+    `freshness()` i `_delta_1h` — tolerancja z zasady 9 dotyczy porownania DWOCH granic ze
+    soba, a nie granicy z czasem.
+    """
+    if incoming is not None:
+        return incoming
+    if prev is not None and prev > at:
+        return prev
+    return None
 
 
 # (captured_at, utilization, resets_at) — jeden wiersz przebiegu serii.
