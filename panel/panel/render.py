@@ -157,7 +157,10 @@ class Renderer:
         self._header(d, b, band, state)
         self._window(d, b, band, kind="session")
         self._window(d, b, band, kind="week")
-        if band.credits is not None and band.credits.state != "off":
+        # Rysujemy wszystko poza "wylaczone i bez kwot" — tam nie ma czego pokazac.
+        # Kredyty odciete przez organizacje MAJA kwoty (ostatni pomiar) i wiersz zostaje.
+        if band.credits is not None and not (band.credits.state == "off"
+                                             and band.credits.used is None):
             self._credits(d, b, band.credits)
 
     def _header(self, d, b, band, state):

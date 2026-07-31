@@ -155,18 +155,28 @@ class CreditsView:
 def credits(rung):
     """Szczebel `credits` z kaskady -> wiersz kredytow.
 
-    Trzy stany, bo "wylaczone" i "nie wiem" to dwie rozne rzeczy. Przy "off"
+    Trzy stany, bo "wylaczone" i "nie wiem" to dwie rozne rzeczy. Przy "off" BEZ KWOT
     uklad 4a w ogole nie rysuje tego wiersza — pas ma wtedy trzy wiersze.
+
+    Kwoty maja jednak pierwszenstwo przed stanem. Gdy organizacja odetnie kredyty,
+    szczebel jest `off`, ale backend nadal podaje `usedMinor`/`limitMinor` z ostatniego
+    POMIARU — i to jedyne, co na 480x320 ma sens: "300,04 / 300,00 EUR". Powodu
+    wycofania panel nie pisze, bo nie ma na to ani miejsca, ani potrzeby; od wyjasnien
+    jest WWW. Znikniecie wiersza bylo by za to realna strata — pas gubilby liczbe,
+    ktora wczesniej pokazywal.
     """
     if rung is None or rung.state == "unknown" or rung.state is None:
         return CreditsView("unknown")
-    if rung.state == "off":
+    # Przy `off` rysujemy wylacznie PELNA pare kwot. Konto bez kredytow tez ma
+    # `usedMinor: 0` (Anthropic podaje tam wyzerowane `spend.used`), a "0,00 / —" to
+    # wiersz bez tresci — na 480x320 kosztuje miejsce i niczego nie mowi.
+    if rung.state == "off" and not (rung.used_minor is not None and rung.limit_minor):
         return CreditsView("off")
     bar = 0.0
     if rung.used_minor is not None and rung.limit_minor:
         bar = fmt.clamp_pct(rung.used_minor / float(rung.limit_minor) * 100.0)
     return CreditsView(
-        "on",
+        rung.state,
         used=fmt.money(rung.used_minor, None, rung.exponent),
         limit=fmt.money(rung.limit_minor, None, rung.exponent),
         currency=rung.currency,

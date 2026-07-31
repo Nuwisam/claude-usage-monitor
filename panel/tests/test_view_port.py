@@ -162,6 +162,34 @@ def test_kredyty_maja_trzy_stany():
     assert view.credits(None).state == "unknown", "brak szczebla to brak wiedzy"
 
 
+def test_wycofane_kredyty_pokazuja_kwoty_zamiast_znikac():
+    """Gdy organizacja odetnie kredyty, szczebel jest `off`, ale kwoty z OSTATNIEGO
+    pomiaru zostaja — i to jedyne, co na 480x320 ma sens. Wiersz, ktory znika, to strata
+    liczby, ktora panel wczesniej pokazywal; powodu wycofania panel nie pisze wcale."""
+    c = view.credits(model.CascadeRung({"key": "credits", "state": "off",
+                                        "reason": "org_level_disabled_until",
+                                        "usedMinor": 30004, "limitMinor": 30000,
+                                        "currency": "EUR", "exponent": 2}))
+    assert (c.used, c.limit, c.currency) == ("300,04", "300,00", "EUR")
+    assert c.bar_pct == 100.0, "nadwyzka nie moze rozepchnac paska"
+    assert c.state == "off", "stan zostaje `off` — kwoty go nie zmieniaja"
+
+
+def test_kredyty_wylaczone_bez_kwot_nadal_nie_maja_czego_pokazac():
+    c = view.credits(model.CascadeRung({"key": "credits", "state": "off"}))
+    assert c.state == "off" and c.used is None
+
+
+def test_konto_bez_kredytow_nie_dostaje_wiersza_z_zerem():
+    """Konto, ktore kredytow nigdy nie mialo, ma `usedMinor: 0` i ZADNEGO limitu —
+    Anthropic podaje tam wyzerowane `spend.used`. Wiersz "0,00 / —" zajalby miejsce
+    i nie powiedzialby nic; wczesniej tego wiersza nie bylo i ma go nie byc dalej."""
+    c = view.credits(model.CascadeRung({"key": "credits", "state": "off",
+                                        "usedMinor": 0, "currency": "USD",
+                                        "exponent": 2}))
+    assert c.used is None, "polowa pary kwot to nie sa kwoty"
+
+
 def test_kredyty_bez_limitu_nie_dziela_przez_zero():
     c = view.credits(model.CascadeRung({"key": "credits", "state": "on",
                                         "usedMinor": 100, "limitMinor": 0}))

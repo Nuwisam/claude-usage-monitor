@@ -187,3 +187,34 @@ def test_pakowanie_rgb565_zgadza_sie_z_petla():
 def test_pakowanie_skrajnych_kolorow():
     assert image_to_rgb565(Image.new("RGB", (1, 1), (255, 255, 255))) == b"\xff\xff"
     assert image_to_rgb565(Image.new("RGB", (1, 1), (0, 0, 0))) == b"\x00\x00"
+
+
+def test_wycofane_kredyty_zostaja_narysowane():
+    """Regresja na realny przypadek: organizacja odcina kredyty, szczebel schodzi na `off`
+    i wiersz kwot ZNIKAL z pasa. Panel gubil wtedy jedyna liczbe, ktora o wydatkach mial —
+    a kwoty przychodza dalej, bo backend podaje je z ostatniego pomiaru.
+
+    Porownujemy ladunki: wersja z kwotami MUSI dac inny obraz niz `off` bez kwot, a taki
+    sam jak `on` z tymi samymi kwotami — bo rysunek jest ten sam, rozni sie tylko stan.
+    """
+    from panel import fmt
+    now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
+
+    def klatka(**kw):
+        wzor = fixtures.base()[1]
+        cascade = [{"key": r.key, "state": r.state} for r in wzor.cascade
+                   if r.key != "credits"]
+        cascade.append(fixtures.rung("credits", **kw))
+        acc = fixtures.account(wzor.uuid, wzor.email, org_type="claude_team",
+                               cascade=cascade, series=[])
+        band = render.band_state(acc, now_ms=now_ms)
+        return render.Renderer().frame(
+            render.ScreenState(clock="21:07", link="live", bands=[band, None])).payload
+
+    kwoty = dict(usedMinor=30004, limitMinor=30000, currency="EUR", exponent=2)
+    wycofane = klatka(state="off", reason="org_level_disabled_until", **kwoty)
+    puste = klatka(state="off")
+    dzialajace = klatka(state="on", **kwoty)
+
+    assert wycofane != puste, "wiersz kwot zniknal — panel stracil liczbe"
+    assert wycofane == dzialajace, "powodu wycofania panel nie rysuje; kwoty to kwoty"
