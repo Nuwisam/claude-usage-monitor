@@ -6,6 +6,7 @@ przejsciu przez `series_state` — dlatego wszystko tutaj idzie przez `ingest_on
 """
 from datetime import timedelta
 
+import pytest
 from sqlalchemy import func, select
 
 from app.models import IngestEvent, LimitSample, SeriesState, UsageSeries
@@ -138,6 +139,47 @@ async def test_kaskada_e2e_po_wycofaniu_nie_pokazuje_kredytow_jako_wlaczonych(db
     assert c["credits"].reason == "org_level_disabled_until"
     assert c["credits"].utilization is None
     assert c["hard_block"].limit_minor is None
+
+
+# --------------------------------------------------------------------------- widok
+async def test_extra_usage_nie_rysuje_drugiego_wiersza_kredytow(db):
+    """`spend` i `extra_usage` opisuja TE SAMA pule, wiec na ekranie ma stac jeden wiersz.
+
+    Asercja na liczbach jest tu wazniejsza od samej flagi: 93.0 obok 92.656 pokazuje,
+    dlaczego parowanie po WARTOSCI (to od bucketow) nie zlapaloby tej pary nigdy —
+    `spend.percent` przychodzi zaokraglony do int. Stad parowanie po zrodle.
+    """
+    await ingest_one(db, machine_name="desktop", payload=team_payload(USAGE_ACTIVE))
+    await db.commit()
+
+    by = {s.series_key: s for s in (await build_status(db)).accounts[0].series}
+    assert by[SPEND].utilization == 93.0
+    assert by[EXTRA].utilization == pytest.approx(92.656)
+
+    assert by[SPEND].primary is True, "zwyciezca pary nie moze sie przewrocic"
+    assert by[EXTRA].primary is False
+    assert by[EXTRA].duplicate_of == SPEND
+
+
+async def test_zgaszony_wiersz_nadal_niesie_ostatni_zmierzony_procent(db):
+    """Zgaszenie WIERSZA nie gasi SERII. `duplicate_of` to znacznik dla widoku, nie usuniecie:
+    zgaszony `extra:usage` po wycofaniu miernika trzyma dalej ostatnia ZMIERZONA wartosc
+    i powod, a kaskada dostaje swoj powod niezaleznie (fakty zbierane sa PRZED tym filtrem).
+    """
+    now = utcnow()
+    await ingest_one(db, machine_name="desktop",
+                     payload=team_payload(USAGE_ACTIVE, captured_at=now))
+    await ingest_one(db, machine_name="desktop",
+                     payload=team_payload(USAGE_WITHDRAWN,
+                                          captured_at=now + timedelta(seconds=120)))
+    await db.commit()
+
+    card = (await build_status(db)).accounts[0]
+    eu = {s.series_key: s for s in card.series}[EXTRA]
+    assert eu.primary is False, "wiersz zgaszony"
+    assert eu.unavailable_reason == "org_level_disabled_until"
+    assert eu.raw_utilization == pytest.approx(92.656), "liczba przezyla zgaszenie wiersza"
+    assert _cascade(card)["credits"].reason == "org_level_disabled_until"
 
 
 # --------------------------------------------------------------------------- zdarzenia

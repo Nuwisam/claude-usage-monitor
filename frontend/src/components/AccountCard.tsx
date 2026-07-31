@@ -16,10 +16,15 @@ interface Props {
  *  sumujemy ani nie sredniujemy procentow miedzy kontami. */
 export function AccountCard({ a, nowMs }: Props) {
   const hero = pickSession(a.series);
-  // Tylko `primary` — API raportuje czesc limitow dwa razy (bucket + wpis w limits[]).
+  // Tylko `primary` — API raportuje czesc limitow dwa razy (bucket + wpis w limits[]),
+  // a `spend` i `extra_usage` to dwa widoki tej samej puli kredytow.
   const rest = a.series
     .filter((s) => s !== hero && s.primary)
     .sort((x, y) => x.sortOrder - y.sortOrder || x.seriesKey.localeCompare(y.seriesKey));
+  // Szukane w PELNEJ liscie, nie w `rest`: ta seria jest wlasnie tym, co filtr wyzej gasi.
+  // Jej wiersz byl duplikatem, ale jej flagi sa jedynym zrodlem stanu kredytow w UI —
+  // dlatego zamiast na ekran ida do wyjasnienia przy wierszu wydatkow.
+  const eu = a.series.find((s) => s.source === "extra_usage");
 
   return (
     <section className="account">
@@ -67,7 +72,7 @@ export function AccountCard({ a, nowMs }: Props) {
           </div>
           <div className="series-list">
             {rest.map((s) => (
-              <SeriesRow key={s.seriesKey} s={s} nowMs={nowMs} />
+              <SeriesRow key={s.seriesKey} s={s} nowMs={nowMs} eu={eu} />
             ))}
           </div>
         </>

@@ -299,6 +299,27 @@ duplikaty. **Pokazuj tylko `primary: true`.** Wpis z `limits[]` wygrywa, bo nies
 `isActive` i `severity`. Gdy wartości się rozjadą, pary nie powstaną i obie serie będą
 widoczne — to celowe, wolimy pokazać rozjazd niż go ukryć.
 
+**Druga para jest oznaczana po źródle, nie po wartości: `spend` i `extra_usage`.** To dwa
+widoki **tej samej puli** kredytów, nie dwa limity — więc `extra:usage` dostaje
+`primary: false` i `duplicateOf: "spend:org"`. Parowanie po danych nie złapałoby ich nigdy,
+bo `spend.percent` przychodzi zaokrąglony do całości (93), a `extra_usage.utilization` niesie
+pełną precyzję (92,656). `spend` wygrywa, bo ma kwoty w typie pieniężnym i `severity`;
+`extra:usage` nie ma ani `resetsAt`, ani `severity`, ani kwot, więc jako wiersz nie miał czym
+się różnić.
+
+**Zgaszony nie znaczy zbędny.** `extra:usage` zostaje w odpowiedzi i jest **jedynym** miejscem,
+w którym widzisz `spend_limit_reached`, `user_disabled` (Ty wyłączyłeś, nie organizacja),
+`credits_ever_enabled` (kredytów nigdy nie było ≠ wyłączone) oraz przyszłe podlimity
+`daily`/`weekly`. Trzyma też jedyną precyzyjną kopię procentu. Nasze UI wkłada to
+w wyjaśnienie „?" przy wierszu wydatków (`frontend/src/lib/credits.ts`) — nie w drugi pasek.
+
+Na koncie, które kredytów **nigdy** nie miało, `extra_usage.utilization` jest `null` na zawsze,
+więc ta seria w ogóle nie wchodzi do `series[]` i partnera nie ma. Wtedy `spend:org` zostaje
+`primary: true` sam — z nieobecności serii nie wnioskuj niczego o stanie kredytów. Powód
+wycofania czytaj z `unavailableReason` **wiersza wydatków**, nie z `extra`: przy wycofanym
+mierniku `extra` opisuje ostatni prawdziwy pomiar, więc leży tam jeszcze `disabled_reason: null`
+z czasów, gdy brama była otwarta.
+
 **`isActive` mówi, co realnie ogranicza *teraz*.** To najcenniejsze pole w całej odpowiedzi
 i zasługuje na eksponowanie. Zaobserwowane: wiążący limit **przeskakuje w czasie** — rano
 `weekly_all`, po intensywnej sesji `session`.
@@ -493,6 +514,10 @@ Trzy rzeczy warte zauważenia w tej jednej odpowiedzi:
 
 Serie `bucket:five_hour` i `bucket:seven_day` w tej samej odpowiedzi mają `primary: false`
 i `duplicateOf` wskazujące na powyższe — domyślnie ich nie pokazuj.
+
+Serii `extra:usage` w tej odpowiedzi **nie ma wcale** i to jest poprawne: konto Max nigdy nie
+miało kredytów, więc `extra_usage.utilization` jest `null` i seria nie przeszła filtru
+`everNonNull`. Na koncie Team stałaby tu z `primary: false` i `duplicateOf: "spend:org"`.
 
 Seria `spend:org` w `extra` niesie:
 

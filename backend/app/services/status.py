@@ -133,6 +133,9 @@ def _mark_duplicates(series: list[SeriesStatus]) -> None:
     Gdy wartosci sie rozjada — a repo referencyjne opisuje, ze nowsze odpowiedzi zeruja
     starsze pola per-model — pary po prostu nie powstana i obie serie beda widoczne.
     To wlasciwe zachowanie: wolimy pokazac rozjazd niz go ukryc.
+
+    DRUGA PARA jest innego rodzaju i dlatego ma osobna petle, a nie rozluzniony warunek
+    pierwszej: `spend` i `extra_usage` to dwa WIDOKI TEJ SAMEJ PULI kredytow, nie dwa limity.
     """
     limits = [s for s in series if s.source == "limit"]
     for s in series:
@@ -146,6 +149,31 @@ def _mark_duplicates(series: list[SeriesStatus]) -> None:
                 s.primary = False
                 s.duplicate_of = l.series_key
                 break
+
+    # Tu parujemy po TOZSAMOSCI ZRODLA, a nie po wartosci jak wyzej — i to nie jest wyjatek
+    # od tamtej zasady, tylko konsekwencja tego, ze te dwie serie NIE MOGA sie zgodzic
+    # liczbowo: `spend.percent` jest zaokraglony do int (93), `extra_usage.utilization`
+    # niesie pelna precyzje (92.656). Parowanie po danych nie zlapaloby ich nigdy.
+    # Zadna nazwa bucketu tu nie pada (zasada 5) — `source` jest enumem kontraktu.
+    #
+    # `spend` wygrywa, bo niesie kwoty w typie pienieznym i `severity`. Przegrany ZOSTAJE
+    # w odpowiedzi i nie wolno go stad usunac: jego `utilization` jest jedyna precyzyjna
+    # kopia tej liczby, a `extra` jedynym miejscem, w ktorym UI widzi `spend_limit_reached`,
+    # `user_disabled` i `credits_ever_enabled`. Gasnie tylko jego WIERSZ, bo UI rysuje
+    # `primary`.
+    #
+    # Kaskada jest na to odporna z osobnego powodu: `facts` zbieramy PRZED tym filtrem
+    # (patrz `build_account_status`), wiec `build_cascade` czyta `source="extra_usage"`
+    # niezaleznie od tego, co tu ustawimy — nawet dla serii, ktora do `series[]` nie weszla.
+    #
+    # Brak partnera => zostaje widoczny. Ta sama zasada co wyzej: wolimy pokazac rozjazd
+    # niz go ukryc.
+    spend = next((s for s in series if s.source == "spend"), None)
+    if spend is not None:
+        for s in series:
+            if s.source == "extra_usage":
+                s.primary = False
+                s.duplicate_of = spend.series_key
 
 
 async def build_account_status(

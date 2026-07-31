@@ -147,7 +147,13 @@ function accountMax(): AccountStatus {
         confirmedMin: -0.3, sinceMin: -47, fresh: "live",
         delta: 1, primary: false, dupOf: WEEKLY_KEY }),
       // Skrajny przypadek: kredyty wylaczone, wiec 0 stoi od czterech godzin.
-      series(5, { key: "spend:org", label: "Limit wydatków organizacji", source: "spend", sort: 30,
+      //
+      // CELOWO BEZ `extra:usage`: na koncie, ktore kredytow nigdy nie mialo, ta seria ma
+      // `utilization` null na zawsze i nie wchodzi do `series[]` (filtr `ever_non_null`
+      // w services/status.py). To jest przypadek DEGRADACJI „?" — panel pokazuje wtedy sama
+      // definicje puli, bez bloku flag, i musi byc widoczny w makiecie.
+      series(5, { key: "spend:org", label: "Limit wydatków (Twoja pula)", source: "spend",
+        sort: 30,
         u: 0, resetMin: null, capturedMin: -240, confirmedMin: -0.3, sinceMin: -240,
         fresh: "live", severity: "normal", delta: 0,
         extra: { enabled: false, used: { amount_minor: 0, currency: "USD", exponent: 2 } } }),
@@ -197,12 +203,23 @@ function accountTeam(): AccountStatus {
         sort: 20, bucket: "seven_day", u: 100, resetMin: 3713, capturedMin: -26,
         confirmedMin: -0.9, sinceMin: -26, fresh: "live",
         delta: 3, primary: false, dupOf: WEEKLY_KEY }),
-      series(5, { key: "spend:org", label: "Limit wydatków organizacji", source: "spend", sort: 30,
+      series(5, { key: "spend:org", label: "Limit wydatków (Twoja pula)", source: "spend",
+        sort: 30,
         u: 41, resetMin: null, capturedMin: -0.9, fresh: "live", severity: "normal", delta: 6,
         extra: { enabled: true, used: { amount_minor: 3820, currency: "USD", exponent: 2 },
                  limit: { amount_minor: 9000, currency: "USD", exponent: 2 } } }),
+      // Drugi widok TEJ SAMEJ puli. Wiersza nie widac (`primary: false`), ale jego liczba
+      // i flagi sa trescia „?" przy wierszu wyzej — i tylko tu widac, ze zmierzone bylo
+      // 41,42%, a nie zaokraglone 41.
+      series(6, { key: "extra:usage", label: "Kredyty dodatkowe", source: "extra_usage",
+        sort: 40, u: 41.42, resetMin: null, capturedMin: -0.9, fresh: "live", delta: 6,
+        primary: false, dupOf: "spend:org",
+        extra: { is_enabled: true, monthly_limit: 9000, used_credits: 3820, currency: "USD",
+                 decimal_places: 2, disabled_reason: null, user_disabled: false,
+                 spend_limit_reached: false, credits_ever_enabled: true,
+                 daily: null, weekly: null } }),
       // AWARIA: klient raportuje, ale dla tej serii nie ma probek. Ostatni pomiar 42%.
-      series(6, { key: "limit:weekly_scoped|weekly|fable|-", label: "Tydzień — Fable",
+      series(7, { key: "limit:weekly_scoped|weekly|fable|-", label: "Tydzień — Fable",
         source: "limit", sort: 200, kind: "weekly_scoped", group: "weekly", u: null, raw: 42,
         resetMin: -185, capturedMin: -365, fresh: "unknown", active: false, severity: "normal" }),
     ],
@@ -323,7 +340,7 @@ function withEdgeCases(accounts: AccountStatus[]): AccountStatus[] {
 // Dwa stany, ktorych w dzialajacym systemie nie da sie wywolac na zadanie — a rozni je JEDNO pole.
 // Bez tego podgladu jedyna droga do ich zobaczenia jest czekanie na awarie.
 function creditsStates(): AccountStatus[] {
-  const konto = (uuid: string, name: string, spend: Spec,
+  const konto = (uuid: string, name: string, spend: Spec, eu: Spec,
                  cascade: CascadeRung[]): AccountStatus => ({
     uuid, label: null, email: `${uuid.slice(0, 4)}@example.org`, displayName: name,
     color: null, orgType: "claude_team", seatTier: "standard",
@@ -339,6 +356,9 @@ function creditsStates(): AccountStatus[] {
         sort: 25, kind: "weekly_all", group: "weekly", u: 67, resetMin: 7200,
         capturedMin: -0.4, fresh: "live", active: true, severity: "normal", delta: 2 }),
       series(3, spend),
+      // Zgaszony blizniak wiersza wyzej. Na ekranie go nie ma, ale bez niego oba te warianty
+      // pokazywalyby „?" bez bloku flag — czyli nie testowalyby tego, po co istnieja.
+      series(4, eu),
     ],
   });
 
@@ -356,6 +376,17 @@ function creditsStates(): AccountStatus[] {
       extra: { enabled: true, disabled_reason: null,
                used: { amount_minor: 30004, currency: "EUR", exponent: 2 },
                limit: { amount_minor: 30000, currency: "EUR", exponent: 2 } },
+    }, {
+      // `extra` niesie stan SPRZED wycofania — dokladnie tak jak w produkcji, gdzie backend
+      // podmienia je na to z ostatniego pomiaru. Dlatego `disabled_reason` jest tu null,
+      // a o zamknietej bramie mowi `reason` (czyli `unavailableReason` w kontrakcie).
+      key: "extra:usage", label: "Kredyty dodatkowe", source: "extra_usage", sort: 40,
+      u: null, raw: 100.014, resetMin: null, capturedMin: -3120, fresh: "live",
+      reason: "org_level_disabled_until", primary: false, dupOf: "spend:org",
+      extra: { is_enabled: true, monthly_limit: 30000, used_credits: 30004, currency: "EUR",
+               decimal_places: 2, disabled_reason: null, user_disabled: false,
+               spend_limit_reached: false, credits_ever_enabled: true,
+               daily: null, weekly: null },
     }, [
       rung({ key: "session", state: "on", utilization: 54, seriesKey: SESSION_KEY }),
       rung({ key: "weekly", state: "on", utilization: 67, seriesKey: WEEKLY_KEY,
@@ -374,6 +405,17 @@ function creditsStates(): AccountStatus[] {
       extra: { enabled: true, disabled_reason: null,
                used: { amount_minor: 30004, currency: "EUR", exponent: 2 },
                limit: { amount_minor: 30000, currency: "EUR", exponent: 2 } },
+    }, {
+      // Licznik DZIALA, wiec „?" pokazuje pelna precyzje przy pasku stojacym na 100.
+      // `spend_limit_reached` zostaje `false` — tak jest w realnym payloadzie wyczerpanej
+      // WLASNEJ puli (backend/tests/team.py), bo ta flaga mowi o suficie organizacji.
+      key: "extra:usage", label: "Kredyty dodatkowe", source: "extra_usage", sort: 40,
+      u: 100.014, resetMin: null, capturedMin: -0.4, fresh: "live", delta: 1,
+      primary: false, dupOf: "spend:org",
+      extra: { is_enabled: true, monthly_limit: 30000, used_credits: 30004, currency: "EUR",
+               decimal_places: 2, disabled_reason: null, user_disabled: false,
+               spend_limit_reached: false, credits_ever_enabled: true,
+               daily: null, weekly: null },
     }, [
       rung({ key: "session", state: "on", utilization: 54, seriesKey: SESSION_KEY }),
       rung({ key: "weekly", state: "on", utilization: 100, seriesKey: WEEKLY_KEY }),

@@ -339,6 +339,11 @@
    szeroko   [etykieta | tor | liczba]      z notatka pod etykieta
    wasko     [etykieta | liczba] / tor / notatka                      */
 .series-row {
+  /* Kotwica panelu „?" jest WIERSZEM, nie kropka. Kropka stoi za etykieta, a etykiety siegaja
+     do wielokropka — panel przypiety do niej wyjezdzalby za prawa krawedz karty i zostawal
+     scinany przez `overflow: hidden` na `.accounts`. Przypiety do wiersza ma z definicji jego
+     szerokosc i nie ma jak wyjechac. */
+  position: relative;
   display: grid;
   grid-template-columns: 1fr 104px 62px;
   grid-template-areas:
@@ -395,6 +400,84 @@
   font-size: 10px;
   flex: none;
   color: var(--color-accent-200);
+}
+
+/* ─── „?" przy wierszu wydatkow ───────────────────────────────────────────
+   Jedyny element interaktywny w karcie konta. Nosi to, czego pasek pokazac nie umie:
+   czyj to limit i dlaczego kredyty nie dzialaja (patrz lib/credits.ts). */
+.series-help {
+  display: inline-flex;
+  flex: none;
+}
+.series-help-dot {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--color-text) 28%, transparent);
+  border-radius: 50%;
+  background: none;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.series-help-dot:hover,
+.series-help-dot[aria-expanded="true"] {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+/* Panel OTWIERA SIE W GORE, i to nie jest kwestia gustu: wiersz wydatkow lezy w ostatniej
+   sekcji karty, wiec w dol wyjezdzalby poza `.accounts` z `overflow: hidden`. Nad nim stoi
+   zawsze hero i kaskada, wiec miejsce tam JEST — bez mierzenia czegokolwiek w JS. */
+.series-help-panel {
+  position: absolute;
+  z-index: 2;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+}
+.help-lead {
+  color: color-mix(in srgb, var(--color-text) 80%, transparent);
+}
+.help-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: var(--space-4);
+  row-gap: 3px;
+}
+/* Kazdy fakt jest wlasnym `display: contents`, zeby para termin-wartosc trafila w dwie
+   kolumny siatki nadrzednej bez dodatkowego wiersza DOM na sztuke. */
+.help-fact {
+  display: contents;
+}
+.help-term {
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.help-value {
+  font-variant-numeric: tabular-nums;
+}
+/* Powodu nie tlumaczymy (zasada 5) — kod od Anthropic idzie doslownie, wiec musi wygladac
+   jak kod, a nie jak zdanie. */
+.help-code {
+  margin-left: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: color-mix(in srgb, var(--color-text) 45%, transparent);
 }
 .series-note {
   font-size: 11px;
@@ -938,6 +1021,21 @@
   }
   .series-row .series-title {
     align-items: baseline;
+  }
+  /* Cel dotkniecia 44px bez rozpychania wiersza: kropka zostaje 15px, powiekszamy sam
+     obszar trafienia pseudoelementem. Inaczej albo wiersz rosnie o 30px, albo na telefonie
+     w to „?" po prostu nie da sie trafic. */
+  .series-help-dot::after {
+    content: "";
+    position: absolute;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+    top: 50%;
+    left: 50%;
+  }
+  .series-help-dot {
+    position: relative;
   }
   .series-pct {
     font-size: 15px;
