@@ -166,3 +166,85 @@ def test_sanitize_znosi_brakujacy_resets_at(probe):
     usage, events = probe.sanitize(_cache(resets=None), [], time.time())
     assert usage["five_hour"]["utilization"] == 40
     assert events == []
+
+
+# ------------------------------------------------ odczyt ~/.claude.json (rodzina B)
+# `_extract_block` i `read_claude_json` nie mialy do tej pory ANI JEDNEGO testu, mimo ze
+# to wokol nich zbudowano reczne wycinanie zamiast `json.load`. Fixture'y to pelne, realne
+# pliki z konta Team w trzech stanach kredytow — z wyczyszczonymi tozsamosciami, ale
+# z zachowanym duplikatem klucza roznjacym sie wielkoscia liter i realnym rozmiarem,
+# bo `_extract_block` chodzi po tekscie `text.find`-em.
+def test_powod_wylaczenia_kredytow_rozroznia_trzy_stany(probe):
+    """Jedyne pole, ktore samo odroznia wyczerpana WLASNA pule od sufitu organizacji:
+    w pasmie `spend.disabled_reason` jest przy wyczerpanej puli `null`."""
+    from tests.team import CLAUDE_JSON_STATES
+
+    for path, oczekiwany in CLAUDE_JSON_STATES:
+        text = path.read_text("utf-8")
+        assert probe._extract_scalar(text, "cachedExtraUsageDisabledReason") == oczekiwany, \
+            path.name
+
+
+def test_wyciag_skalara_nie_rzuca_na_uszkodzonym_pliku(probe):
+    """Zasada 3: sonda nigdy nie rzuca. Kazde wejscie ma dac wartosc albo None."""
+    import json
+
+    from tests.team import CLAUDE_JSON_COMPANY_EXHAUSTED
+
+    KLUCZ = "cachedExtraUsageDisabledReason"
+    pelny = CLAUDE_JSON_COMPANY_EXHAUSTED.read_text("utf-8")
+    urwane_w_wartosci = pelny[: pelny.find(KLUCZ) + len(KLUCZ) + 8]
+    for tekst in ("", "{", '{"inny": 1}', pelny[: pelny.find(KLUCZ)], urwane_w_wartosci,
+                  pelny[: len(pelny) // 2]):
+        assert probe._safe(probe._extract_scalar, tekst, KLUCZ) is None
+
+    # Ucieta KONCOWKA pliku wartosci juz nie psuje i to jest cala przewaga recznego wyciagu
+    # nad `json.load`, ktory na urwanym pliku nie zwraca NICZEGO.
+    assert probe._extract_scalar(pelny[:-3], KLUCZ) == "org_level_disabled_until"
+    assert probe._safe(json.loads, pelny[:-3]) is None
+
+    # Wartosci nie-stringowe tez maja przejsc bez wyjatku — kontrakt jest otwarty.
+    for surowe, oczekiwane in (('{"k": null}', None), ('{"k": 7}', 7),
+                               ('{"k": true}', True), ('{"k":   "x"}', "x"),
+                               ('{"k": "a\\"b"}', 'a"b')):
+        assert probe._extract_scalar(surowe, "k") == oczekiwane
+
+
+def test_wyciag_bloku_daje_to_samo_co_pelne_parsowanie(probe):
+    """Reczne wycinanie musi zwracac DOKLADNIE to, co dalby parser calego pliku — inaczej
+    sonda wysyla cos innego, niz Claude Code zapisal. Przy okazji utrwala zachowanie na
+    duplikacie klucza roznjacym sie wielkoscia liter, ktory te pliki realnie maja."""
+    import json
+
+    from tests.team import CLAUDE_JSON_STATES
+
+    for path, _ in CLAUDE_JSON_STATES:
+        text = path.read_text("utf-8")
+        pelne = json.loads(text)
+        for klucz in ("oauthAccount", "cachedUsageUtilization"):
+            assert probe._extract_block(text, klucz) == pelne[klucz], "%s / %s" % (
+                path.name, klucz)
+
+        klucze = [k for k in pelne["projects"]]
+        assert any(k.lower() == j.lower() and k != j for k in klucze for j in klucze), \
+            "%s stracil duplikat klucza — fixture przestal testowac to, po co powstal" % path.name
+
+
+def test_read_claude_json_zwraca_konto_pomiar_i_powod_dla_kazdego_stanu(probe, monkeypatch):
+    """Cala droga odczytu razem, na trzech realnych stanach. Brak pliku to nie blad —
+    na swiezej maszynie Claude Code jeszcze go nie zapisal."""
+    from tests.team import CLAUDE_JSON_STATES
+
+    for path, oczekiwany in CLAUDE_JSON_STATES:
+        monkeypatch.setattr(probe, "_find", lambda name, in_claude_dir=False, p=path: str(p))
+        acct, cached, cfg_dir, reason = probe.read_claude_json()
+
+        assert acct["emailAddress"] == "usage-monitor@example.test"
+        assert acct["organizationType"] == "claude_team"
+        assert isinstance(cached["utilization"]["spend"], dict)
+        # Zasada 7: ingest kluczuje po accountUuid i obie strony musza sie zgadzac.
+        assert cached["accountUuid"] == acct["accountUuid"]
+        assert reason == oczekiwany
+
+    monkeypatch.setattr(probe, "_find", lambda name, in_claude_dir=False: None)
+    assert probe.read_claude_json() == (None, None, None, None)

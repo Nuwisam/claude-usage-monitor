@@ -37,8 +37,8 @@ from app.models import (
     RawPayload, SeriesState, UsageSeries,
 )
 from app.parsing import (
-    Observation, carry_reset_window, known_same_reset_window, parse_ts, parse_usage,
-    same_reset_window,
+    Observation, carry_reset_window, known_same_reset_window, meter_withdrawn, parse_ts,
+    parse_usage, same_reset_window,
 )
 
 _ACCOUNT_FIELDS = {
@@ -177,7 +177,7 @@ def resolve_captured_at(raw: Any, now: datetime, is_backlog: bool) -> tuple[date
 async def _write_observation(
     db: AsyncSession, *, account: Account, series: UsageSeries, o: Observation,
     captured_at: datetime, batch: IngestBatch, session_id: str | None, source: str,
-    is_backlog: bool = False,
+    is_backlog: bool = False, client_reason: str | None = None,
 ) -> tuple[bool, bool]:
     """Zwraca (zapisano, stale_read)."""
     if is_backlog:
@@ -223,6 +223,33 @@ async def _write_observation(
         select(SeriesState).where(SeriesState.account_id == account.id,
                                   SeriesState.series_id == series.id)
     )).scalar_one_or_none()
+
+    # Wycofanie miernika i jego powrot sa ZDARZENIEM, nie tylko zmiana liczby: dla `spend`
+    # i `extra:usage` to jedyny moment, w ktorym w logu widac, ze organizacja zamknela
+    # brame. Tylko na PRZEJSCIU i tylko gdy jest z czym porownywac — pierwszy w zyciu pomiar
+    # niczego nie zmienia, wiec nie ma o czym meldowac.
+    if st is not None:
+        was = meter_withdrawn(st.last_extra)
+        if o.unavailable_reason and not was:
+            await _event(db, level="warn", event_type="meter_withdrawn",
+                         account_id=account.id, batch_id=batch.id,
+                         message="Miernik %s wycofany przez organizacje" % series.series_key,
+                         detail={"series": series.series_key,
+                                 "reason": o.unavailable_reason,
+                                 # Powod z cache KLIENTA (`cachedExtraUsageDisabledReason`)
+                                 # — wylacznie do wgladu. Werdykt stoi na danych w pasmie,
+                                 # bo tylko one sa spojne z reszta tej samej odpowiedzi.
+                                 "client_reason": client_reason,
+                                 "last_utilization": (float(st.last_utilization)
+                                                      if st.last_utilization is not None
+                                                      else None)})
+        elif was and not o.unavailable_reason:
+            await _event(db, level="info", event_type="meter_restored",
+                         account_id=account.id, batch_id=batch.id,
+                         message="Miernik %s znow dziala" % series.series_key,
+                         detail={"series": series.series_key, "was_reason": was,
+                                 "client_reason": client_reason,
+                                 "utilization": o.utilization})
 
     stale_read = False
     should_write = True
@@ -430,6 +457,9 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
             db, account=account, series=series, o=o, captured_at=captured_at,
             batch=batch, session_id=hook.get("session_id"), source=source,
             is_backlog=is_backlog,
+            # Zwykly `get`: sonda ponizej wersji 4 tego pola nie przysyla i to jest
+            # poprawny stan, nie brak danych.
+            client_reason=meas.get("extra_usage_disabled_reason"),
         )
         written += int(w)
         stale += int(sr)

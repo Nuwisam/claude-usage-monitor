@@ -490,3 +490,26 @@ async def test_brak_token_meta_nie_wywraca_zapisu(db):
     assert r["ok"] and r["samples_written"] > 0
     acc = (await db.execute(select(Account))).scalars().one()
     assert acc.subscription_type is None      # brak tagu planu, ale dane sa
+
+
+async def test_poprawiona_etykieta_dochodzi_do_serii_zarejestrowanej_wczesniej(db):
+    """Etykieta jest OPISEM, nie tozsamoscia — i dlatego `get_or_create_series` odswieza ja
+    przy kazdym pomiarze. Bez tego poprawka slownika nigdy nie dotarlaby do serii juz
+    zarejestrowanych i UI pokazywalby stara tresc do konca zycia bazy. Mechanizm nie mial
+    testu, a stoi na nim zmiana etykiety `spend:org`."""
+    from sqlalchemy import update as sa_update
+
+    await ingest_one(db, machine_name="desktop", payload=payload())
+    await db.commit()
+    await db.execute(sa_update(UsageSeries)
+                     .where(UsageSeries.series_key == "spend:org")
+                     .values(display_label="Etykieta z poprzedniej wersji"))
+    await db.commit()
+
+    await ingest_one(db, machine_name="desktop", payload=payload())
+    await db.commit()
+
+    s = (await db.execute(
+        select(UsageSeries).where(UsageSeries.series_key == "spend:org")
+    )).scalar_one()
+    assert s.display_label == "Limit wydatków (Twoja pula)"

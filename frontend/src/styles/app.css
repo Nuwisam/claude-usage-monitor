@@ -310,6 +310,14 @@
   color: color-mix(in srgb, var(--color-text) 45%, transparent);
   font-variant-numeric: normal;
 }
+/* Szczebel wylaczony, ktory mimo to niesie KWOTY (kredyty odciete przez organizacje —
+   ostatni pomiar zostaje). Skreslenie na liczbach czyta sie jako „te liczby sa
+   nieprawdziwe", a one sa prawdziwe; nieprawdziwe byloby tylko uznanie ich za biezace. */
+.rung[data-state="off"][data-plain] .rung-value {
+  text-decoration: none;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
 .rung[data-state="unknown"] .rung-value {
   color: color-mix(in srgb, var(--color-text) 55%, transparent);
   font-variant-numeric: normal;

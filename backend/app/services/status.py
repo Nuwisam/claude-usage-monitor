@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.freshness import display_utilization, freshness
 from app.models import Account, IngestBatch, LimitSample, SeriesState, UsageSeries
-from app.parsing import Sample, window_start_index
+from app.parsing import Sample, meter_withdrawn, window_start_index
 from app.schemas import AccountStatus, SeriesStatus, StatusResponse
 from app.services.cascade import SeriesFacts, build_cascade
 from app.services.ingest import utcnow
@@ -70,6 +70,34 @@ async def _recent_samples(db: AsyncSession, account_id: int,
         out.setdefault(sid, []).append(
             (captured_at, float(util) if util is not None else None, resets_at))
     return out
+
+
+async def _last_measured(db: AsyncSession, account_id: int,
+                         series_id: int) -> tuple[float, dict | None, datetime] | None:
+    """Ostatnia probka tej serii, ktora byla PRAWDZIWYM pomiarem — wartosc, kwoty i czas.
+
+    Potrzebne wylacznie dla serii z wycofanym miernikiem. Sam stan biezacy tego nie da:
+    `series_state` trzyma OSTATNI zapis, a przy zamknietej bramie ostatni zapis to wlasnie
+    brak pomiaru — z wyzerowanymi kwotami z payloadu wycofania. Bez tego siegniecia wiersz
+    traci jedyna liczbe, ktora o zuzyciu cokolwiek mowi, i to jest strata informacji,
+    a nie ochrona przed nia (zasada 4: pokazujemy ostatni ZMIERZONY procent, nie zero).
+
+    Warunek jest caly w SQL, bo "pomiar" ma tu jedno znaczenie: niepusta wartosc, ktorej
+    guard nie uznal za cofnieta. Wycofany miernik NIE zapisuje wartosci (`parse_usage`
+    zwraca None), wiec wiersz z wartoscia jest z definicji wierszem sprzed blokady.
+    Jedno trafienie w `ix_samples_series_time`, i tylko dla serii z powodem — w praktyce
+    zera albo dwoch na konto.
+    """
+    row = (await db.execute(
+        select(LimitSample.utilization, LimitSample.extra, LimitSample.captured_at)
+        .where(LimitSample.account_id == account_id,
+               LimitSample.series_id == series_id,
+               LimitSample.utilization.is_not(None),
+               LimitSample.stale_read.is_(False))
+        .order_by(LimitSample.captured_at.desc())
+        .limit(1)
+    )).first()
+    return (float(row[0]), row[1], row[2]) if row is not None else None
 
 
 def _delta_1h(rows: Sequence[Sample], *, now: datetime, current: float | None,
@@ -153,12 +181,27 @@ async def build_account_status(
     facts: list[SeriesFacts] = []
     for st, s in rows:
         raw_all = float(st.last_utilization) if st.last_utilization is not None else None
+        # Powod odtwarzamy z `last_extra`, a nie z osobnej kolumny: `enabled` i
+        # `disabled_reason` juz tam sa, wiec stan zapisany przed ta zmiana czyta sie
+        # poprawnie i zadna migracja nie jest potrzebna.
+        reason = meter_withdrawn(st.last_extra)
+        # Przy wycofanym mierniku CALY wiersz opisuje ostatni prawdziwy pomiar: jego
+        # wartosc, jego kwoty i jego czas. Payload wycofania nie niesie zadnej z tych
+        # rzeczy — ma wyzerowane `used`, `limit: null` i `percent: 0`.
+        measured = await _last_measured(db, a.id, s.id) if reason else None
+        raw_all = measured[0] if measured else (None if reason else raw_all)
+        extra = measured[1] if measured else st.last_extra
+
         # Fakty dla kaskady zbieramy PRZED filtrem widoku: `extra:usage` na koncie bez
         # kredytow ma utilization = null i za chwile wypadnie, a kaskada z niego czyta.
+        # Kwoty ida z ostatniego pomiaru, wiec kaskada pokazuje, GDZIE stanales; `enabled`
+        # z tamtego `extra` mowi jeszcze `true`, ale powod ma nad nim pierwszenstwo
+        # (`cascade.build_cascade`) — inaczej zamknieta brama wygladalaby na otwarta.
         facts.append(SeriesFacts(
             series_key=s.series_key, source=s.source, kind=s.kind,
             bucket_key=s.bucket_key, utilization=raw_all,
-            is_active=st.last_is_active, extra=st.last_extra,
+            is_active=st.last_is_active, extra=extra,
+            unavailable_reason=reason,
         ))
 
         # Serie, ktore nigdy nie mialy wartosci (np. seven_day_opus na koncie bez Opusa)
@@ -169,6 +212,14 @@ async def build_account_status(
         # Fallback na last_captured_at dla wierszy sprzed migracji dodajacej
         # last_confirmed_at — dla nich oba znaczenia sa i tak tozsame.
         confirmed = st.last_confirmed_at or st.last_captured_at
+        captured, value_since = st.last_captured_at, st.value_since
+        if measured:
+            # Znaczniki opisuja LICZBE, ktora stoi w wierszu. Ta liczba zostala ostatnio
+            # potwierdzona przed wycofaniem miernika i od tego czasu nikt jej nie
+            # potwierdzil — potem potwierdzalismy juz tylko, ze pomiaru nie ma. Zostawienie
+            # tu swiezego `confirmed_at` znaczyloby "zmierzone przed chwila" i bylo by
+            # dokladnie ta falszywa pewnoscia, przed ktora broni sie cale to narzedzie.
+            captured = confirmed = value_since = measured[2]
         state = freshness(
             now=now,
             confirmed_at=confirmed,
@@ -178,7 +229,12 @@ async def build_account_status(
             client_silent_sec=settings.client_silent_sec,
         )
         raw_u = raw_all
-        shown = display_utilization(state, raw_u)
+        # `utilization` to liczba BIEZACA, a przy wycofanym mierniku zadnej biezacej nie ma
+        # — nawet gdy ostatni pomiar jest sprzed minuty i `freshness` mowi `live`.
+        # `rawUtilization` zostaje, bo to ostatni ZMIERZONY procent, i to jest jedyne, co
+        # o zuzyciu wiemy. UI liczy `utilization ?? rawUtilization`, wiec zobaczy wlasnie
+        # jego — z wiekiem odczytu i powodem obok, nigdy jako pomiar biezacy.
+        shown = None if reason else display_utilization(state, raw_u)
         secs = (int((st.last_resets_at - now).total_seconds())
                 if st.last_resets_at is not None else None)
         # `shown`, nie `raw_u`: delta towarzyszy liczbie widocznej na ekranie, a przy
@@ -190,13 +246,13 @@ async def build_account_status(
             series_id=s.id, series_key=s.series_key, label=s.display_label,
             source=s.source, sort_order=s.sort_order,
             kind=s.kind, group=s.group_key, bucket_key=s.bucket_key,
-            utilization=shown, raw_utilization=raw_u,
+            utilization=shown, raw_utilization=raw_u, unavailable_reason=reason,
             resets_at=st.last_resets_at, seconds_to_reset=secs,
-            captured_at=st.last_captured_at, confirmed_at=confirmed,
-            value_since=st.value_since, freshness=state,
+            captured_at=captured, confirmed_at=confirmed,
+            value_since=value_since, freshness=state,
             is_active=st.last_is_active, severity=st.last_severity,
             delta_pct_1h=d_pct, delta_from=d_from,
-            extra=st.last_extra,
+            extra=extra,
         ))
 
     _mark_duplicates(series)

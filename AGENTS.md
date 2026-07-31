@@ -51,6 +51,16 @@ i `unknown` wyglądają więc **identycznie**; osobny rysunek zostaje dla `infer
 czytałoby się jako zero. To ten sam model po obu stronach biurka: `frontend/src/lib/freshness.ts`
 i `panel/panel/view.py` są jedną decyzją w dwóch językach, a panel miał ją pierwszy.
 
+Wycofany miernik (`unavailableReason`) tej zasady **nie łamie, tylko ją stosuje**: gdy
+organizacja odetnie kredyty, Anthropic podaje `percent: 0` — i to zero jest odrzucane, a na
+ekranie zostaje ostatni ZMIERZONY procent razem z kwotami, ze stemplem tamtego pomiaru.
+Fantomem jest zero z payloadu wycofania, nigdy wartość zmierzona wcześniej.
+
+**Świadomy rozjazd WWW z panelem** jest w jednym miejscu i wynika z rozmiaru ekranu: WWW pisze
+przy twardym bloku „kredyty wyłączone przez organizację", panel nie pisze o tym **nic** —
+480×320 nie ma na to miejsca ani potrzeby, więc wiersz kredytów pokazuje same kwoty. To decyzja,
+nie dług: powód jest wyjaśnieniem, a panel jest wskaźnikiem.
+
 **5. Żadnych zahardkodowanych nazw bucketów.**
 Odpowiedź ma 17 kluczy najwyższego poziomu, z czego 5 nie było znanych ani z walidatora
 w binarce Claude Code, ani z repo referencyjnego. Serie są **wierszami w tabeli**. Nowy bucket

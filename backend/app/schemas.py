@@ -81,8 +81,14 @@ class SeriesStatus(CamelModel):
     kind: str | None                   # session | weekly_all | weekly_scoped | ...
     group: str | None                  # session | weekly | ...
     bucket_key: str | None             # five_hour, seven_day, tangelo, ...
-    utilization: float | None          # None przy freshness == "unknown" — to jest poprawne
+    utilization: float | None          # None gdy nie ma czego pokazac — to jest poprawne
     raw_utilization: float | None      # ostatnia ZMIERZONA wartosc, bez wnioskowania
+    # Powod, dla ktorego tej serii NIE DA SIE zmierzyc — doslownie od Anthropic
+    # (zaobserwowane: `org_level_disabled_until`, `org_spend_cap_reached`; zbior JEST
+    # otwarty, wiec konsument sprawdza `!== null`, a nie tresc). Gdy jest ustawiony, OBA
+    # pola wartosci sa null — inaczej UI, ktore liczy `utilization ?? rawUtilization`,
+    # narysowaloby zmierzone 0% w chwili twardej blokady.
+    unavailable_reason: str | None = None
     resets_at: UtcDt | None
     seconds_to_reset: int | None
     # Trzy rozne pytania o czas — mylenie ich sprawia, ze stabilny odczyt wyglada jak awaria:
@@ -116,6 +122,11 @@ class CascadeRung(CamelModel):
     """
     key: str                           # session | weekly | credits | hard_block
     state: str                         # on | off | unknown  ("unknown" != "off")
+    # Dlaczego szczebel jest wylaczony — ten sam lancuch od Anthropic co w SeriesStatus.
+    # `state` NIE dostaje czwartej wartosci: wycofane kredyty to nadal `off`, wiec
+    # konsument, ktory tego pola nie zna, napisze "wylaczone" — zdanie niepelne, ale
+    # prawdziwe.
+    reason: str | None = None
     is_current: bool = False           # szczebel, ktory ogranicza CIEBIE w tej chwili
     utilization: float | None = None   # session, weekly
     series_key: str | None = None      # powrot do serii, ktora dala te wartosc

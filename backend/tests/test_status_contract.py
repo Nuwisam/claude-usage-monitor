@@ -161,3 +161,108 @@ async def test_unknown_nie_ma_liczby_ale_ma_ostatni_pomiar(db, monkeypatch):
     for s in unknowns:
         assert s["utilization"] is None, "unknown wyrenderowane jako liczba"
         assert s["rawUtilization"] is not None, "zgubiony ostatni pomiar"
+
+
+# ------------------------------------------------- wycofany miernik na drucie
+async def test_wycofany_miernik_zostawia_ostatni_zmierzony_procent_i_kwoty(db):
+    """Fantomem jest `percent: 0` Z PAYLOADU WYCOFANIA, a nie wartosc sprzed blokady.
+    Ta druga jest pomiarem i zostaje na ekranie — inaczej zamkniecie bramy KASUJE jedyna
+    liczbe, jaka o zuzyciu mamy, czyli pogarsza widok zamiast go naprawiac.
+
+    `utilization` (liczba BIEZACA) znika, bo biezacej nie ma. `rawUtilization` (ostatnia
+    ZMIERZONA) zostaje — dokladnie tak, jak przy `unknown`, zasada 4."""
+    from tests.team import USAGE_ACTIVE, USAGE_WITHDRAWN, team_payload
+
+    now = (utcnow() - timedelta(seconds=120)).replace(microsecond=0)
+    await ingest_one(db, machine_name="desktop",
+                     payload=team_payload(USAGE_ACTIVE, captured_at=now))
+    await ingest_one(db, machine_name="desktop",
+                     payload=team_payload(USAGE_WITHDRAWN,
+                                          captured_at=now + timedelta(seconds=60)))
+    await db.commit()
+
+    body = await wire(db)
+    spend = {s["seriesKey"]: s for s in body["accounts"][0]["series"]}["spend:org"]
+    assert spend["utilization"] is None, "biezacej liczby nie ma i nie wolno jej udawac"
+    assert spend["rawUtilization"] == 93.0, "ostatni ZMIERZONY procent zostaje"
+    assert spend["unavailableReason"] == "org_level_disabled_until"
+
+    # Kwoty tez pochodza z ostatniego pomiaru — payload wycofania ma `used` wyzerowane
+    # i `limit: null`, wiec wziete z niego pokazywalyby 0,00 EUR jako fakt.
+    assert spend["extra"]["used"]["amount_minor"] == 27795
+    assert spend["extra"]["limit"]["amount_minor"] == 30000
+
+    # Znaczniki opisuja TE liczbe, nie moment stwierdzenia jej braku.
+    assert spend["confirmedAt"].startswith(now.isoformat()[:19])
+
+    credits = {r["key"]: r for r in body["accounts"][0]["cascade"]}["credits"]
+    assert credits["state"] == "off" and credits["reason"] == "org_level_disabled_until"
+    assert (credits["usedMinor"], credits["limitMinor"]) == (27795, 30000)
+
+
+async def test_seria_z_powodem_nie_ma_biezacej_liczby(db):
+    """Implikacja na CALEJ odpowiedzi, nie na jednej serii: powod wyklucza liczbe BIEZACA.
+    `utilization` obok powodu byloby twierdzeniem, ze zmierzono wlasnie to, czego zmierzyc
+    sie nie da. `rawUtilization` wyklucza sie z nim nie — to pomiar sprzed blokady."""
+    from tests.team import USAGE_WITHDRAWN, team_payload
+
+    await ingest_one(db, machine_name="desktop", payload=payload())           # Max
+    await ingest_one(db, machine_name="laptop", payload=team_payload(USAGE_WITHDRAWN))
+    await db.commit()
+
+    body = await wire(db)
+    wszystkie = [s for a in body["accounts"] for s in a["series"]]
+    assert wszystkie, "brak serii — test bylby pusty"
+    for s in wszystkie:
+        if s["unavailableReason"] is not None:
+            assert s["utilization"] is None, s["seriesKey"]
+
+    for a in body["accounts"]:
+        for r in a["cascade"]:
+            if r["reason"] is not None:
+                assert r["state"] != "on" or r["key"] == "hard_block"
+
+
+async def test_contract_version_zostaje_na_trzy_mimo_nowych_pol(db):
+    """Dodanie pola nie lamie zgodnosci — precedens `deltaFrom`. Konsument, ktory
+    `unavailableReason` nie zna, dostaje dokladnie to samo, co dostawal."""
+    from tests.team import USAGE_WITHDRAWN, team_payload
+
+    await ingest_one(db, machine_name="desktop", payload=team_payload(USAGE_WITHDRAWN))
+    await db.commit()
+    body = await wire(db)
+
+    assert body["contractVersion"] == CONTRACT_VERSION == 3
+    assert all("unavailableReason" in s
+               for a in body["accounts"] for s in a["series"])
+    assert all("reason" in r for a in body["accounts"] for r in a["cascade"])
+
+
+async def test_fantomowe_zero_zapisane_przed_ta_zmiana_nie_wraca_na_ekran(db):
+    """Stan zapisany przez POPRZEDNIA wersje backendu ma w `series_state` fantomowe zero:
+    parser zapisywal wtedy `percent: 0` jako pomiar. Po wdrozeniu ten wiersz nadal tam
+    lezy — dopoki miernik jest wycofany, nie przyjdzie zadna nowa wartosc, ktora by go
+    nadpisala. Widok musi go odrzucic sam, na podstawie `last_extra`."""
+    from sqlalchemy import update as sa_update
+
+    from app.models import SeriesState, UsageSeries
+    from tests.team import USAGE_WITHDRAWN, team_payload
+
+    await ingest_one(db, machine_name="desktop", payload=team_payload(USAGE_WITHDRAWN))
+    await db.commit()
+    series = (await db.execute(
+        select(UsageSeries).where(UsageSeries.series_key == "spend:org")
+    )).scalar_one()
+    # Dokladnie to, co zostawila poprzednia wersja: zero jako pomiar, przy powodzie w extra.
+    await db.execute(sa_update(SeriesState)
+                     .where(SeriesState.series_id == series.id)
+                     .values(last_utilization=0))
+    await db.execute(sa_update(UsageSeries)
+                     .where(UsageSeries.id == series.id).values(ever_non_null=True))
+    await db.commit()
+
+    spend = {s["seriesKey"]: s
+             for s in (await wire(db))["accounts"][0]["series"]}["spend:org"]
+    assert spend["utilization"] is None
+    assert spend["rawUtilization"] is None, "fantomowe zero z bazy nie moze wrocic na drut"
+    assert spend["unavailableReason"] == "org_level_disabled_until"

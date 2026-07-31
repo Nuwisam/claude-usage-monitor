@@ -58,6 +58,10 @@ class Observation:
     source: str                       # bucket | limit | extra_usage | spend
     display_label: str
     utilization: float | None         # ZAWSZE 0..100
+    # Powod, dla ktorego tej serii NIE DA SIE zmierzyc — doslownie od Anthropic. Gdy jest
+    # ustawiony, `utilization` jest None Z DEFINICJI: to nie jest pomiar 0%, tylko brak
+    # miernika. Patrz `meter_withdrawn`.
+    unavailable_reason: str | None = None
     resets_at: datetime | None = None
     bucket_key: str | None = None
     kind: str | None = None
@@ -229,6 +233,47 @@ def carry_reset_window(prev: datetime | None, incoming: datetime | None,
     return None
 
 
+def meter_withdrawn(block: Any) -> str | None:
+    """Powod, dla ktorego ten miernik NIE DZIALA — albo None, gdy dziala.
+
+    Gdy organizacja wyczerpie swoj globalny sufit wydatkow, Anthropic nie przestaje
+    odpowiadac — ZERUJE MIERNIK: `percent` spada z 91 na 0, `used` z 273,15 EUR na 0,00,
+    `limit` i `cap` znikaja (null), `severity` wraca z `critical` na `normal`. Zapisane
+    wprost, to zero jest pewnym, zmierzonym "masz caly limit" w chwili twardej blokady.
+
+    Payload tego stanu jest strukturalnie IDENTYCZNY z payloadem konta Max, ktore kredytow
+    nigdy nie wlaczylo: `enabled:false`, `cap:null`, `percent:0`, `used:0` w obu. Rozni je
+    WYLACZNIE `disabled_reason` — to jedyny dyskryminator, jaki dostajemy.
+
+    TRESCI powodu nie interpretujemy (zasada 5): kazdy niepusty string znaczy "wycofany",
+    a sam string jedzie dalej doslownie, az do UI. Zbior JEST otwarty — na jednym koncie
+    zaobserwowano dwa rozne lancuchy w ciagu doby (`org_level_disabled_until`,
+    `org_spend_cap_reached`).
+
+    Wyczerpanie WLASNEJ puli to NIE jest wycofanie: wtedy `enabled` zostaje `true`,
+    `disabled_reason` jest `null`, a `percent` dochodzi do 100 (zmierzone: used 300,04 przy
+    limicie 300,00 EUR) — licznik dziala i mowi prawde. Dlatego werdykt stoi na fladze
+    `enabled`, nigdy na wysokosci procentu: uznanie 100% za wycofanie odebraloby jedyna
+    poprawna liczbe dokladnie w momencie, w ktorym jest najbardziej potrzebna.
+
+    Czyta te same nazwy pol w bloku `spend` (`enabled`) i `extra_usage` (`is_enabled`), wiec
+    dziala tak samo na surowej odpowiedzi, jak i na `extra` zapisanym w bazie — a to znaczy,
+    ze stan sprzed tej zmiany odczyta sie poprawnie bez migracji.
+    """
+    if not isinstance(block, dict):
+        return None
+    reason = block.get("disabled_reason")
+    if not isinstance(reason, str) or not reason.strip():
+        return None
+    enabled = block.get("enabled")
+    if not isinstance(enabled, bool):
+        enabled = block.get("is_enabled")
+    if enabled is True:
+        # Powod jest, ale brama stoi otworem — licznik dziala i jego liczba obowiazuje.
+        return None
+    return reason
+
+
 # (captured_at, utilization, resets_at) — jeden wiersz przebiegu serii.
 Sample = tuple[datetime, float | None, datetime | None]
 
@@ -367,10 +412,14 @@ def parse_usage(payload: Any) -> ParseResult:
     # --- 3. extra_usage ---------------------------------------------------
     eu = payload.get("extra_usage")
     if isinstance(eu, dict):
+        eu_reason = meter_withdrawn(eu)
         obs.append(Observation(
             series_key="extra:usage", source="extra_usage",
             display_label="Kredyty dodatkowe",
-            utilization=parse_pct(eu.get("utilization")),
+            # Wycofany miernik nie ma pomiaru. Kwoty i flagi zostaja nietkniete w `extra`,
+            # surowa odpowiedz lezy w `raw_payloads` — nie ginie nic poza fantomowym zerem.
+            utilization=None if eu_reason else parse_pct(eu.get("utilization")),
+            unavailable_reason=eu_reason,
             sort_order=_SORT["extra:usage"],
             extra={k: v for k, v in eu.items() if k != "utilization"},
         ))
@@ -380,10 +429,16 @@ def parse_usage(payload: Any) -> ParseResult:
     # --- 4. spend — na Team to JEST wiazacy limit --------------------------
     sp = payload.get("spend")
     if isinstance(sp, dict):
+        sp_reason = meter_withdrawn(sp)
         obs.append(Observation(
             series_key="spend:org", source="spend",
-            display_label="Limit wydatków organizacji",
-            utilization=parse_pct(sp.get("percent")),
+            # NIE "limit organizacji": to jest pula PRZYDZIELONA TOBIE (300,00 EUR na
+            # miesiac). Sufit calej organizacji jest czyms innym i w kontrakcie nie istnieje
+            # — gdy sie wyczerpie, ta seria nie rosnie, tylko gasnie (patrz meter_withdrawn).
+            # Zmieniamy WYLACZNIE etykiete; `series_key` jest tozsamoscia i zostaje.
+            display_label="Limit wydatków (Twoja pula)",
+            utilization=None if sp_reason else parse_pct(sp.get("percent")),
+            unavailable_reason=sp_reason,
             severity=sp.get("severity"),
             sort_order=_SORT["spend:org"],
             # Kwoty zostaja w jednostkach mniejszych z wykladnikiem — bez splaszczania.

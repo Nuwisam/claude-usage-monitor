@@ -56,7 +56,7 @@ export function describeSeries(
   // `??`, nie `||`: przy `inferred_reset` utilization to 0.0 i ma nim zostac.
   const value = s.utilization ?? s.rawUtilization;
 
-  if (value === null) return missingView(suffix);
+  if (value === null) return missingView(suffix, s.unavailableReason);
 
   if (s.freshness === "inferred_reset") {
     return {
@@ -76,6 +76,10 @@ export function describeSeries(
   }
 
   const age = confirmed ? ` · ${ago(confirmed.getTime(), nowMs)}` : "";
+  // Przy wycofanym mierniku wiersz wyglada TAK SAMO jak zwykly: liczba, kwoty i „potwierdzone
+  // …" ze stemplem ostatniego pomiaru. Nie ma tu osobnego napisu o wycofaniu, bo backend
+  // podmienia znaczniki na czas TAMTEGO pomiaru — podpis mowi wiec prawde sam z siebie,
+  // a wiek odczytu robi reszte. O tym, ze bramy nie otworzysz, mowi twardy blok w kaskadzie.
   return {
     measured: true,
     outline: false,
@@ -90,10 +94,20 @@ export function describeSeries(
   };
 }
 
-/** Brak JAKIEGOKOLWIEK pomiaru dla tej serii. Pusty tor czytaloby sie jako zero, wiec tor
- *  jest kreskowany ze skosem, a zamiast liczby stoja slowa. To jedyne miejsce, w ktorym to
- *  UI mowi „nie wiem" — i jedyne, w ktorym naprawde nie wie. */
-function missingView(suffix: string): SeriesView {
+/** Brak liczby dla tej serii. Pusty tor czytaloby sie jako zero, wiec tor jest kreskowany
+ *  ze skosem, a zamiast liczby stoja slowa.
+ *
+ *  Dwa rozne powody, ten sam RYSUNEK i dwa rozne slowa:
+ *    - pomiaru nie bylo NIGDY — „nie wiem", jedyne miejsce, w ktorym UI tak mowi, i jedyne,
+ *      w ktorym naprawde nie wie;
+ *    - miernik zostal WYCOFANY (`unavailableReason`) — wtedy wiemy dokladnie, dlaczego
+ *      liczby nie ma, i „nie wiem" byloby przyznaniem sie do niewiedzy, ktorej nie ma.
+ *      Anthropic w tym stanie podaje `percent: 0`; gdybysmy je narysowali, obiecalibysmy
+ *      caly wolny limit w chwili twardej blokady.
+ *
+ *  Tresci powodu nie tlumaczymy (zasada 5): zbior jest otwarty, wiec rozgałezia nas samo
+ *  jego istnienie, a nie jego brzmienie. */
+function missingView(suffix: string, reason?: string | null): SeriesView {
   return {
     measured: false,
     outline: true,
@@ -102,9 +116,11 @@ function missingView(suffix: string): SeriesView {
     barPct: 0,
     full: false,
     number: null,
-    words: "nie wiem",
-    note: `brak pomiaru dla tej serii${suffix}`,
-    heroNote: "brak pomiaru dla tej serii",
+    words: reason ? "bez licznika" : "nie wiem",
+    note: reason
+      ? `licznik wycofany przez organizację${suffix}`
+      : `brak pomiaru dla tej serii${suffix}`,
+    heroNote: reason ? "licznik wycofany przez organizację" : "brak pomiaru dla tej serii",
   };
 }
 

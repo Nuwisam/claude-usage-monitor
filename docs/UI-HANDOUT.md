@@ -22,6 +22,17 @@ Base URL API: `https://usage.example.org/claude-usage/api`
   odniesienia pochodził z poprzedniego okna i przez godzinę wisiało „−46 pp w ciągu godziny".
   `null` zawsze i dokładnie wtedy, gdy `deltaPct1h` jest `null`. Nazwa `deltaPct1h` zostaje —
   jej zmiana łamałaby zgodność, a dodanie pola nie łamie (patrz § 11).
+- **`unavailableReason`** (seria) i **`reason`** (szczebel kaskady) — powód, dla którego
+  miernika **nie da się odczytać**, dosłownie od Anthropic. Gdy organizacja wyczerpie swój
+  globalny sufit wydatków, endpoint nie przestaje odpowiadać — **zeruje miernik**: `percent`
+  spada z 91 na 0, `used` z 273,15 EUR na 0,00, `limit` i `cap` znikają. Bez tego pola stan
+  twardej blokady jest **nieodróżnialny** od konta, które kredytów nigdy nie miało, a UI
+  narysowałoby pewne, zmierzone 0% — czyli „masz całe 300 EUR" w chwili, gdy nie masz nic.
+  Znika wtedy **tylko `utilization`** (liczba bieżąca); `rawUtilization`, kwoty w `extra`
+  i wszystkie znaczniki czasu opisują **ostatni prawdziwy pomiar sprzed blokady**.
+  Zbiór wartości **jest otwarty** (zaobserwowane: `org_level_disabled_until`,
+  `org_spend_cap_reached`), więc rozgałęziaj się na `!== null`, nigdy na treści.
+  `state` szczebla **nie** dostał czwartej wartości — wycofane kredyty to nadal `off`.
 
 Co doszło w v2 względem v1 i dlaczego:
 
@@ -214,6 +225,27 @@ Pokazujemy ostatni **pomiar** z jego wiekiem, a nie zero i nie wymyśloną liczb
 **nigdy** (`utilization` i `rawUtilization` oba `null`) — tam pusty tor czytałoby się jako
 zero, a zera nie wolno.
 
+To samo zdanie stoi za `unavailableReason`, i to **w obie strony**. Fantomem jest
+`percent: 0` **z payloadu wycofania** — nie wartość zmierzona wcześniej. Dlatego przy wycofanym
+mierniku `utilization` jest `null` (bieżącej liczby nie ma), ale `rawUtilization` **zostaje**:
+to ostatni ZMIERZONY procent i jedyne, co o zużyciu wiadomo. Skasowanie go byłoby tym samym
+błędem co renderowanie zera, tylko z drugiej strony — użytkownik traci liczbę, którą naprawdę
+mamy.
+
+Cały wiersz opisuje wtedy **tamten pomiar**: `rawUtilization`, kwoty w `extra` (`used`/`limit`
+sprzed blokady, bo payload wycofania ma je wyzerowane) oraz `capturedAt`/`confirmedAt`/
+`valueSince` wskazujące moment, w którym tę liczbę potwierdzono po raz ostatni. UI pisze więc
+„licznik wycofany przez organizację · ostatni pomiar w śr. o 13:39 · 2 d temu", a nie
+„potwierdzone przed chwilą".
+
+Kreskowany tor i słowa „bez licznika" zostają wyłącznie wtedy, gdy pomiaru **nigdy nie było** —
+tam nadal nie ma czego narysować.
+
+Odwrotny błąd jest równie groźny i pilnuje go osobny test: **wyczerpanie własnej puli to nie
+jest wycofanie miernika**. Wtedy `enabled` zostaje `true`, `unavailableReason` jest `null`,
+a licznik pokazuje 100% (zmierzone: 300,04 z 300,00 EUR) — i ta liczba musi zostać na ekranie,
+bo jest jedyną prawdziwą.
+
 `inferred_reset` też jest wnioskowaniem, nie pomiarem, i **dalej musi wyglądać inaczej** —
 tylda przy liczbie i kontur bez wypełnienia. Świadomie nie stawiamy tam stempla ostatniego
 pomiaru: tamten należy do **poprzedniego** okna, a `~0` mówi o bieżącym. Zastrzeżenie do
@@ -379,16 +411,16 @@ Wygenerowana z działającego systemu, konto Max, 2026-07-26 21:57 UTC. Skrócon
     "lastBatchAt": "2026-07-26T21:57:06.343335Z",
     "lastClientHost": "desktop",
     "cascade": [
-      {"key": "session", "state": "on", "isCurrent": true, "utilization": 91.0,
+      {"key": "session", "state": "on", "reason": null, "isCurrent": true, "utilization": 91.0,
        "seriesKey": "limit:session|session|-|-",
        "usedMinor": null, "limitMinor": null, "currency": null, "exponent": null},
-      {"key": "weekly", "state": "on", "isCurrent": false, "utilization": 43.0,
+      {"key": "weekly", "state": "on", "reason": null, "isCurrent": false, "utilization": 43.0,
        "seriesKey": "limit:weekly_all|weekly|-|-",
        "usedMinor": null, "limitMinor": null, "currency": null, "exponent": null},
-      {"key": "credits", "state": "off", "isCurrent": false, "utilization": null,
+      {"key": "credits", "state": "off", "reason": null, "isCurrent": false, "utilization": null,
        "seriesKey": "spend:org",
        "usedMinor": 0, "limitMinor": null, "currency": "USD", "exponent": 2},
-      {"key": "hard_block", "state": "on", "isCurrent": false, "utilization": null,
+      {"key": "hard_block", "state": "on", "reason": null, "isCurrent": false, "utilization": null,
        "seriesKey": null,
        "usedMinor": null, "limitMinor": null, "currency": null, "exponent": null}
     ],
@@ -404,6 +436,7 @@ Wygenerowana z działającego systemu, konto Max, 2026-07-26 21:57 UTC. Skrócon
         "bucketKey": null,
         "utilization": 91.0,
         "rawUtilization": 91.0,
+        "unavailableReason": null,
         "resetsAt": "2026-07-27T00:59:59.056340Z",
         "secondsToReset": 10951,
         "capturedAt": "2026-07-26T21:57:05Z",
@@ -429,6 +462,7 @@ Wygenerowana z działającego systemu, konto Max, 2026-07-26 21:57 UTC. Skrócon
         "bucketKey": null,
         "utilization": 43.0,
         "rawUtilization": 43.0,
+        "unavailableReason": null,
         "resetsAt": "2026-08-01T15:59:59.056361Z",
         "secondsToReset": 496951,
         "capturedAt": "2026-07-26T21:57:05Z",
@@ -560,7 +594,12 @@ Dodanie pola jest zmianą **nie**łamiącą i nie wymaga podbicia. Wersja poszł
 przez zmianę serializacji czasu — reszta v2 to dodatki. Tak samo doszło `deltaFrom`: wersja
 została na 3, a UI bez tego pola dostaje `undefined` i wraca do brzmienia godzinowego.
 
-Konto Team nie zostało jeszcze zweryfikowane na żywo (ma wyczerpany limit tygodniowy). To ono
-włącza szczeble `credits` i `hard_block` z kwotami; do tego czasu stoją one na fixture
-zbudowanym z `docs/POC-FINDINGS.md` i makiety. Jeśli prawdziwa odpowiedź ujawni pola, których
-tu nie ma, ten dokument idzie do aktualizacji razem z kodem.
+Konto Team jest już zweryfikowane na żywo, w trzech stanach kredytów naraz: działające
+(93%, 277,95 z 300,00 EUR), wyczerpana własna pula (100%, 300,04 z 300,00 — `enabled` nadal
+`true`) i miernik wycofany przez organizację (`enabled: false`, `disabled_reason`, kwoty
+wyzerowane). Wszystkie trzy leżą jako fixture'y w `backend/tests/fixtures/` i to na nich
+stoją testy kaskady — wymyślony payload z progiem 9000 USD zniknął.
+
+Jedna pułapka na koniec: `cap` w prawdziwej odpowiedzi jest **zagnieżdżony**
+(`{"credits": null, "money": {"amount_minor": 30000, …}}`), a nie płaski. Płaski odczyt
+przechodził testy na wymyślonym payloadzie i nie działał na produkcyjnym.

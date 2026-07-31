@@ -9,9 +9,10 @@ from pathlib import Path
 import pytest
 
 from app.parsing import (
-    Observation, humanize, limit_series_key, parse_pct, parse_ts, parse_usage,
-    window_start_index,
+    Observation, humanize, limit_series_key, meter_withdrawn, parse_pct, parse_ts,
+    parse_usage, window_start_index,
 )
+from tests.team import USAGE_ACTIVE, USAGE_POOL_EXHAUSTED, USAGE_WITHDRAWN, usage
 
 FIX = Path(__file__).parent / "fixtures" / "usage_max.json"
 REAL = json.loads(FIX.read_text(encoding="utf-8"))
@@ -276,3 +277,101 @@ def test_series_key_jest_stabilny():
 def test_series_key_nie_przekracza_255():
     k = limit_series_key("x" * 300, "y" * 300, "z" * 300, "w" * 300)
     assert len(k) <= 255
+
+
+# ------------------------------------------------- wycofany miernik (sufit organizacji)
+def by_key(result):
+    return {o.series_key: o for o in result.observations}
+
+
+def test_wycofany_miernik_nie_zapisuje_zera_jako_pomiaru():
+    """Sufit organizacji wyczerpany: Anthropic zeruje miernik zamiast przestac odpowiadac.
+    `percent: 0` i `used: 0,00 EUR` przy `enabled: false` NIE sa pomiarem zuzycia — sa
+    jego brakiem. Zapisane wprost, czytaja sie jako 'masz caly limit' w chwili blokady."""
+    p = usage(USAGE_WITHDRAWN)
+    assert p["spend"]["percent"] == 0 and p["spend"]["used"]["amount_minor"] == 0
+
+    o = by_key(parse_usage(p))["spend:org"]
+    assert o.utilization is None
+    assert o.unavailable_reason == "org_level_disabled_until"
+    # Kwoty i flagi zostaja nietkniete — nie ginie nic poza fantomowym zerem.
+    assert o.extra["used"]["amount_minor"] == 0
+    assert o.extra["enabled"] is False
+
+    eu = by_key(parse_usage(p))["extra:usage"]
+    assert eu.utilization is None
+    assert eu.unavailable_reason == "org_level_disabled_until"
+    assert eu.extra["spend_limit_reached"] is True
+
+
+def test_wyczerpana_prywatna_pula_nie_jest_wycofanym_miernikiem():
+    """Najgrozniejszy mozliwy blad tej zmiany. Przy wyczerpanej WLASNEJ puli licznik
+    dziala i mowi prawde (used 300,04 przy limicie 300,00 EUR => 100%). Uznanie tego za
+    wycofanie odebraloby jedyna poprawna liczbe wtedy, gdy jest najbardziej potrzebna."""
+    p = usage(USAGE_POOL_EXHAUSTED)
+    assert p["spend"]["enabled"] is True and p["spend"]["disabled_reason"] is None
+
+    assert meter_withdrawn(p["spend"]) is None
+    assert meter_withdrawn(p["extra_usage"]) is None
+
+    c = by_key(parse_usage(p))
+    assert c["spend:org"].utilization == 100.0
+    assert c["spend:org"].unavailable_reason is None
+    assert c["extra:usage"].utilization == 100.0
+
+
+def test_dzialajace_kredyty_zachowuja_procent_i_nie_maja_powodu():
+    c = by_key(parse_usage(usage(USAGE_ACTIVE)))
+    assert c["spend:org"].utilization == 93.0
+    assert c["spend:org"].unavailable_reason is None
+    assert c["extra:usage"].utilization == pytest.approx(92.656)
+
+
+def test_konto_bez_kredytow_nie_dostaje_powodu_wycofania():
+    """Payload konta Max, ktore kredytow nigdy nie wlaczylo, jest strukturalnie IDENTYCZNY
+    z payloadem wycofania: `enabled:false`, `cap:null`, `percent:0`, `used:0`. Rozni je
+    WYLACZNIE `disabled_reason` — i tylko on ma prawo rozstrzygac."""
+    assert REAL["spend"]["enabled"] is False
+    assert REAL["spend"].get("disabled_reason") is None
+
+    c = by_key(parse_usage(REAL))
+    assert c["spend:org"].unavailable_reason is None
+    assert c["spend:org"].utilization == 0.0        # tu zero JEST pomiarem
+
+
+@pytest.mark.parametrize("block", [
+    None, "string", 42, [], {}, {"disabled_reason": None},
+    {"disabled_reason": ""}, {"disabled_reason": "   "}, {"disabled_reason": 7},
+    {"enabled": False},
+])
+def test_meter_withdrawn_nie_rzuca_i_nie_zmysla_powodu(block):
+    """`extra` bywa None i bywa nie-dictem; parser nie ma prawa rzucic."""
+    assert meter_withdrawn(block) is None
+
+
+def test_meter_withdrawn_nie_interpretuje_tresci_powodu():
+    """Zbior powodow JEST otwarty — na jednym koncie zaobserwowano dwa rozne lancuchy
+    w ciagu doby. Kazdy niepusty string znaczy 'wycofany', a sam string jedzie dalej
+    doslownie (zasada 5)."""
+    for reason in ("org_level_disabled_until", "org_spend_cap_reached",
+                   "cos_calkiem_nowego_2027"):
+        assert meter_withdrawn({"enabled": False, "disabled_reason": reason}) == reason
+        assert meter_withdrawn({"is_enabled": False, "disabled_reason": reason}) == reason
+
+
+def test_powod_przy_otwartej_bramie_nie_kasuje_pomiaru():
+    """Gdyby kiedys przyszedl powod przy `enabled: true`, licznik nadal dziala — a jego
+    liczba obowiazuje. Werdykt stoi na fladze, nie na obecnosci samego napisu."""
+    assert meter_withdrawn({"enabled": True, "disabled_reason": "cokolwiek"}) is None
+
+
+def test_etykieta_spend_nie_nazywa_puli_limitem_organizacji():
+    """`spend:org` opisuje pule PRZYDZIELONA TOBIE (300,00 EUR/mies.), a nie sufit calej
+    organizacji — ten w kontrakcie nie istnieje i nie ma ani kwoty, ani procentu. Stara
+    etykieta nazywala serie tym, czym ona nie jest, i to wlasnie ona podpisywala fantomowe
+    zero w chwili, gdy sufit firmowy sie wyczerpal."""
+    o = by_key(parse_usage(usage(USAGE_ACTIVE)))["spend:org"]
+    assert o.display_label == "Limit wydatków (Twoja pula)"
+    assert "organizacji" not in o.display_label
+    assert len(o.display_label) <= 200        # kolumna display_label to String(200)
+    assert o.series_key == "spend:org", "klucz jest tozsamoscia i nie wolno go ruszac"

@@ -12,6 +12,8 @@
  *    states           — dodatkowo inferred_reset, konto bez serii, rozjechany duplikat,
  *                       wiek w dniach, reset za kilka dni i seria nigdy nie zmierzona
  *    reset            — trzy podpisy okna zaraz po resecie sesji
+ *    credits          — kredyty wycofane przez organizacje obok wyczerpanej wlasnej puli;
+ *                       oba stany wygladaja w payloadzie identycznie poza `disabled_reason`
  *
  *  `reset` jest osobnym wariantem, bo te stany widac WYLACZNIE w hero, a hero bierze tylko
  *  serie `kind: "session"` — dopisanie ich do `states` nie pokazaloby niczego.
@@ -54,6 +56,8 @@ interface Spec {
   primary?: boolean;
   dupOf?: string | null;
   extra?: Record<string, unknown> | null;
+  /** Powod wycofania miernika. Ustawiony => `u` i `raw` MUSZA byc null. */
+  reason?: string | null;
 }
 
 function series(id: number, s: Spec): SeriesStatus {
@@ -69,6 +73,7 @@ function series(id: number, s: Spec): SeriesStatus {
     bucketKey: s.bucket ?? null,
     utilization: s.u,
     rawUtilization: raw,
+    unavailableReason: s.reason ?? null,
     resetsAt: s.resetMin === null || s.resetMin === undefined ? null : at(s.resetMin),
     secondsToReset:
       s.resetMin === null || s.resetMin === undefined ? null : Math.round(s.resetMin * 60),
@@ -92,6 +97,7 @@ const WEEKLY_KEY = "limit:weekly_all|weekly|-|-";
 function rung(r: Partial<CascadeRung> & { key: CascadeRung["key"]; state: CascadeRung["state"] }): CascadeRung {
   return {
     isCurrent: false,
+    reason: null,
     utilization: null,
     seriesKey: null,
     usedMinor: null,
@@ -313,6 +319,72 @@ function withEdgeCases(accounts: AccountStatus[]): AccountStatus[] {
   ];
 }
 
+// ─── kredyty: wycofane przez organizacje vs wyczerpana wlasna pula ───────────
+// Dwa stany, ktorych w dzialajacym systemie nie da sie wywolac na zadanie — a rozni je JEDNO pole.
+// Bez tego podgladu jedyna droga do ich zobaczenia jest czekanie na awarie.
+function creditsStates(): AccountStatus[] {
+  const konto = (uuid: string, name: string, spend: Spec,
+                 cascade: CascadeRung[]): AccountStatus => ({
+    uuid, label: null, email: `${uuid.slice(0, 4)}@example.org`, displayName: name,
+    color: null, orgType: "claude_team", seatTier: "standard",
+    rateLimitTier: "default_claude_team_standard", subscriptionType: "team",
+    isEnabled: true, lastSampleAt: at(-0.4), lastBatchAt: at(-0.3),
+    lastClientHost: "laptop",
+    cascade,
+    series: [
+      series(1, { key: SESSION_KEY, label: "Sesja", source: "limit", sort: 15,
+        kind: "session", group: "session", u: 54, resetMin: 70, capturedMin: -0.4,
+        fresh: "live", active: false, severity: "normal", delta: 7 }),
+      series(2, { key: WEEKLY_KEY, label: "Tydzień (wszystkie modele)", source: "limit",
+        sort: 25, kind: "weekly_all", group: "weekly", u: 67, resetMin: 7200,
+        capturedMin: -0.4, fresh: "live", active: true, severity: "normal", delta: 2 }),
+      series(3, spend),
+    ],
+  });
+
+  return [
+    // WYCOFANY MIERNIK: Anthropic podaje `percent: 0` i `used: 0,00`, wiec bez tej zmiany
+    // tor stalby pusty z podpisem „potwierdzone" — czyli „masz cale 300 EUR" przy blokadzie.
+    // Liczba i kwoty pochodza z OSTATNIEGO POMIARU sprzed blokady (stad wiek w dniach),
+    // `utilization` jest null, bo biezacego odczytu nie ma. Payload wycofania niesie
+    // `percent: 0`, `used: 0,00` i `limit: null` — gdyby to on wypelnial wiersz, ekran
+    // obiecywalby caly wolny limit w chwili twardej blokady.
+    konto("0000wyco", "sufit organizacji", {
+      key: "spend:org", label: "Limit wydatków (Twoja pula)", source: "spend", sort: 30,
+      u: null, raw: 100, resetMin: null, capturedMin: -3120, fresh: "live",
+      severity: "critical", reason: "org_level_disabled_until",
+      extra: { enabled: true, disabled_reason: null,
+               used: { amount_minor: 30004, currency: "EUR", exponent: 2 },
+               limit: { amount_minor: 30000, currency: "EUR", exponent: 2 } },
+    }, [
+      rung({ key: "session", state: "on", utilization: 54, seriesKey: SESSION_KEY }),
+      rung({ key: "weekly", state: "on", utilization: 67, seriesKey: WEEKLY_KEY,
+        isCurrent: true }),
+      rung({ key: "credits", state: "off", seriesKey: "spend:org",
+        reason: "org_level_disabled_until", usedMinor: 30004, limitMinor: 30000,
+        currency: "EUR", exponent: 2 }),
+      rung({ key: "hard_block", state: "on", reason: "org_level_disabled_until" }),
+    ]),
+    // WYCZERPANA WLASNA PULA: licznik DZIALA i mowi prawde — 100% przy 300,04 / 300,00 EUR.
+    // Tu liczba musi zostac; jej ukrycie bylo by strata jedynej poprawnej wartosci.
+    konto("1111pula", "wlasna pula", {
+      key: "spend:org", label: "Limit wydatków (Twoja pula)", source: "spend", sort: 30,
+      u: 100, resetMin: null, capturedMin: -0.4, fresh: "live", severity: "critical",
+      delta: 1,
+      extra: { enabled: true, disabled_reason: null,
+               used: { amount_minor: 30004, currency: "EUR", exponent: 2 },
+               limit: { amount_minor: 30000, currency: "EUR", exponent: 2 } },
+    }, [
+      rung({ key: "session", state: "on", utilization: 54, seriesKey: SESSION_KEY }),
+      rung({ key: "weekly", state: "on", utilization: 100, seriesKey: WEEKLY_KEY }),
+      rung({ key: "credits", state: "on", utilization: 100, seriesKey: "spend:org",
+        usedMinor: 30004, limitMinor: 30000, currency: "EUR", exponent: 2 }),
+      rung({ key: "hard_block", state: "on", limitMinor: 30000, currency: "EUR",
+        exponent: 2, isCurrent: true }),
+    ]),
+  ];
+}
+
 // ─── stany okna zaraz po resecie sesji ───────────────────────────────────────
 function afterReset(): AccountStatus[] {
   const acc = (uuid: string, name: string, sesja: Spec): AccountStatus => ({
@@ -356,6 +428,7 @@ export function mockStatus(): StatusResponse {
   if (variant === "three") accounts = [...accounts, accountPro()];
   if (variant === "states") accounts = withEdgeCases(accounts);
   if (variant === "reset") accounts = afterReset();
+  if (variant === "credits") accounts = creditsStates();
 
   return {
     contractVersion: 3,

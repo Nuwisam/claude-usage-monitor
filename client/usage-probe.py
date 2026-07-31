@@ -41,7 +41,7 @@ Celowo plik lokalny, a nie repo — token maszyny nie ma prawa trafic do gita.
 """
 import sys, os, json, time, re, socket, hashlib, http.client, urllib.parse
 
-SCRIPT_VERSION = 3
+SCRIPT_VERSION = 4
 
 # Znacznik dziedziczony przez proces potomny. `claude -p "/usage"` to normalna sesja
 # Claude Code — odpali hook Stop, ktory odpali sonde, ktora odpalilaby kolejnego
@@ -146,13 +146,35 @@ def _extract_block(text, key):
     return None
 
 
+def _extract_scalar(text, key):
+    """Wycina wartosc SKALARNA po kluczu — string, liczbe, bool albo null.
+
+    Rodzenstwo `_extract_block`, ktore umie tylko `{...}`. `cachedExtraUsageDisabledReason`
+    lezy na najwyzszym poziomie jako goly string albo null, wiec tamta funkcja go nie widzi.
+
+    `raw_decode` od pozycji za dwukropkiem zamiast szukania konca recznie: sam json wie,
+    gdzie konczy sie wartosc, i radzi sobie z apostrofami oraz sekwencjami ucieczki w srodku.
+    """
+    i = text.find('"%s"' % key)
+    if i < 0:
+        return None
+    j = text.find(":", i + len(key) + 2)
+    if j < 0:
+        return None
+    j += 1
+    while j < len(text) and text[j] in " \t\r\n":
+        j += 1          # raw_decode NIE toleruje bialych znakow przed wartoscia
+    return json.JSONDecoder().raw_decode(text, j)[0]
+
+
 _ACCT_FIELDS = ("accountUuid", "emailAddress", "organizationUuid", "organizationName",
                 "organizationType", "organizationRateLimitTier", "userRateLimitTier",
                 "seatTier", "hasExtraUsageEnabled", "displayName")
 
 
 def read_claude_json():
-    """Jeden odczyt pliku, dwa wyciagi: tozsamosc konta i cache pomiaru.
+    """Jeden odczyt pliku, trzy wyciagi: tozsamosc konta, cache pomiaru i powod
+    wylaczenia kredytow.
 
     Dawna wersja cache'owala tozsamosc po mtime. Teraz i tak musimy czytac ten plik za
     kazdym razem (cachedUsageUtilization sie zmienia), wiec osobny cache byl juz tylko
@@ -160,12 +182,12 @@ def read_claude_json():
     wykrywanie zmiany konta nadal dziala — po prostu bez posrednika."""
     path = _find(".claude.json")
     if not path:
-        return None, None, None
+        return None, None, None, None
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             text = f.read()
     except Exception:
-        return None, None, None
+        return None, None, None, None
 
     acct = None
     raw = _safe(_extract_block, text, "oauthAccount")
@@ -173,7 +195,12 @@ def read_claude_json():
         acct = {k: raw.get(k) for k in _ACCT_FIELDS}
 
     cached = _safe(_extract_block, text, "cachedUsageUtilization")
-    return acct, cached, os.path.dirname(path)
+    # Powod wylaczenia kredytow z cache KLIENTA. Rozroznia sam trzy stany, ktorych dane
+    # w pasmie nie rozrozniaja: null / `org_spend_cap_reached` (wyczerpana WLASNA pula,
+    # gdzie `spend.disabled_reason` jest null) / `org_level_disabled_until` (sufit
+    # organizacji). Zbieramy go DO WGLADU — werdykt zostaje na danych w pasmie.
+    reason = _safe(_extract_scalar, text, "cachedExtraUsageDisabledReason")
+    return acct, cached, os.path.dirname(path), reason
 
 
 # --------------------------------------------------------------- metadane planu
@@ -529,7 +556,7 @@ def main():
         return 0
 
     fresh, fresh_at, fresh_skip = read_fresh()
-    acct, cached, cfg_dir = read_claude_json()
+    acct, cached, cfg_dir, eu_reason = read_claude_json()
 
     # Zlecamy pomiar na NASTEPNY cykl. Zawsze, takze gdy teraz nie mamy czego wyslac —
     # to jest wlasnie mechanizm bootstrapu na swiezej maszynie.
@@ -596,6 +623,12 @@ def main():
                                             # nie mylic z captured_at; roznica tych dwoch
                                             # to wlasnie opoznienie pomiaru
             "cache_age_s": round(cache_age),
+            # Powod z cache KLIENTA. DIAGNOSTYKA: rozroznia wyczerpana wlasna pule od
+            # sufitu organizacji, ale werdykt backendu stoi na `usage.spend`, bo tylko
+            # ono jest spojne z reszta tej samej odpowiedzi. Nie idzie do `usage` —
+            # parse_usage iteruje tam klucze najwyzszego poziomu i wartosc nie-slownikowa
+            # zglosilaby drift schematu przy kazdym pomiarze.
+            "extra_usage_disabled_reason": eu_reason,
             "fresh_age_s": round(time.time() - fresh_at) if fresh_at else None,
             "fresh_applied": applied,       # ktore serie dostaly swieza wartosc
             "fresh_skip": fresh_skip,       # czemu zrzut stdout nie zostal uzyty

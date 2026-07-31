@@ -36,6 +36,8 @@ class SeriesFacts:
     utilization: float | None = None       # ZMIERZONA, bez wnioskowania
     is_active: bool | None = None
     extra: dict[str, Any] | None = None
+    # Powod, dla ktorego miernik tej serii nie dziala (patrz parsing.meter_withdrawn).
+    unavailable_reason: str | None = None
 
 
 def _pick(facts: list[SeriesFacts], **crit) -> SeriesFacts | None:
@@ -81,20 +83,35 @@ def build_cascade(facts: list[SeriesFacts]) -> list[CascadeRung]:
     eu = _pick(facts, source="extra_usage")
 
     # --- kredyty ----------------------------------------------------------
+    # Powod wycofania ma PIERWSZENSTWO przed flaga: gdy organizacja zamyka brame, licznik
+    # jest wyzerowany, a my mamy w rekach jedyny sygnal, ktory to od zwyklego "kredytow
+    # nigdy nie bylo" odroznia. Bez tego oba stany wygladalyby identycznie.
+    reason = ((spend.unavailable_reason if spend else None)
+              or (eu.unavailable_reason if eu else None))
+
     # Dwa niezalezne zrodla tej samej prawdy: `spend.enabled` i `extra_usage.is_enabled`.
     # Bierzemy pierwsze, ktore jest prawdziwym boolem; brak obu => nie wiemy.
     enabled = _flag(spend.extra if spend else None, "enabled")
     if enabled is None:
         enabled = _flag(eu.extra if eu else None, "is_enabled")
+    if reason:
+        enabled = False
 
     used_minor, used_cur, used_exp = _money((spend.extra or {}).get("used") if spend else None)
     lim_minor, lim_cur, lim_exp = _money((spend.extra or {}).get("limit") if spend else None)
-    if lim_minor is None:      # `cap` bywa alternatywna nazwa gornej granicy
-        lim_minor, lim_cur, lim_exp = _money((spend.extra or {}).get("cap") if spend else None)
+    if lim_minor is None:
+        # `cap` bywa alternatywna nazwa gornej granicy, ale w REALNEJ odpowiedzi jest
+        # zagniezdzony: {"credits": null, "money": {"amount_minor": ...}}. Plaski odczyt
+        # bral wiec sam zewnetrzny slownik i zawsze wychodzil pusty.
+        cap = (spend.extra or {}).get("cap") if spend else None
+        if isinstance(cap, dict) and isinstance(cap.get("money"), dict):
+            cap = cap["money"]
+        lim_minor, lim_cur, lim_exp = _money(cap)
 
     credits = CascadeRung(
         key=CREDITS,
         state=UNKNOWN if enabled is None else (ON if enabled else OFF),
+        reason=reason,
         utilization=spend.utilization if (spend and enabled) else None,
         series_key=spend.series_key if spend else (eu.series_key if eu else None),
         used_minor=used_minor, limit_minor=lim_minor,
@@ -110,7 +127,10 @@ def build_cascade(facts: list[SeriesFacts]) -> list[CascadeRung]:
                            currency=lim_cur or used_cur,
                            exponent=lim_exp if lim_exp is not None else used_exp)
     else:
-        hard = CascadeRung(key=HARD_BLOCK, state=ON)
+        # Przy wycofanym mierniku prog istnieje, ale jest POZA kontraktem: sufit organizacji
+        # nie ma w odpowiedzi ani kwoty, ani procentu, ani `resets_at`. `reason` jest tu
+        # jedyna trescia, jaka mozemy o nim podac.
+        hard = CascadeRung(key=HARD_BLOCK, state=ON, reason=reason)
 
     rungs = [_window_rung(SESSION, session), _window_rung(WEEKLY, weekly), credits, hard]
     _mark_current(rungs, session, weekly, eu)

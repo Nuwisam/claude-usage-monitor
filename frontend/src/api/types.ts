@@ -24,7 +24,8 @@ export interface SeriesStatus {
   kind: string | null;
   group: string | null;
   bucketKey: string | null;
-  /** null WYLACZNIE przy freshness === "unknown". Nigdy nie renderuj tego jako 0. */
+  /** null, gdy nie ma czego pokazac — przy `unknown` albo gdy miernik jest WYCOFANY
+   *  (patrz `unavailableReason`). Nigdy nie renderuj tego jako 0. */
   utilization: number | null;
   /** Ostatnia ZMIERZONA wartosc, bez wnioskowania.
    *
@@ -32,6 +33,14 @@ export interface SeriesStatus {
    *  pokazujemy ostatni pomiar z jego wiekiem, bo procent jest znany i prawdziwy. Slowa
    *  „nie wiem" zostaja tylko wtedy, gdy oba pola sa null — pomiaru nie bylo nigdy. */
   rawUtilization: number | null;
+  /** Powod, dla ktorego tej serii NIE DA SIE zmierzyc — doslownie od Anthropic
+   *  (zaobserwowane: `org_level_disabled_until`, `org_spend_cap_reached`). Zbior JEST
+   *  otwarty, wiec rozgałeziaj sie na `!== null`, nigdy na tresci (zasada 5).
+   *
+   *  Gdy jest ustawiony, OBA pola wartosci sa null — to nie jest pomiar 0%, tylko brak
+   *  miernika. Rozroznia dwa stany, ktore w payloadzie wygladaja identycznie: konto,
+   *  ktore kredytow nigdy nie mialo, i konto, ktoremu organizacja wlasnie je odcieła. */
+  unavailableReason: string | null;
   resetsAt: string | null;
   secondsToReset: number | null;
   /** Ostatnia zapisana PROBKA. Dedup pomija niezmienione, wiec bywa starsze niz pomiar. */
@@ -59,6 +68,9 @@ export interface CascadeRung {
   key: RungKey;
   /** "off" (wylaczone) i "unknown" (nie wiemy) to DWIE ROZNE rzeczy. */
   state: RungState;
+  /** Dlaczego szczebel jest wylaczony — ten sam lancuch co `SeriesStatus.unavailableReason`.
+   *  `state` NIE ma czwartej wartosci: wycofane kredyty to nadal "off". */
+  reason: string | null;
   isCurrent: boolean;
   utilization: number | null;
   seriesKey: string | null;
