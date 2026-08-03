@@ -62,6 +62,13 @@ class PanelLink:
             dev = ax206.AX206(finder=finder, width=self.cfg.width,
                               height=self.cfg.height,
                               dll_path=self.cfg.libusb_dll).open()
+            # Reset przy KAZDYM otwarciu. 03.08 po przejeciu modulu od innego
+            # procesu panel potwierdzal kazda klatke (status=0) i nie rysowal nic;
+            # ten sam kod po reset() rysowal. resync() z open() nie wystarczyl —
+            # potok byl drozny, zabrudzony byl firmware. MISSED_CSW_LIMIT tego nie
+            # zlapie, bo liczy klatki BEZ potwierdzenia. Kosztuje ~1,5 s, ale
+            # ensure() otwiera tylko przy starcie i po awarii, nie co tick.
+            dev.reset()
             dev.set_brightness(self.cfg.brightness)
         except DEVICE_ERRORS as e:
             self._fail("%s: %s" % (type(e).__name__, e))
