@@ -21,7 +21,7 @@ from app.config import settings
 from app.db import get_session
 from app.schemas import IngestResult
 from app.services.events import publish_accounts
-from app.services.ingest import ingest_one, utcnow
+from app.services.ingest import ingest_one, request_offset, utcnow
 
 router = APIRouter()
 
@@ -104,6 +104,12 @@ async def ingest(
     machine: str = Depends(require_ingest_token),
     db: AsyncSession = Depends(get_session),
 ) -> IngestResult:
+    # KOTWICA CZASU — pierwsza instrukcja, przed odczytem ciala i przed `_ingest_tx`.
+    # `ingest_one` biegnie juz pod `_WRITE_LOCK`; zdjecie kotwicy tam znaczyloby, ze zadanie,
+    # ktore przeczekalo cudzy backlog, datuje swoje pomiary o czas czekania za swiezo, a
+    # kazdy wpis backlogu dostaje wlasna, inna kotwice. Jedna kotwica na cale zadanie.
+    arrived_at = utcnow()
+
     raw = await request.body()
     if len(raw) > settings.max_ingest_body_bytes:
         logger.warning("Ingest odrzucony: body {} B > limit {} B",
@@ -122,8 +128,15 @@ async def ingest(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail={"reason": "payload-not-object"})
 
+    # `offset = arrived_at - sent_at` — jeden na cale zadanie, liczony z rekordu ZEWNETRZNEGO,
+    # bo to on zostal wyslany teraz. Wpisy backlogu leza w tej samej kopercie, wiec ich wiek
+    # (`sent_at - ts` we WLASNYM zegarze klienta) przelicza sie ta sama poprawka. Brak
+    # `sent_at` => offset zerowy, czyli stempel klienta idzie nietkniety.
+    offset = request_offset(payload, arrived_at)
+
     async with _ingest_tx(db):
-        result = await ingest_one(db, machine_name=machine, payload=payload)
+        result = await ingest_one(db, machine_name=machine, payload=payload,
+                                  arrived_at=arrived_at, offset=offset)
     touched: list[str] = [result.get("account_uuid")]
 
     # Backlog: partiami, z twardym capem. Klient obcina spool DOPIERO po potwierdzeniu,
@@ -148,6 +161,7 @@ async def ingest(
             try:
                 async with _ingest_tx(db):
                     r = await ingest_one(db, machine_name=machine, payload=entry,
+                                         arrived_at=arrived_at, offset=offset,
                                          is_backlog=True)
             except Exception as exc:                       # noqa: BLE001
                 # `break`, nie `continue`: `accepted` jest prefiksem, wiec doliczenie wpisu,

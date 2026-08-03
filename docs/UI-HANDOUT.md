@@ -265,6 +265,13 @@ liczbą minut. Pole zostaje w kontrakcie jako miejsce na fakty ponad kontami; **
 „zaobserwowane 14:23", **nie** „stan na 14:23". Dlatego podpis mówi „potwierdzone",
 a liczy się z `confirmedAt`.
 
+Ten moment liczy **serwer**: `min(czas_klienta + offset, czas_odebrania)`, gdzie
+`offset = czas_odebrania − measurement.sent_at`. Klient podaje więc *wiek* pomiaru, a nie
+datę — jego zegar ścienny nie ma wpływu na oś czasu. Praktyczny skutek dla UI: `spend:org`
+i `extra:usage` częściej pokazują wiek rzędu minut, bo pochodzą z cache'u Claude Code, a nie
+ze świeżego zrzutu `/usage`. **To jest prawda wychodząca na wierzch, nie regresja** — wcześniej
+dostawały czas zrzutu, którego dane nie zawierają.
+
 **Świeżość liczy się z `confirmedAt`, nie z `capturedAt`** — to jest ta zmiana z v3.
 Pod v2 stabilna wartość wpadała w `stale` przez sam dedup, więc „nic się nie zmienia"
 wyglądało identycznie jak „straciliśmy łączność".

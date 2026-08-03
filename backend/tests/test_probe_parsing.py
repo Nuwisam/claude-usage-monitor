@@ -92,7 +92,7 @@ def _cache(five=40, weekly=41, resets="2099-01-01T00:00:00+00:00"):
 
 
 def test_merge_nadpisuje_swiezymi_procentami(probe):
-    usage, applied = probe.merge(_cache(), {"session": 48, "weekly_all": 47,
+    usage, covered = probe.merge(_cache(), {"session": 48, "weekly_all": 47,
                                             "scoped": {"Fable": 3}})
     assert usage["five_hour"]["utilization"] == 48
     assert usage["seven_day"]["utilization"] == 47
@@ -100,7 +100,43 @@ def test_merge_nadpisuje_swiezymi_procentami(probe):
     assert by_kind["session"]["percent"] == 48
     assert by_kind["weekly_all"]["percent"] == 47
     assert by_kind["weekly_scoped"]["percent"] == 3
-    assert "five_hour" in applied and "seven_day" in applied
+    assert set(covered) == {"bucket:five_hour", "bucket:seven_day", "limit:session:-",
+                            "limit:weekly_all:-", "limit:weekly_scoped:Fable"}
+
+
+def test_pokrycie_to_nie_zmiana_wartosci(probe):
+    """Swiezy odczyt ROWNY wartosci z cache jest potwierdzeniem, nie brakiem zdarzenia.
+    Wczesniej liczyly sie tylko zmiany, przez co seria o niezmienionym procencie i wygaslym
+    oknie wypadala z pomiaru zamiast dostac `reset-w-toku` — tracilismy jedyny prawdziwy
+    odczyt. Od tego zbioru zalezy tez datowanie po stronie backendu."""
+    _, covered = probe.merge(_cache(five=40, weekly=41),
+                             {"session": 40, "weekly_all": 41, "scoped": {}})
+    assert "bucket:five_hour" in covered and "bucket:seven_day" in covered
+
+
+def test_merge_nie_pada_na_dziwnym_scope(probe):
+    """`scope` jako string zamiast slownika: `merge` biegnie przed `log_local` i przed
+    spoolem, wiec wyjatek tutaj kasowalby caly przebieg bez sladu — przy kazdym cyklu,
+    dopoki cache ma ten ksztalt."""
+    c = _cache()
+    c["limits"][2]["scope"] = "global"
+    c["limits"][0]["scope"] = ["cos", "zupelnie", "innego"]
+    usage, covered = probe.merge(c, {"session": 48, "weekly_all": 47, "scoped": {"Fable": 3}})
+    assert usage["limits"][0]["percent"] == 48
+    assert "limit:weekly_scoped:-" not in covered, "bez modelu nie ma dopasowania procentu"
+
+
+def test_zrzut_starszy_od_cache_jest_odrzucany(probe):
+    """Zrzutowi wolno miec 900 s, a cache odswieza w tym czasie zwykla praca — kolejnosc
+    potrafi sie odwrocic. Gdy miedzy zrzutem a cache wypadnie reset okna, nalozenie zrzutu
+    daje procent SPRZED resetu przy granicy PO resecie: 95% przeciwko oknu, w ktorym realnie
+    jest ~1%. `sanitize` tego nie widzi, bo granica jest wazna."""
+    assert probe.dump_outdated(1000.0, 1120.0) is True
+    assert probe.dump_outdated(1120.0, 1000.0) is False
+    assert probe.dump_outdated(1000.0, 1000.0) is False, "rowny wiek to nie inwersja"
+    # Brak ktoregokolwiek znacznika to nie jest dowod odwrocenia.
+    assert probe.dump_outdated(None, 1000.0) is False
+    assert probe.dump_outdated(1000.0, 0) is False
 
 
 def test_merge_zachowuje_pola_ktorych_stdout_nie_ma(probe):
@@ -114,8 +150,8 @@ def test_merge_zachowuje_pola_ktorych_stdout_nie_ma(probe):
 
 def test_merge_bez_swiezych_zwraca_cache_bez_zmian(probe):
     src = _cache()
-    usage, applied = probe.merge(src, None)
-    assert usage == src and applied == []
+    usage, covered = probe.merge(src, None)
+    assert usage == src and covered == []
 
 
 def test_merge_nie_mutuje_zrodla(probe):
@@ -141,17 +177,17 @@ def test_wygasle_okno_bez_swiezych_wypada(probe):
 def test_wygasle_okno_ze_swiezym_zachowuje_procent_ale_gubi_czas_resetu(probe):
     """Swiezy procent jest prawdziwy; nieaktualny jest wylacznie resets_at z cache.
     Zerujemy czas zamiast wyrzucac dobry pomiar — nastepny zapis cache poda nowy."""
-    usage, applied = probe.merge(_cache(five=95, resets=PAST),
+    usage, covered = probe.merge(_cache(five=95, resets=PAST),
                                  {"session": 2, "weekly_all": 41, "scoped": {}})
-    usage, events = probe.sanitize(usage, applied, time.time())
+    usage, events = probe.sanitize(usage, covered, time.time())
     assert usage["five_hour"]["utilization"] == 2
     assert usage["five_hour"]["resets_at"] is None
     assert any("reset-w-toku" in e for e in events)
 
 
 def test_przyszly_reset_nie_jest_ruszany(probe):
-    usage, applied = probe.merge(_cache(), {"session": 48, "weekly_all": 47, "scoped": {}})
-    usage, events = probe.sanitize(usage, applied, time.time())
+    usage, covered = probe.merge(_cache(), {"session": 48, "weekly_all": 47, "scoped": {}})
+    usage, events = probe.sanitize(usage, covered, time.time())
     assert usage["five_hour"]["resets_at"] == "2099-01-01T00:00:00+00:00"
     assert events == []
     assert len(usage["limits"]) == 3
@@ -160,6 +196,28 @@ def test_przyszly_reset_nie_jest_ruszany(probe):
 def test_absurdalna_wartosc_w_cache_wypada(probe):
     usage, _ = probe.sanitize(_cache(five=1785143542), [], time.time())
     assert usage["five_hour"] is None
+
+
+def test_swiezy_procent_rowny_cache_ratuje_serie_z_wygaslym_oknem(probe):
+    """Regresja: `sanitize` pyta o POKRYCIE, nie o zmiane. Gdy zrzut potwierdzil te sama
+    wartosc, a okno w cache juz wygaslo, seria ma dostac `reset-w-toku` — dawniej wypadala
+    z pomiaru w calosci, czyli tracilismy jedyny prawdziwy odczyt."""
+    usage, covered = probe.merge(_cache(five=40, resets=PAST),
+                                 {"session": 40, "weekly_all": 41, "scoped": {}})
+    usage, events = probe.sanitize(usage, covered, time.time())
+    assert usage["five_hour"]["utilization"] == 40
+    assert usage["five_hour"]["resets_at"] is None
+    assert any("reset-w-toku" in e for e in events)
+
+
+def test_sanitize_nie_pada_na_dziwnym_scope(probe):
+    """`sanitize` tez wyprowadza model limitu, wiec ten sam ksztalt musi przezyc i tutaj."""
+    c = _cache(resets=PAST)
+    c["limits"][2]["scope"] = "global"
+    usage, covered = probe.merge(c, {"session": 2, "weekly_all": 41, "scoped": {}})
+    usage, events = probe.sanitize(usage, covered, time.time())
+    assert usage["five_hour"]["utilization"] == 2
+    assert events
 
 
 def test_sanitize_znosi_brakujacy_resets_at(probe):

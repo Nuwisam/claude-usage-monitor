@@ -174,6 +174,10 @@ class IngestBatch(Base):
     cache_age_s: Mapped[int | None] = mapped_column(Integer)
     fresh_age_s: Mapped[int | None] = mapped_column(Integer)
     probe_ms: Mapped[int | None] = mapped_column(Integer)
+    # `arrived_at - measurement.sent_at` uzyte dla TEGO zadania. Razem z `received_at`
+    # i `limit_samples.client_captured_at` czyni wyliczony `captured_at` odtwarzalnym
+    # z bazy — inaczej zostaje sam wynik, bez dzialania.
+    clock_offset_s: Mapped[int | None] = mapped_column(Integer)
 
     raw_payload_id: Mapped[int | None] = mapped_column(ForeignKey("raw_payloads.id"))
     payload_sha256: Mapped[str | None] = mapped_column(String(64))
@@ -203,7 +207,13 @@ class LimitSample(Base):
     id: Mapped[int] = mapped_column(PK_BIG, primary_key=True, autoincrement=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), nullable=False)
     series_id: Mapped[int] = mapped_column(ForeignKey("usage_series.id"), nullable=False)
+    # Moment pomiaru w czasie SERWERA: `min(client_captured_at + offset, received_at)`.
     captured_at: Mapped[datetime] = _dt(nullable=False)
+    # Ten sam moment w czasie KLIENTA, przed offsetem. Nie jest to duplikat: od czasu
+    # datowania serwerowego `captured_at` jest funkcja ZADANIA, wiec powtorka tego samego
+    # wpisu ze spoola w innym zadaniu ma inny `captured_at`. Guard idempotencji potrzebuje
+    # czesci, ktora jest funkcja samego wpisu — i to jest wlasnie ta kolumna.
+    client_captured_at: Mapped[datetime | None] = _dt()
     batch_id: Mapped[int] = mapped_column(ForeignKey("ingest_batches.id"), nullable=False)
 
     # `probe` = historyczne dane sprzed wersji 3 sondy, gdy sama wolala /api/oauth/usage.
@@ -228,6 +238,10 @@ class LimitSample(Base):
 
     __table_args__ = (
         Index("ix_samples_series_time", "account_id", "series_id", "captured_at"),
+        # Pod guard idempotencji backlogu. Bez niego kazde sprawdzenie to skan wszystkich
+        # wierszy serii — ~7 razy na wpis, do 200 wpisow, POD GLOBALNYM LOCKIEM zapisu.
+        Index("ix_samples_series_client_time", "account_id", "series_id",
+              "client_captured_at"),
         Index("ix_samples_batch", "batch_id"),
         Index("ix_samples_time", "captured_at"),
     )

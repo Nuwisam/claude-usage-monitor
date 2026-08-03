@@ -41,7 +41,7 @@ Celowo plik lokalny, a nie repo — token maszyny nie ma prawa trafic do gita.
 """
 import sys, os, json, time, re, socket, hashlib, http.client, urllib.parse
 
-SCRIPT_VERSION = 4
+SCRIPT_VERSION = 5
 
 # Znacznik dziedziczony przez proces potomny. `claude -p "/usage"` to normalna sesja
 # Claude Code — odpali hook Stop, ktory odpali sonde, ktora odpalilaby kolejnego
@@ -340,21 +340,76 @@ def read_fresh():
     return parsed, os.path.getmtime(CLI_OUT), None
 
 
+def dump_outdated(fresh_at, cache_at):
+    """Czy zrzut jest STARSZY od cache — wtedy nie ma czego nakladac.
+
+    Cale scalanie zaklada, ze zrzut jest swiezszy. Ale zrzutowi wolno miec do
+    CLI_MAX_AGE_S (900 s), a cache w tym czasie odswieza zwykla praca w Claude Code, wiec
+    kolejnosc potrafi sie odwrocic (zmierzone: 2 przypadki na 1646 pomiarow, do -105 s).
+
+    Grozny jest przypadek z RESETEM OKNA miedzy zrzutem a cache. Procent szedlby wtedy ze
+    zrzutu, czyli sprzed resetu (np. 95%), a `resets_at` mamy WYLACZNIE z cache, czyli juz
+    z nowego okna. `sanitize` tego nie zlapie — granica jest wazna, wiec nic nie wyglada na
+    sprzeczne — i publikujemy 95% przeciwko oknu, w ktorym realnie jest ~1%. Pewnie
+    wygladajaca nieprawda, dokladnie w chwili, gdy okno jest wolne. W historii zostaje
+    dodatkowo spadek wewnatrz jednego okna, ktory `window_start_index` czyta jako reset.
+
+    W normalnym kierunku ten sam reset konczy sie dobrze: zrzut daje ~1%, granica z cache
+    jest przeterminowana, `sanitize` ja zeruje i zglasza `reset-w-toku`.
+
+    Koszt odrzucenia jest ZEROWY: zostaje wartosc z cache, ktora jest nowsza — i przy okazji
+    dokladniejsza, bo stdout obcina procenty do liczb calkowitych."""
+    return bool(fresh_at) and bool(cache_at) and fresh_at < cache_at
+
+
+def _limit_model(lim):
+    """display_name modelu z wpisu limits[] — ze STRAZNIKAMI TYPU na kazdym poziomie.
+
+    Skrot `(lim.get("scope") or {}).get("model")` dziala tylko dopoki `scope` jest slownikiem
+    albo brakiem. Ta funkcja biegnie dla KAZDEGO limitu (bo klucz pokrycia zawiera model
+    niezaleznie od `kind`), wiec `scope: "global"` dalby AttributeError w `merge()` — czyli
+    przed `log_local`, przed spoolem i przed POST-em. Przebieg znikalby bez sladu, przy kazdym
+    kolejnym cyklu, dopoki cache ma ten ksztalt. Backend ma tu ten sam straznik
+    (backend/app/parsing.py:386)."""
+    scope = lim.get("scope")
+    if not isinstance(scope, dict):
+        return None
+    model = scope.get("model")
+    if not isinstance(model, dict):
+        return None
+    name = model.get("display_name")
+    return name if isinstance(name, str) else None
+
+
+def _limit_key(lim):
+    """Identyfikator pokrycia dla wpisu limits[]. Musi byc IDENTYCZNY z tym, co liczy
+    backend (`parsing.probe_key`) — bez slugowania, surowy `display_name`. Rozjazd jest
+    CICHY: zbior po prostu nigdy sie nie dopasuje i zachowanie cofa sie do stanu sprzed
+    tej zmiany.
+
+    `surface` do klucza NIE wchodzi, bo `merge` dopasowuje po `kind`+`model` i powierzchni
+    nie rozroznia — dwa limity roznjace sie tylko nia naprawde sa pokryte oba."""
+    return "limit:%s:%s" % (lim.get("kind") or "?", _limit_model(lim) or "-")
+
+
 def merge(cached_usage, fresh):
     """Struktura z cache + swieze procenty na wierzchu.
 
-    Zwraca payload w ksztalcie identycznym z dawna odpowiedzia HTTP, wiec
-    backend/app/parsing.py nie wymaga ani jednej zmiany."""
+    Zwraca payload w ksztalcie identycznym z dawna odpowiedzia HTTP oraz liste serii
+    POKRYTYCH przez zrzut. Pokrycie to nie to samo co zmiana: swiezy odczyt rowny wartosci
+    z cache JEST potwierdzeniem i musi sie liczyc, bo od tej listy zalezy datowanie po
+    stronie backendu (`measurement.fresh_covered`) i decyzja `reset-w-toku` w `sanitize`."""
     if not fresh:
         return cached_usage, []
     usage = json.loads(json.dumps(cached_usage))      # kopia — nie mutujemy zrodla
-    applied = []
+    covered = []
 
     def put(bucket, val):
         b = usage.get(bucket)
-        if isinstance(b, dict) and val is not None and b.get("utilization") != val:
-            b["utilization"] = val
-            applied.append(bucket)
+        if not isinstance(b, dict) or val is None:
+            return
+        b["utilization"] = val
+        covered.append("bucket:%s" % bucket)
 
     put("five_hour", fresh["session"])
     put("seven_day", fresh["weekly_all"])
@@ -368,12 +423,12 @@ def merge(cached_usage, fresh):
         elif kind == "weekly_all":
             val = fresh["weekly_all"]
         elif kind == "weekly_scoped":
-            name = (((lim.get("scope") or {}).get("model") or {}).get("display_name"))
-            val = fresh["scoped"].get(name)
-        if val is not None and lim.get("percent") != val:
-            lim["percent"] = val
-            applied.append("limit:%s" % (kind or "?"))
-    return usage, applied
+            val = fresh["scoped"].get(_limit_model(lim))
+        if val is None:
+            continue
+        lim["percent"] = val
+        covered.append(_limit_key(lim))
+    return usage, covered
 
 
 def _epoch(iso):
@@ -387,12 +442,17 @@ def _epoch(iso):
         return None
 
 
-def sanitize(usage, applied, now):
+def sanitize(usage, covered, now):
     """Odrzuca dane z okna, ktore juz sie zresetowalo, oraz absurdalne procenty.
 
     Sedno problemu: `resets_at` mamy WYLACZNIE z cache, ktory ma do 5 minut (a w trybie
     awaryjnym do godziny). Jesli okno zresetowalo sie w miedzyczasie, para
     (procent, resets_at) jest wewnetrznie sprzeczna. Dwa przypadki, dwie reakcje:
+
+    Pytanie brzmi "czy seria dostala SWIEZY procent", wiec czytamy `covered`, nie liste
+    zmian. Wczesniej szla tu lista zmienionych wartosci, przez co seria o swiezym procencie
+    ROWNYM cache'owemu i wygaslym oknie byla wyrzucana z pomiaru zamiast dostac
+    `reset-w-toku` — czyli tracilismy jedyny prawdziwy odczyt.
 
       * seria dostala swiezy procent  -> procent jest prawdziwy, nieaktualny jest tylko
         czas resetu. Zerujemy resets_at; nastepny zapis cache (<=5 min) poda nowy.
@@ -403,7 +463,7 @@ def sanitize(usage, applied, now):
     Zwraca liste zdarzen do diagnostyki — cisza przy odrzucaniu danych jest gorsza niz
     brak danych, bo wyglada jak poprawny pomiar."""
     events = []
-    applied_set = set(applied)
+    covered_set = set(covered)
 
     for key, bucket in list(usage.items()):
         if not isinstance(bucket, dict) or "utilization" not in bucket:
@@ -415,7 +475,7 @@ def sanitize(usage, applied, now):
             continue
         exp = _epoch(bucket.get("resets_at"))
         if exp and exp <= now:
-            if key in applied_set:
+            if ("bucket:%s" % key) in covered_set:
                 bucket["resets_at"] = None
                 events.append("%s:reset-w-toku" % key)
             else:
@@ -433,7 +493,7 @@ def sanitize(usage, applied, now):
             continue
         exp = _epoch(lim.get("resets_at"))
         if exp and exp <= now:
-            if ("limit:%s" % kind) in applied_set:
+            if _limit_key(lim) in covered_set:
                 lim["resets_at"] = None
                 events.append("limit:%s:reset-w-toku" % kind)
             else:
@@ -581,17 +641,30 @@ def main():
         log_local({"t": round(time.time(), 3), "ok": False, "skip": "cache-innego-konta"})
         return 0
 
-    usage, applied = merge(cached["utilization"], fresh)
-    usage, dropped = sanitize(usage, applied, time.time())
+    if fresh and dump_outdated(fresh_at, cache_at):
+        fresh, fresh_skip = None, "zrzut-starszy-od-cache"
+
+    usage, covered = merge(cached["utilization"], fresh)
+    usage, dropped = sanitize(usage, covered, time.time())
 
     # captured_at to moment POMIARU, nigdy now(). Uruchomienie sondy niczego nie
     # potwierdza — odczyt 4-minutowego cache znaczy tylko tyle, ze wartosc byla taka
     # 4 minuty temu. Podstawienie tu now() zawyzaloby swiezosc w UI.
     #
+    # ZAWSZE `cache_at`, nigdy blend z `fresh_at`. Pomiar sklada sie z DWOCH zrodel o
+    # roznym wieku, a `spend` i `extra_usage` pochodza WYLACZNIE z cache — jeden stempel
+    # wziety ze zrzutu odmladzal je o cala roznice wiekow (do godziny). Backend rozstrzyga
+    # po nim "ktory odczyt jest biezacy", wiec maszyna ze starszym cache, ale swiezszym
+    # zrzutem cofala stan `spend:org` i `extra:usage` — jedynych dwoch serii, ktore granicy
+    # okna nie maja nigdy, wiec guard monotonicznosci ich nie broni.
+    #
+    # Wiek zrzutu jedzie osobno (`fresh_at` + `fresh_covered`); to backend sklada z tego
+    # date per seria, bo tylko on wie, ktora seria czym jest.
+    #
     # Rozdzialu "pierwsza obserwacja tej wartosci" (wykres) od "ostatnie potwierdzenie"
     # (swiezosc) NIE robimy tutaj: sonda nie zna poprzedniej wartosci serii. Robi to
     # backend, ktory ma series_state — patrz confirmed_at w backend/app/services/ingest.py.
-    captured = fresh_at if (fresh and fresh_at) else cache_at
+    captured = cache_at
 
     record = {
         "account": {
@@ -630,7 +703,11 @@ def main():
             # zglosilaby drift schematu przy kazdym pomiarze.
             "extra_usage_disabled_reason": eu_reason,
             "fresh_age_s": round(time.time() - fresh_at) if fresh_at else None,
-            "fresh_applied": applied,       # ktore serie dostaly swieza wartosc
+            # Czas zrzutu i lista serii, ktore z niego wzialy wartosc. Backend datuje po
+            # nich TE serie, a reszte po `captured_at` (czyli po cache). Identyfikatory
+            # musza sie zgadzac z `parsing.probe_key` — patrz `_limit_key`.
+            "fresh_at": _iso(fresh_at) if (fresh and fresh_at) else None,
+            "fresh_covered": covered,
             "fresh_skip": fresh_skip,       # czemu zrzut stdout nie zostal uzyty
             "dropped": dropped,             # co odrzucil sanitize i dlaczego
             "spawn_error": spawn_err,
@@ -644,6 +721,17 @@ def main():
         return 0                                   # tryb "tylko lokalnie" — brak konfiguracji
 
     backlog, spool_total = read_spool(MAX_BACKLOG_PER_REQUEST)
+
+    # KOTWICA WIEKU. Backend liczy z niej `offset = arrived_at - sent_at` i datuje pomiar
+    # jako `min(ts + offset, arrived_at)`, czyli `received_at - wiek`. Zegar scienny tej
+    # maszyny nie wchodzi do rachunku — liczy sie tylko roznica `sent_at - ts`, a ta jest
+    # w obrebie JEDNEGO zegara i dlatego wiarygodna.
+    #
+    # Ustawiane tuz przed wysylka i zapisywane TAKZE w `record`, ktory idzie do spoola:
+    # dla wpisu ze spoola `sent_at` jest z chwili nieudanej proby, wiec wiek liczy sie sam
+    # i we wlasciwym momencie, bez przeliczania czegokolwiek po stronie klienta.
+    record["measurement"]["sent_at"] = _iso(time.time())
+
     payload = dict(record)
     if backlog:
         payload["backlog"] = backlog

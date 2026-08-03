@@ -66,7 +66,7 @@ async def test_batches_niosa_proweniencje_pomiaru_zamiast_kodow_http(api, dane):
     assert b, "ingest musial zostawic batche"
     assert b[0]["measurementSource"] == "cli_merged"
     assert b[0]["cacheAgeS"] == 42 and b[0]["freshAgeS"] == 7
-    assert b[0]["scriptVersion"] == 3
+    assert b[0]["scriptVersion"] == 5
     # Pola po martwych kolumnach nie moga wrocic tylnymi drzwiami jako None.
     assert not ({"httpStatus", "requestId", "rlStatus", "ccVersion"} & set(b[0]))
 
@@ -76,5 +76,5 @@ async def test_machines_nie_udaje_ze_zna_wersje_claude_code(api, dane):
     ta sama wartosc dla kazdej maszyny, niezalezna od tego, co tam faktycznie chodzi.
     `scriptVersion` zostaje, bo mowi prawde: po tym poznajemy stan wdrozenia sondy."""
     m = (await api.get("/api/machines")).json()
-    assert m and m[0]["scriptVersion"] == 3
+    assert m and m[0]["scriptVersion"] == 5
     assert "ccVersion" not in m[0]

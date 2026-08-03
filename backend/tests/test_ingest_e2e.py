@@ -17,7 +17,7 @@ from app.config import settings
 from app.models import (
     Account, Base, IngestBatch, IngestEvent, LimitSample, SeriesState, UsageSeries,
 )
-from app.services.ingest import ingest_one, utcnow
+from app.services.ingest import ingest_one, request_offset, utcnow
 from app.services.status import build_status
 
 REAL = json.loads((Path(__file__).parent / "fixtures" / "usage_max.json").read_text("utf-8"))
@@ -39,18 +39,46 @@ ACCOUNT_TEAM = {
 _DOMYSLNE = object()
 
 
-def payload(usage=None, account=_DOMYSLNE, captured_at=None, event="PostToolUse"):
+def payload(usage=None, account=_DOMYSLNE, captured_at=None, event="PostToolUse",
+            sent_at=None, fresh_at=None, fresh_covered=None):
     # sentinel, a nie `account or ACCOUNT_MAX` — pusty dict jest falszywy i podstawialby
     # konto domyslne, przez co test "payload bez konta" testowalby cos innego
+    meas = {"source": "cli_merged", "cache_age_s": 42, "fresh_age_s": 7}
+    # `sent_at` domyslnie NIE JEST tu dokladane — dokleja je `send` w chwili wysylki,
+    # dokladnie jak sonda (client/usage-probe.py, tuz przed `post`). Podanie go tutaj
+    # wprost sluzy do modelowania ROZJECHANEGO zegara klienta.
+    if sent_at is not None:
+        meas["sent_at"] = sent_at.isoformat()
+    if fresh_at is not None:
+        meas["fresh_at"] = fresh_at.isoformat()
+    if fresh_covered is not None:
+        meas["fresh_covered"] = fresh_covered
     return {
         "account": ACCOUNT_MAX if account is _DOMYSLNE else account,
         "token_meta": {"subscription_type": "max"},
         "captured_at": (captured_at or utcnow()).isoformat(),
-        "client": {"host": "DESKTOP-X", "script_version": 3, "exec_ms": 36},
+        "client": {"host": "DESKTOP-X", "script_version": 5, "exec_ms": 36},
         "hook": {"event": event, "session_id": "sess-1", "cwd": "z:/projects/x"},
-        "measurement": {"source": "cli_merged", "cache_age_s": 42, "fresh_age_s": 7},
+        "measurement": meas,
         "usage": usage if usage is not None else REAL,
     }
+
+
+async def send(db, p, *, machine="desktop", arrived_at=None, is_backlog=False):
+    """Powtarza to, co robi handler: JEDNA kotwica czasu na zadanie, offset z
+    `measurement.sent_at`, liczony ta sama funkcja co produkcja.
+
+    Gdy payload nie ma `sent_at`, dokladamy go rowny kotwicy — to modeluje klienta ze
+    zsynchronizowanym zegarem, u ktorego offset wychodzi zerowy i stempel pomiaru zostaje
+    tam, gdzie go postawiono. Payload z jawnym `sent_at` modeluje rozjazd."""
+    # Pelne sekundy, bo `parse_ts` tnie do sekund — inaczej offset wychodzilby ulamkiem
+    # sekundy i psul asercje na dokladnej rownosci stempla.
+    arrived_at = (arrived_at or utcnow()).replace(microsecond=0)
+    meas = p.get("measurement")
+    if isinstance(meas, dict) and "sent_at" not in meas:
+        meas["sent_at"] = arrived_at.isoformat()
+    return await ingest_one(db, machine_name=machine, payload=p, arrived_at=arrived_at,
+                            offset=request_offset(p, arrived_at), is_backlog=is_backlog)
 
 
 def with_util(five_hour=None, seven_day=None):
@@ -109,13 +137,19 @@ async def test_surowy_payload_jest_zachowany(db):
 
 
 # --------------------------------------------------------------------------- dedup
+# Znaczniki pomiarow leza w PRZESZLOSCI, bo `measured_at` przycina je do `arrived_at`:
+# pomiar nie moze byc nowszy niz chwila, w ktorej dotarl. Odstepy liczone od przyszlosci
+# zwinelyby sie do jednego punktu i test przechodzilby, nie sprawdzajac juz niczego.
+def _t0(sekund_wstecz=600):
+    return utcnow().replace(microsecond=0) - timedelta(seconds=sekund_wstecz)
+
+
 async def test_dedup_nie_pisze_identycznych_wierszy(db):
-    now = utcnow()
-    await ingest_one(db, machine_name="desktop", payload=payload(captured_at=now))
+    now = _t0()
+    await send(db, payload(captured_at=now))
     po_pierwszym = await count(db, LimitSample)
     # ten sam payload 60 s pozniej — ponizej heartbeatu (300 s)
-    await ingest_one(db, machine_name="desktop",
-                     payload=payload(captured_at=now + timedelta(seconds=60)))
+    await send(db, payload(captured_at=now + timedelta(seconds=60)))
     await db.commit()
     assert await count(db, LimitSample) == po_pierwszym, "identyczna wartosc nie moze dublowac wierszy"
 
@@ -129,19 +163,18 @@ async def test_dedup_dziala_gdy_zmienily_sie_TYLKO_mikrosekundy_resets_at(db):
     "zmienilo sie" i kazdy pomiar szedl do bazy jako nowy wiersz. Zmierzone: 63 probki
     w 6 h, 63 rozne `resets_at`, przy zaledwie 10 roznych wartosciach utilization.
     """
-    now = utcnow()
+    now = _t0()
     u1 = json.loads(json.dumps(REAL))
     u1["five_hour"]["resets_at"] = "2026-07-27T00:59:59.056340+00:00"
     u1["seven_day"]["resets_at"] = "2026-08-01T15:59:59.056361+00:00"
-    await ingest_one(db, machine_name="desktop", payload=payload(usage=u1, captured_at=now))
+    await send(db, payload(usage=u1, captured_at=now))
     po_pierwszym = await count(db, LimitSample)
 
     # ta sama granica okna, inne mikrosekundy odpowiedzi — to NIE jest zmiana danych
     u2 = json.loads(json.dumps(u1))
     u2["five_hour"]["resets_at"] = "2026-07-27T00:59:59.981119+00:00"
     u2["seven_day"]["resets_at"] = "2026-08-01T15:59:59.998004+00:00"
-    await ingest_one(db, machine_name="desktop",
-                     payload=payload(usage=u2, captured_at=now + timedelta(seconds=60)))
+    await send(db, payload(usage=u2, captured_at=now + timedelta(seconds=60)))
     await db.commit()
 
     assert await count(db, LimitSample) == po_pierwszym, \
@@ -152,17 +185,17 @@ async def test_guard_monotonicznosci_dziala_przy_szumie_mikrosekund(db):
     """Ten sam blad wylaczal guard monotonicznosci: odpalal sie tylko przy NIEZMIENIONYM
     `resets_at`, a ten zmienial sie zawsze. Efekt byl grozniejszy niz spuchnieta tabela —
     nieaktualny odczyt z drugiej maszyny mogl cofnac `series_state` i widok Live."""
-    now = utcnow()
+    now = _t0()
     u1 = json.loads(json.dumps(REAL))
     u1["five_hour"]["utilization"] = 60.0
     u1["five_hour"]["resets_at"] = "2026-07-27T00:59:59.111111+00:00"
-    await ingest_one(db, machine_name="desktop", payload=payload(usage=u1, captured_at=now))
+    await send(db, payload(usage=u1, captured_at=now))
 
     u2 = json.loads(json.dumps(u1))
     u2["five_hour"]["utilization"] = 40.0      # spadek bez zmiany okna => stary odczyt
     u2["five_hour"]["resets_at"] = "2026-07-27T00:59:59.999999+00:00"
-    await ingest_one(db, machine_name="laptop",
-                     payload=payload(usage=u2, captured_at=now + timedelta(seconds=30)))
+    await send(db, payload(usage=u2, captured_at=now + timedelta(seconds=30)),
+               machine="laptop")
     await db.commit()
 
     types = {e.event_type for e in (await db.execute(select(IngestEvent))).scalars()}
@@ -175,38 +208,55 @@ async def test_guard_monotonicznosci_dziala_przy_szumie_mikrosekund(db):
     assert st is not None and float(st.last_utilization) == 60.0, "stan nie moze sie cofnac"
 
 
-async def test_heartbeat_zapisuje_mimo_braku_zmiany(db, monkeypatch):
-    """Guard skew zegara odrzucilby captured_at 400 s w przyszlosci — i slusznie, bo klient
-    nie moze raportowac przyszlosci. Zeby przetestowac SAM heartbeat, luzujemy tolerancje."""
-    from app.config import settings
-    monkeypatch.setattr(settings, "clock_skew_tolerance_sec", 86400)
+async def test_heartbeat_zapisuje_mimo_braku_zmiany(db):
+    """Odstep ponad heartbeat (300 s) zapisuje probke, mimo ze wartosc sie nie zmienila.
 
-    now = utcnow()
-    await ingest_one(db, machine_name="desktop",
-                     payload=payload(captured_at=now - timedelta(seconds=400)))
+    Znaczniki nie musza sie juz miescic w zadnej tolerancji rozjazdu: pomiar datuje serwer
+    z wieku podanego przez klienta, wiec stary stempel jest po prostu starym pomiarem."""
+    now = _t0()
+    await send(db, payload(captured_at=now - timedelta(seconds=400)))
     n1 = await count(db, LimitSample)
-    await ingest_one(db, machine_name="desktop", payload=payload(captured_at=now))
+    await send(db, payload(captured_at=now))
     await db.commit()
     assert await count(db, LimitSample) > n1
 
 
-async def test_captured_at_w_przyszlosci_jest_korygowany(db):
-    """Regresja na powyzsze: bez luzowania tolerancji przyszly timestamp MA byc odrzucony."""
-    now = utcnow()
-    await ingest_one(db, machine_name="desktop",
-                     payload=payload(captured_at=now + timedelta(seconds=400)))
+async def test_captured_at_w_przyszlosci_jest_przycinany(db):
+    """Payload BEZ `sent_at` (sonda ponizej v5): offset zerowy, wiec stempel klienta idzie
+    nietkniety — poza tym, ze nie moze byc nowszy niz chwila, w ktorej dotarl. Wczesniej
+    podstawiany byl czas serwera; efekt jest ten sam, ale tylko przypadkiem, bo ta sama
+    podmiana odmladzala TAKZE stemple 400 s w tyl."""
+    arrived = utcnow().replace(microsecond=0)
+    await ingest_one(db, machine_name="desktop", arrived_at=arrived,
+                     payload=payload(captured_at=arrived + timedelta(seconds=400)))
     await db.commit()
+    stamps = {s.captured_at for s in (await db.execute(select(LimitSample))).scalars()}
+    assert stamps and max(stamps) <= arrived
+
+
+async def test_pomiar_datowany_po_wysylce_jest_odrzucany(db):
+    """Zegar klienta cofnal sie miedzy zapisem pomiaru a wyslaniem. Wtedy `sent_at - ts`
+    jest ujemne, czyli pomiar rzekomo powstal PO wysylce — datowanie jest niepewne, a
+    stempel wyladowalby na kotwicy zadania i przeszedl `newest`, nadpisujac stan.
+    Odrzucamy caly wpis; surowy payload i tak jest w bazie (zasada 6)."""
+    arrived = utcnow().replace(microsecond=0)
+    r = await send(db, payload(captured_at=arrived + timedelta(seconds=90),
+                               sent_at=arrived), arrived_at=arrived)
+    await db.commit()
+    assert not r["ok"] and r["samples_written"] == 0
+    assert await count(db, LimitSample) == 0
     types = {e.event_type for e in (await db.execute(select(IngestEvent))).scalars()}
-    assert "clock_skew" in types
+    assert "clock_backwards" in types
+    b = (await db.execute(select(IngestBatch))).scalars().one()
+    assert b.raw_payload_id is not None, "surowy payload musi zostac zapisany"
 
 
 async def test_zmiana_wartosci_zawsze_zapisuje(db):
-    now = utcnow()
-    await ingest_one(db, machine_name="desktop", payload=payload(captured_at=now))
+    now = _t0()
+    await send(db, payload(captured_at=now))
     n1 = await count(db, LimitSample)
-    await ingest_one(db, machine_name="desktop",
-                     payload=payload(usage=with_util(five_hour=12.0),
-                                     captured_at=now + timedelta(seconds=30)))
+    await send(db, payload(usage=with_util(five_hour=12.0),
+                           captured_at=now + timedelta(seconds=30)))
     await db.commit()
     assert await count(db, LimitSample) == n1 + 1
 
@@ -215,14 +265,12 @@ async def test_zmiana_wartosci_zawsze_zapisuje(db):
 async def test_nieaktualny_odczyt_nie_cofa_stanu(db):
     """Dwie maszyny na tym samym koncie maja WLASNY cache. Starszy odczyt z maszyny B
     nie moze cofnac wskaznika — wygladaloby to jak reset okna."""
-    now = utcnow()
-    await ingest_one(db, machine_name="desktop",
-                     payload=payload(usage=with_util(five_hour=40.0), captured_at=now))
+    now = _t0()
+    await send(db, payload(usage=with_util(five_hour=40.0), captured_at=now))
     await db.commit()
 
-    await ingest_one(db, machine_name="laptop",
-                     payload=payload(usage=with_util(five_hour=25.0),
-                                     captured_at=now + timedelta(seconds=30)))
+    await send(db, payload(usage=with_util(five_hour=25.0),
+                           captured_at=now + timedelta(seconds=30)), machine="laptop")
     await db.commit()
 
     series = (await db.execute(
@@ -241,13 +289,11 @@ async def test_nieaktualny_odczyt_nie_cofa_stanu(db):
 
 async def test_realny_spadek_przy_zmianie_resets_at_przechodzi(db):
     """Spadek przy ZMIENIONYM resets_at to prawdziwy reset okna, nie nieaktualny odczyt."""
-    now = utcnow()
-    await ingest_one(db, machine_name="desktop",
-                     payload=payload(usage=with_util(five_hour=90.0), captured_at=now))
+    now = _t0()
+    await send(db, payload(usage=with_util(five_hour=90.0), captured_at=now))
     u = with_util(five_hour=3.0)
     u["five_hour"]["resets_at"] = "2026-07-27T01:00:00.000000+00:00"
-    await ingest_one(db, machine_name="desktop",
-                     payload=payload(usage=u, captured_at=now + timedelta(seconds=30)))
+    await send(db, payload(usage=u, captured_at=now + timedelta(seconds=30)))
     await db.commit()
 
     series = (await db.execute(
@@ -308,12 +354,26 @@ async def test_uszkodzone_pole_nie_przerywa_pomiaru(db):
     assert "schema_drift" in types
 
 
-async def test_rozjechany_zegar_klienta_jest_korygowany(db):
-    stary = utcnow() - timedelta(hours=5)
-    await ingest_one(db, machine_name="desktop", payload=payload(captured_at=stary))
+async def test_rozjechany_zegar_klienta_nie_psuje_datowania(db):
+    """Zegar klienta spozniony o 5 h. Pomiar ma 120 s w JEGO zegarze — i tyle samo ma miec
+    po zapisie, bo wiek to roznica w obrebie jednego zegara, a kotwica jest serwerowa.
+
+    To odwrocenie dawnego zachowania: `resolve_captured_at` przy takim rozjezdzie
+    podstawialo czas serwera pod moment POMIARU, czyli twierdzilo, ze wartosc zmierzono
+    przed chwila. Zdarzenie zostaje — jako diagnostyka, bez wplywu na zapis."""
+    arrived = utcnow().replace(microsecond=0)
+    zegar_klienta = arrived - timedelta(hours=5)
+    await send(db, payload(captured_at=zegar_klienta - timedelta(seconds=120),
+                           sent_at=zegar_klienta), arrived_at=arrived)
     await db.commit()
+
     types = {e.event_type for e in (await db.execute(select(IngestEvent))).scalars()}
     assert "clock_skew" in types
+    stamps = {s.captured_at for s in (await db.execute(select(LimitSample))).scalars()}
+    assert stamps == {arrived - timedelta(seconds=120)}
+
+    b = (await db.execute(select(IngestBatch))).scalars().one()
+    assert b.clock_offset_s == 5 * 3600, "offset musi byc odtwarzalny z bazy"
 
 
 # --------------------------------------------------------------------------- status
@@ -393,19 +453,16 @@ async def _five_hour_state(db):
 async def test_niezmienna_wartosc_nadal_odswieza_potwierdzenie(db):
     """Sedno sprawy: dedup nie zapisuje probki, gdy wartosc sie nie zmienila. Gdyby swiezosc
     liczyla sie z czasu ostatniej PROBKI, stabilny odczyt po 5 minutach zaczalby wygladac
-    jak zerwana lacznosc — mimo ze klient melduje sie co 60 s.
-
-    Znaczniki musza sie miescic w CLOCK_SKEW_TOLERANCE_SEC (300 s), bo poza nim
-    resolve_captured_at slusznie odrzuca zegar klienta i podstawia czas serwera."""
-    t0 = (utcnow() - timedelta(seconds=240)).replace(microsecond=0)  # parse_ts tnie do sekund
-    await ingest_one(db, machine_name="desktop", payload=payload(captured_at=t0))
+    jak zerwana lacznosc — mimo ze klient melduje sie co 60 s."""
+    t0 = _t0(600)
+    await send(db, payload(captured_at=t0))
     await db.commit()
     st0 = await _five_hour_state(db)
     assert st0.last_captured_at == st0.last_confirmed_at == t0
 
     # ta sama wartosc, zmierzona 230 s pozniej — wciaz ponizej progu heartbeatu (300 s)
     t1 = t0 + timedelta(seconds=230)
-    await ingest_one(db, machine_name="desktop", payload=payload(captured_at=t1))
+    await send(db, payload(captured_at=t1))
     await db.commit()
 
     st1 = await _five_hour_state(db)
@@ -430,17 +487,14 @@ async def test_swiezosc_liczy_sie_z_potwierdzenia_a_nie_z_probki(db):
 
 async def test_value_since_nie_przesuwa_sie_przy_niezmienionej_wartosci(db, monkeypatch):
     """"Niezmienne od" musi wskazywac poczatek stalej wartosci. Gdyby przesuwal je zapis
-    heartbeatu, licznik resetowalby sie co heartbeat i pokazywal nieprawde.
-
-    Heartbeat skracamy zamiast oddalac znaczniki, bo oba i tak musza sie zmiescic
-    w tolerancji rozjazdu zegara (300 s) — inaczej testowalibysmy co innego."""
+    heartbeatu, licznik resetowalby sie co heartbeat i pokazywal nieprawde."""
     monkeypatch.setattr(settings, "sample_heartbeat_sec", 60)
-    t0 = (utcnow() - timedelta(seconds=240)).replace(microsecond=0)  # parse_ts tnie do sekund
-    await ingest_one(db, machine_name="desktop", payload=payload(captured_at=t0))
+    t0 = _t0(600)
+    await send(db, payload(captured_at=t0))
     await db.commit()
     # ponad heartbeat => probka ZOSTANIE zapisana, mimo ze wartosc ta sama
     t1 = t0 + timedelta(seconds=230)
-    await ingest_one(db, machine_name="desktop", payload=payload(captured_at=t1))
+    await send(db, payload(captured_at=t1))
     await db.commit()
 
     st = await _five_hour_state(db)
@@ -449,12 +503,11 @@ async def test_value_since_nie_przesuwa_sie_przy_niezmienionej_wartosci(db, monk
 
 
 async def test_value_since_przesuwa_sie_przy_zmianie_wartosci(db):
-    t0 = (utcnow() - timedelta(seconds=240)).replace(microsecond=0)  # parse_ts tnie do sekund
-    await ingest_one(db, machine_name="desktop", payload=payload(captured_at=t0))
+    t0 = _t0(600)
+    await send(db, payload(captured_at=t0))
     await db.commit()
     t1 = t0 + timedelta(seconds=120)
-    await ingest_one(db, machine_name="desktop",
-                     payload=payload(usage=with_util(five_hour=91.0), captured_at=t1))
+    await send(db, payload(usage=with_util(five_hour=91.0), captured_at=t1))
     await db.commit()
 
     st = await _five_hour_state(db)

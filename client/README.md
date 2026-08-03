@@ -182,9 +182,50 @@ Pliki robocze w `%LOCALAPPDATA%\claude-usage-monitor\`:
 do źródła, nie sonda — patrz Instalacja).
 
 Pole `measurement` w każdym wpisie logu mówi, skąd wzięty jest pomiar: `source`
-(`cli_merged` / `cli_usage_cache`), `cache_age_s`, `fresh_age_s`, `fresh_applied` (które serie
-dostały świeżą wartość), `fresh_skip` (czemu zrzut nie został użyty), `dropped` (co odrzuciły
-strażniki), `spawn_error`.
+(`cli_merged` / `cli_usage_cache`), `cache_age_s`, `fresh_age_s`, `fresh_at` (czas zrzutu),
+`fresh_covered` (które serie wzięły wartość ze zrzutu), `sent_at` (kotwica wieku — patrz
+niżej), `fresh_skip` (czemu zrzut nie został użyty), `dropped` (co odrzuciły strażniki),
+`spawn_error`.
+
+### Datowanie: dwa źródła, dwa czasy
+
+`captured_at` to **zawsze** czas cache'u (`fetchedAtMs`), bo z cache pochodzi wszystko —
+w tym `spend` i `extra_usage`, których zrzut nie zawiera nigdy. Czas zrzutu jedzie osobno,
+jako `fresh_at`, i dotyczy wyłącznie serii wymienionych w `fresh_covered`.
+
+Sklejenie obu w jeden stempel (co robiła sonda v4) odmładzało `spend` i `extra_usage` o całą
+różnicę wieków — do godziny. Backend rozstrzyga po tym stemplu, który odczyt jest bieżący,
+więc maszyna ze starszym cache'em, ale świeższym zrzutem cofała stan właśnie tych dwóch serii.
+Guard monotoniczności ich nie broni: wymaga znanej granicy okna, a te dwie serie `resets_at`
+nie mają **nigdy**.
+
+Sam moment pomiaru wylicza **serwer**, nie klient:
+
+```
+offset      = arrived_at − sent_at              # raz na żądanie
+measured_at = min(ts + offset, arrived_at)      # per seria
+```
+
+czyli `received_at − wiek`. Zegar ścienny maszyny nie wchodzi do rachunku — liczy się tylko
+różnica `sent_at − ts`, a ta jest w obrębie jednego zegara. Wpisy ze spoola przechodzą tą samą
+formułą: ich `sent_at` pochodzi z chwili nieudanej próby, więc wiek liczy się sam.
+
+Wpis, w którym pomiar jest **nowszy** niż `sent_at`, jest odrzucany w całości — zegar cofnął
+się między zapisem a wysyłką, więc datowanie jest niepewne. Wpis jest przy tym liczony do
+`backlogAccepted`, żeby spool dało się obciąć.
+
+### Zrzut starszy od cache'u
+
+Scalanie zakłada, że zrzut jest świeższy, ale zrzutowi wolno mieć do 900 s, a cache odświeża
+w tym czasie zwykła praca w Claude Code — kolejność potrafi się odwrócić (zmierzone: 2 razy
+na 1646 pomiarów, do −105 s). Wtedy zrzut jest **ignorowany w całości** (`fresh_skip:
+zrzut-starszy-od-cache`).
+
+Groźny jest reset okna między zrzutem a cache'em: procent poszedłby ze zrzutu, czyli sprzed
+resetu (95%), a `resets_at` mamy **wyłącznie** z cache, czyli już z nowego okna. Strażnik
+wygasłego okna tego nie łapie — granica jest ważna, więc nic nie wygląda na sprzeczne —
+i publikowalibyśmy 95% przeciwko oknu, w którym realnie jest ~1%. Koszt odrzucenia jest zerowy:
+zostaje wartość z cache, która jest nowsza i dokładniejsza (stdout obcina do liczb całkowitych).
 
 **Certyfikaty na Windows:** magazyn CA używany przez Pythona odrzuca łańcuch Let's Encrypt
 niektórych hostów z błędem `certificate has expired`, mimo że każde ogniwo jest ważne — `curl`

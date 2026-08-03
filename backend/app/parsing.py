@@ -72,6 +72,10 @@ class Observation:
     severity: str | None = None
     sort_order: int = 1000
     extra: dict[str, Any] = field(default_factory=dict)
+    # Czy wartosc tej serii pochodzi ze zrzutu `claude -p "/usage"` (a nie z cache Claude
+    # Code). Rozstrzyga o DACIE pomiaru: oba zrodla leza w jednym payloadzie i maja rozny
+    # wiek. Ustawiane z `measurement.fresh_covered`, bo tylko sonda wie, co czym nadpisala.
+    covered_by_fresh: bool = False
 
 
 @dataclass
@@ -329,12 +333,36 @@ def limit_series_key(kind, group, model, surface) -> str:
     return key
 
 
+def probe_key(o: Observation) -> str | None:
+    """Identyfikator serii W JEZYKU SONDY — do porownania z `measurement.fresh_covered`.
+
+    To NIE jest `series_series_key`: sonda nie zna ani `group`, ani `surface`, ani slugowania,
+    a klucz sklada z tego, czym sama dysponuje w `usage` (patrz `_limit_key`
+    w client/usage-probe.py). Rozbieznosc jest CICHA — zbior nigdy sie nie dopasuje,
+    `covered_by_fresh` nigdy sie nie zapali i datowanie po cichu cofnie sie do stanu sprzed
+    tej zmiany. Dlatego: BEZ `_slug` (sonda wysyla surowy `display_name`) i BEZ `surface`
+    (`merge` dopasowuje po `kind`+`model`, wiec dwa limity roznjace sie tylko powierzchnia
+    naprawde sa pokryte oba).
+
+    `spend` i `extra_usage` zwracaja None: zrzut `/usage` ich nie zawiera NIGDY, wiec pytanie
+    o pokrycie nie ma dla nich sensu."""
+    if o.source == "bucket":
+        return "bucket:%s" % o.bucket_key
+    if o.source == "limit":
+        return "limit:%s:%s" % (o.kind or "?", o.model_display_name or "-")
+    return None
+
+
 # --------------------------------------------------------------------------- glowne
-def parse_usage(payload: Any) -> ParseResult:
+def parse_usage(payload: Any, fresh_covered: frozenset[str] = frozenset()) -> ParseResult:
     """Zamienia odpowiedz /api/oauth/usage na liste obserwacji.
 
     Nigdy nie rzuca. Czego nie umie odczytac, zglasza w `problems`, a reszte przetwarza —
     lepiej zapisac 15 z 17 serii niz odrzucic caly pomiar.
+
+    `fresh_covered` to zbior identyfikatorow z `measurement.fresh_covered` sondy. Pusty
+    (domyslny) znaczy "nic nie pochodzi ze zrzutu" — i to jest poprawna, lagodna degradacja
+    dla payloadu bez tego pola, nie galaz kompatybilnosci.
     """
     obs: list[Observation] = []
     problems: list[str] = []
@@ -446,5 +474,11 @@ def parse_usage(payload: Any) -> ParseResult:
         ))
     elif sp is not None:
         problems.append("spend nie jest obiektem")
+
+    if fresh_covered:
+        for o in obs:
+            k = probe_key(o)
+            if k is not None and k in fresh_covered:
+                o.covered_by_fresh = True
 
     return ParseResult(obs, seen, nulls, problems)

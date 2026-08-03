@@ -16,9 +16,9 @@ granice 16:49:59. Powtarzalne przy KAZDYM resecie okna sesji, bo dla swiezego ok
 zuzycia Anthropic granicy nie podaje. Dla `spend:org` i `extra:usage` granica nie przychodzi
 NIGDY, wiec tam zamrozenie bylo trwale.
 
-Znaczniki czasu trzymamy w CLOCK_SKEW_TOLERANCE_SEC (300 s) od "teraz" — poza tym progiem
-`resolve_captured_at` slusznie odrzuca zegar klienta i podstawia czas serwera, a wtedy test
-mierzylby co innego. Mikrosekundy zerujemy, bo `parse_ts` tnie do pelnych sekund.
+Znaczniki czasu trzymamy w PRZESZLOSCI, bo pomiar nie moze byc nowszy niz chwila, w ktorej
+dotarl — `measured_at` przycina go do kotwicy zadania i odstepy liczone od przyszlosci
+zwinelyby sie do jednego punktu. Mikrosekundy zerujemy, bo `parse_ts` tnie do pelnych sekund.
 """
 import json
 from datetime import timedelta

@@ -18,6 +18,15 @@ from tests.test_ingest_e2e import db  # noqa: F401  — wspolny silnik SQLite w 
 SPEND, EXTRA = "spend:org", "extra:usage"
 
 
+def _baza():
+    """Punkt startowy w PRZESZLOSCI, z zapasem na najdluzszy scenariusz (6 min).
+
+    Pomiar nie moze byc nowszy niz chwila, w ktorej dotarl — `measured_at` przycina go do
+    kotwicy zadania. Odstepy odmierzane od "teraz" w PRZOD zwijalyby sie do jednego punktu
+    i testy przechodzilyby, nie sprawdzajac juz ani dedupu, ani przejsc miernika."""
+    return utcnow().replace(microsecond=0) - timedelta(minutes=15)
+
+
 async def _samples(db, series_key: str) -> int:
     return (await db.execute(
         select(func.count()).select_from(LimitSample)
@@ -41,7 +50,7 @@ def _cascade(card):
 async def test_dedup_nie_pisze_wierszy_przez_cala_blokade(db):
     """Blokada trwa godzinami, a payload jest przez caly czas identyczny. Gdyby brak
     pomiaru zapisywal sie jak zmiana, tabela puchlaby przez cala awarie."""
-    now = utcnow()
+    now = _baza()
     await ingest_one(db, machine_name="desktop",
                      payload=team_payload(USAGE_WITHDRAWN, captured_at=now))
     await db.commit()
@@ -80,7 +89,7 @@ async def test_wycofanie_nie_kasuje_ostatniej_znanej_wartosci_serii(db):
     """Gdy seria juz kiedys miala pomiar, blokada nie moze go wymazac — ostatnia ZMIERZONA
     wartosc zostaje, bo to jedyne, co o zuzyciu wiemy. Znika tylko udawanie, ze zmierzono
     ja teraz."""
-    now = utcnow()
+    now = _baza()
     await ingest_one(db, machine_name="desktop",
                      payload=team_payload(USAGE_ACTIVE, captured_at=now))
     await db.commit()
@@ -102,7 +111,7 @@ async def test_spadek_do_braku_pomiaru_nie_jest_nieaktualnym_odczytem(db):
     """93% -> brak wartosci wyglada jak spadek, ale guard monotonicznosci porownuje liczby,
     a tu drugiej liczby nie ma. Gdyby to zliczyl jako `stale_read`, stan zamarlby na 93%
     az do konca blokady — czyli dokladnie ta cicha degradacja, ktora naprawiamy."""
-    now = utcnow()
+    now = _baza()
     await ingest_one(db, machine_name="desktop",
                      payload=team_payload(USAGE_ACTIVE, captured_at=now))
     await ingest_one(db, machine_name="desktop",
@@ -123,7 +132,7 @@ async def test_kaskada_e2e_po_wycofaniu_nie_pokazuje_kredytow_jako_wlaczonych(db
     """Jednostkowe `build_cascade` dostaje swieze fakty prosto z parsera i przechodzi
     nawet wtedy, gdy sciezka zapisu gubi powod. Degradacja powstaje dopiero w
     `series_state` — dlatego ten sam warunek ma tez wersje przez ingest."""
-    now = utcnow()
+    now = _baza()
     await ingest_one(db, machine_name="desktop",
                      payload=team_payload(USAGE_ACTIVE, captured_at=now))
     await db.commit()
@@ -166,7 +175,7 @@ async def test_zgaszony_wiersz_nadal_niesie_ostatni_zmierzony_procent(db):
     zgaszony `extra:usage` po wycofaniu miernika trzyma dalej ostatnia ZMIERZONA wartosc
     i powod, a kaskada dostaje swoj powod niezaleznie (fakty zbierane sa PRZED tym filtrem).
     """
-    now = utcnow()
+    now = _baza()
     await ingest_one(db, machine_name="desktop",
                      payload=team_payload(USAGE_ACTIVE, captured_at=now))
     await ingest_one(db, machine_name="desktop",
@@ -191,7 +200,7 @@ async def test_wycofanie_i_powrot_zostawiaja_zdarzenia_z_poziomem_i_szczegolami(
     """Blokada nie rzuca bledem i nie zmienia niczego, co widac w liczbach — bez zdarzenia
     w logu nie ma po niej sladu. `warn`, bo to awaria po stronie organizacji; powrot to
     `info`, bo dobra wiadomosc nikogo nie budzi."""
-    now = utcnow()
+    now = _baza()
     await ingest_one(db, machine_name="desktop",
                      payload=team_payload(USAGE_ACTIVE, captured_at=now))
     await ingest_one(db, machine_name="desktop",
@@ -220,7 +229,7 @@ async def test_wycofanie_i_powrot_zostawiaja_zdarzenia_z_poziomem_i_szczegolami(
 async def test_wycofanie_zapisuje_zdarzenie_raz_a_nie_przy_kazdym_pomiarze(db):
     """Blokada trwa godzinami. Zdarzenie opisuje PRZEJSCIE, nie stan — inaczej log tonie
     w setkach kopii tego samego zdania i przestaje sie nadawac do czytania."""
-    now = utcnow()
+    now = _baza()
     await ingest_one(db, machine_name="desktop",
                      payload=team_payload(USAGE_ACTIVE, captured_at=now))
     for i in range(5):

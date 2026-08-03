@@ -23,8 +23,15 @@ class Settings(BaseSettings):
     ingest_tokens_raw: str = Field("", alias="INGEST_TOKENS")
     max_ingest_body_bytes: int = Field(262144, alias="MAX_INGEST_BODY_BYTES")
     max_backlog_entries: int = Field(200, alias="MAX_BACKLOG_ENTRIES")
+    # Prog ZDARZENIA `clock_skew`, nic wiecej. Datowanie stoi na roznicy `sent_at - ts`
+    # w obrebie zegara klienta, wiec rozjazd wzgledem serwera go nie psuje i nie ma powodu,
+    # zeby cokolwiek na nim odrzucac.
+    #
+    # BACKLOG_MAX_AGE_SEC usuniete: podstawialo czas serwera pod pomiar starszy niz tydzien,
+    # czyli robilo odwrotnosc ochrony — taki wpis stawal sie najnowszy i przejmowal stan
+    # biezacy. Objetosc ograniczaja MAX_SPOOL_LINES, MAX_BACKLOG_PER_REQUEST po stronie
+    # sondy i MAX_BACKLOG_ENTRIES tutaj.
     clock_skew_tolerance_sec: int = Field(300, alias="CLOCK_SKEW_TOLERANCE_SEC")
-    backlog_max_age_sec: int = Field(604800, alias="BACKLOG_MAX_AGE_SEC")
 
     # --- Dedup i spojnosc ---
     sample_heartbeat_sec: int = Field(300, alias="SAMPLE_HEARTBEAT_SEC")

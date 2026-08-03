@@ -41,6 +41,10 @@ from app.parsing import (
     parse_usage, same_reset_window,
 )
 
+# Zero — uzywane, gdy payload nie niesie `sent_at` (sonda ponizej v5 albo obcy klient).
+# Lagodna degradacja: stempel klienta idzie wtedy nietkniety, dokladnie jak przed zmiana.
+_NO_OFFSET = timedelta(0)
+
 _ACCOUNT_FIELDS = {
     "email": "email", "display_name": "display_name", "org_uuid": "org_uuid",
     "org_name": "org_name", "org_type": "org_type", "seat_tier": "seat_tier",
@@ -64,14 +68,18 @@ async def _event(db: AsyncSession, *, level: str, event_type: str, message: str 
                        account_id=account_id, batch_id=batch_id, detail=detail))
 
 
-async def get_or_create_machine(db: AsyncSession, name: str, client: dict) -> Machine:
+async def get_or_create_machine(db: AsyncSession, name: str, client: dict,
+                                is_backlog: bool = False) -> Machine:
     m = (await db.execute(select(Machine).where(Machine.name == name))).scalar_one_or_none()
     if m is None:
         m = Machine(name=name)
         db.add(m)
         await db.flush()
     m.host = client.get("host") or m.host
-    m.script_version = client.get("script_version") or m.script_version
+    # Wersja skryptu TYLKO z rekordu biezacego. Wpisy z backlogu leza w spoolu od godzin
+    # albo dni i niosa wersje sprzed aktualizacji — wziete tutaj cofalyby to pole.
+    if not is_backlog:
+        m.script_version = client.get("script_version") or m.script_version
     m.last_seen_at = utcnow()
     m.batches = (m.batches or 0) + 1
     return m
@@ -155,28 +163,48 @@ async def store_raw(db: AsyncSession, usage: Any) -> tuple[RawPayload, str]:
     return rp, digest
 
 
-def resolve_captured_at(raw: Any, now: datetime, is_backlog: bool) -> tuple[datetime, str | None]:
-    """Zegar klienta jest niezaufany. Przy zbyt duzym rozjezdzie bierzemy czas serwera,
-    zeby jedna maszyna z rozwalonym zegarem nie zasmiecila wykresow.
+def measured_at(ts: datetime | None, offset: timedelta,
+                arrived_at: datetime) -> datetime | None:
+    """DATOWANIE PO STRONIE SERWERA. Klient podaje wiek, serwer datuje `received_at - wiek`.
 
-    Wpisy z backlogu maja z definicji stary captured_at — dla nich tolerancja jest zniesiona,
-    a granica jest BACKLOG_MAX_AGE_SEC."""
-    ts = parse_ts(raw)
+        offset      = arrived_at - sent_at            (raz na zadanie)
+        measured_at = min(ts + offset, arrived_at)
+
+    Rozwiniete: `arrived_at - (sent_at - ts)`. Zegar SCIENNY klienta nie wchodzi do rachunku
+    — liczy sie wylacznie roznica `sent_at - ts`, a ta jest w obrebie jednego zegara i dlatego
+    wiarygodna. Ta sama formula obsluguje wpisy ze spoola: ich `sent_at` pochodzi z chwili
+    nieudanej proby, wiec wiek liczy sie sam i nic nie trzeba przeliczac po stronie klienta.
+
+    Przyciecie do `arrived_at` gwarantuje, ze pomiar nie jest nowszy niz moment odebrania.
+
+    None wchodzi i None wychodzi: brak czasu to NIEWIEDZA, a nie "teraz". Poprzednia wersja
+    (`resolve_captured_at`) w trzech przypadkach podstawiala tu czas serwera — czyli
+    twierdzila, ze wartosc zmierzono przed chwila. Dla wpisu sprzed osmiu dni bylo to
+    odwrotnoscia ochrony: taki pomiar stawal sie `newest` i przejmowal stan biezacy."""
     if ts is None:
-        return now, "brak-captured_at"
-    delta = abs((now - ts).total_seconds())
-    if is_backlog:
-        if delta > settings.backlog_max_age_sec:
-            return now, "backlog-za-stary"
-        return ts, None
-    if delta > settings.clock_skew_tolerance_sec:
-        return now, "skew-%ds" % int(delta)
-    return ts, None
+        return None
+    shifted = ts + offset
+    return shifted if shifted < arrived_at else arrived_at
+
+
+def request_offset(payload: dict, arrived_at: datetime) -> timedelta:
+    """`arrived_at - measurement.sent_at` — jeden na cale zadanie, z rekordu ZEWNETRZNEGO.
+
+    Wpisy backlogu leza w tej samej kopercie, wiec ich wiek (`sent_at - ts`, we WLASNYM
+    zegarze klienta) przelicza sie ta sama poprawka; wlasnego `sent_at` uzywaja tylko do
+    kontroli "pomiar nie powstal po wysylce".
+
+    Tu, a nie w handlerze, zeby testy liczyly offset TAK SAMO jak produkcja — inaczej
+    rozjazd miedzy nimi byloby widac dopiero na zywo."""
+    meas = payload.get("measurement")
+    sent = parse_ts(meas.get("sent_at")) if isinstance(meas, dict) else None
+    return (arrived_at - sent) if sent is not None else _NO_OFFSET
 
 
 async def _write_observation(
     db: AsyncSession, *, account: Account, series: UsageSeries, o: Observation,
-    captured_at: datetime, batch: IngestBatch, session_id: str | None, source: str,
+    captured_at: datetime, client_captured_at: datetime | None,
+    batch: IngestBatch, session_id: str | None, source: str,
     is_backlog: bool = False, client_reason: str | None = None,
 ) -> tuple[bool, bool]:
     """Zwraca (zapisano, stale_read)."""
@@ -185,31 +213,35 @@ async def _write_observation(
         # gdy odpowiedz przepadnie (timeout, zerwane polaczenie), te same wpisy przyjda
         # ponownie. Bez tego guardu `changed` nizej porownuje sie z BIEZACYM stanem, ktory
         # od tamtego pomiaru poszedl dalej — powtorka wychodzi wiec jako "zmiana" i
-        # dopisuje DRUGI wiersz na tym samym captured_at. Baza tego nie zatrzyma: na
-        # (account_id, series_id, captured_at) nie ma UNIQUE, tylko zwykly indeks
-        # (models.py:230).
+        # dopisuje DRUGI wiersz na tym samym pomiarze. Baza tego nie zatrzyma: na
+        # (account_id, series_id, client_captured_at) nie ma UNIQUE, tylko zwykly indeks.
         #
-        # Klucz: (konto, seria, captured_at, maszyna, sha256 payloadu).
+        # Klucz: (konto, seria, client_captured_at, maszyna, sha256 payloadu).
+        #   - `client_captured_at`, a NIE `captured_at`: od czasu datowania po stronie
+        #     serwera `captured_at` jest funkcja ZADANIA (zawiera `offset` policzony z jego
+        #     `arrived_at`), wiec powtorka tego samego wpisu w innym zadaniu dostaje inna
+        #     wartosc i guard by jej nie zobaczyl. Surowy czas klienta jest funkcja samego
+        #     wpisu i przy powtorce jest identyczny — to jedyna czesc, ktora sie nie zmienia.
         #   - maszyna, bo to samo konto z DWOCH maszyn to poprawne dwa pomiary;
         #   - sha256, bo `parse_ts` obcina czas do pelnych sekund, a rownolegle hooki
         #     potrafia odpalic dwie sondy w tej samej sekundzie. Bez niego zderzenie po
         #     samym czasie skasowaloby drugi, ROZNY pomiar. Z nim zwija sie wylacznie
         #     przypadek bajt-identyczny, czyli ten sam pomiar — a zwijanie tego samego
         #     pomiaru jest dokladnie tym, co robi dedup nizej.
-        #     `batch.payload_sha256` jest ustawione w :335, przed petla obserwacji, wiec
+        #     `batch.payload_sha256` jest ustawione przed petla obserwacji, wiec
         #     tutaj nigdy nie jest NULL.
         #
         # Per OBSERWACJA, nie raz na wpis: dedup jest per seria, wiec pierwotny zapis mogl
         # pominac serie 1 i zapisac serie 3. Skrot "sprawdz pierwsza obserwacje i wyjdz"
-        # przepuscilby wtedy duplikat serii 3. Koszt to jeden seek po ix_samples_series_time
-        # na obserwacje (~7 na wpis, do ~1400 przy maksymalnym backlogu) — w calosci z
-        # indeksu, zwraca 0 albo 1 wiersz.
-        already = (await db.execute(
+        # przepuscilby wtedy duplikat serii 3. Koszt to jeden seek po
+        # ix_samples_series_client_time na obserwacje (~7 na wpis, do ~1400 przy maksymalnym
+        # backlogu) — w calosci z indeksu, zwraca 0 albo 1 wiersz.
+        already = None if client_captured_at is None else (await db.execute(
             select(LimitSample.id)
             .join(IngestBatch, IngestBatch.id == LimitSample.batch_id)
             .where(LimitSample.account_id == account.id,
                    LimitSample.series_id == series.id,
-                   LimitSample.captured_at == captured_at,
+                   LimitSample.client_captured_at == client_captured_at,
                    IngestBatch.machine_id == batch.machine_id,
                    IngestBatch.payload_sha256 == batch.payload_sha256)
             .limit(1)
@@ -310,6 +342,7 @@ async def _write_observation(
     # `passed` — wpisanie tam naszego wniosku zaslepiloby wykrywanie resetu w historii.
     sample = LimitSample(
         account_id=account.id, series_id=series.id, captured_at=captured_at,
+        client_captured_at=client_captured_at,
         batch_id=batch.id, source=source, utilization=o.utilization,
         resets_at=o.resets_at, is_active=o.is_active, severity=o.severity,
         stale_read=stale_read, session_id=session_id,
@@ -342,10 +375,21 @@ async def _write_observation(
 
 
 async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
+                     arrived_at: datetime | None = None,
+                     offset: timedelta = _NO_OFFSET,
                      is_backlog: bool = False) -> dict:
     """Przetwarza jeden pomiar. Nigdy nie rzuca na danych — problem zapisujemy jako
-    zdarzenie i zwracamy, ile udalo sie zapisac."""
-    now = utcnow()
+    zdarzenie i zwracamy, ile udalo sie zapisac.
+
+    `arrived_at` to KOTWICA CZASU: moment odebrania zadania, zdjety w handlerze PRZED
+    lockiem zapisu. Nie wolno go liczyc tutaj — `ingest_one` biegnie juz pod `_WRITE_LOCK`,
+    wiec zadanie, ktore przeczekalo cudzy backlog, datowaloby pomiary o tyle za swiezo, a
+    kazdy wpis backlogu dostawalby wlasna, inna kotwice. Domyslka jest wylacznie dla testow.
+
+    `offset = arrived_at - sent_at` jest wspolny dla calego zadania — patrz `measured_at`."""
+    if arrived_at is None:
+        arrived_at = utcnow()
+    now = arrived_at
     client = payload.get("client") or {}
     hook = payload.get("hook") or {}
     meas = payload.get("measurement") or {}
@@ -355,7 +399,7 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
     acct = payload.get("account") or {}
     usage = payload.get("usage")
 
-    machine = await get_or_create_machine(db, machine_name, client)
+    machine = await get_or_create_machine(db, machine_name, client, is_backlog)
 
     source = meas.get("source") or "probe"
     if source not in ("probe", "cli_merged", "cli_usage_cache"):
@@ -368,6 +412,9 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         hook_event=hook.get("event"), session_id=hook.get("session_id"),
         measurement_source=source, cache_age_s=meas.get("cache_age_s"),
         fresh_age_s=meas.get("fresh_age_s"), probe_ms=client.get("exec_ms"),
+        # Bez tego wyliczonego `captured_at` nie da sie odtworzyc z bazy: znamy `received_at`
+        # i surowy czas klienta, ale nie to, o ile je zsunelismy.
+        clock_offset_s=int(offset.total_seconds()),
     )
     db.add(batch)
     await db.flush()
@@ -382,7 +429,6 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
 
     account, created = await get_or_create_account(db, acct, token_meta)
     batch.account_id = account.id
-    account.last_sample_at = now
     account.last_client_host = client.get("host") or account.last_client_host
 
     if created:
@@ -434,27 +480,78 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
     batch.raw_payload_id = rp.id
     batch.payload_sha256 = digest
 
-    captured_at, skew = resolve_captured_at(payload.get("captured_at"), now, is_backlog)
-    if skew:
-        await _event(db, level="warn", event_type="clock_skew", account_id=account.id,
-                     batch_id=batch.id, message="Czas klienta odrzucony: %s" % skew,
-                     detail={"raw": payload.get("captured_at")})
+    # DWA CZASY W JEDNYM PAYLOADZIE. `captured_at` to czas cache'u Claude Code i dotyczy
+    # wszystkiego; `measurement.fresh_at` to czas zrzutu `/usage` i dotyczy WYLACZNIE serii
+    # wymienionych w `fresh_covered`. Cache bywa o godzine starszy od zrzutu, a `spend`
+    # i `extra_usage` pochodza z niego zawsze — jeden stempel na oba zrodla odmladzal je
+    # dokladnie o te roznice.
+    cache_ts = parse_ts(payload.get("captured_at"))
+    fresh_ts = parse_ts(meas.get("fresh_at"))
+    sent_ts = parse_ts(meas.get("sent_at"))
 
-    parsed = parse_usage(usage)
+    # `frozenset(...)` na surowym polu z sieci rzucaloby TypeError na `None` i na kazdym
+    # elemencie nie-hashowalnym, a `ingest_one` NIE ma try/except mimo obietnicy w docstringu:
+    # dla rekordu biezacego to 500 na cale zadanie, dla wpisu backlogu `break` i TRWALE
+    # zatkany ogon spoola. Endpoint jest wystawiony w internecie.
+    raw_covered = meas.get("fresh_covered")
+    fresh_covered = frozenset(
+        x for x in raw_covered if isinstance(x, str)
+    ) if isinstance(raw_covered, list) else frozenset()
+
+    # POMIAR NIE MOGL POWSTAC PO WYSYLCE. Jesli powstal, zegar klienta cofnal sie miedzy
+    # zapisem a wyslaniem i datowanie tego wpisu jest niepewne — a rozwiniecie pokazuje, ze
+    # to dokladnie warunek przyciecia (`ts + offset > arrived_at` <=> `ts > sent_at`), czyli
+    # wpis wyladowalby na `arrived_at`, przeszedl `newest` i nadpisal stan starym pomiarem.
+    # Odrzucamy calosc; surowy payload juz jest w bazie (zasada 6), wpis idzie do `accepted`,
+    # zeby sonda obciela spool. Kryterium dotyczy tylko wpisow niosacych `sent_at`.
+    if sent_ts is not None and any(t is not None and t > sent_ts
+                                   for t in (cache_ts, fresh_ts)):
+        batch.ok = False
+        batch.error_kind = "clock_backwards"
+        await _event(db, level="warn", event_type="clock_backwards", account_id=account.id,
+                     batch_id=batch.id,
+                     message="Pomiar datowany PO wyslaniu — zegar klienta cofniety",
+                     detail={"captured_at": payload.get("captured_at"),
+                             "fresh_at": meas.get("fresh_at"),
+                             "sent_at": meas.get("sent_at")})
+        return {"samples_written": 0, "batch_id": batch.id, "ok": False,
+                "account_uuid": account.account_uuid}
+
+    # DIAGNOSTYKA, bez wplywu na zapis. Datowanie stoi na roznicy `sent_at - ts`, ktora
+    # jest w obrebie jednego zegara — rozjazd wzgledem serwera juz jej nie psuje.
+    if abs(offset.total_seconds()) > settings.clock_skew_tolerance_sec:
+        await _event(db, level="warn", event_type="clock_skew", account_id=account.id,
+                     batch_id=batch.id,
+                     message="Zegar klienta rozjechany o %ds" % int(offset.total_seconds()),
+                     detail={"sent_at": meas.get("sent_at"),
+                             "arrived_at": arrived_at.isoformat()})
+
+    parsed = parse_usage(usage, fresh_covered)
     if parsed.problems:
         await _event(db, level="warn", event_type="schema_drift", account_id=account.id,
                      batch_id=batch.id, message="Nieoczekiwany ksztalt odpowiedzi",
                      detail={"problems": parsed.problems})
 
     cache: dict[str, UsageSeries] = {}
-    written = stale = 0
+    written = stale = undated = 0
+    newest_at: datetime | None = None
     new_series: list[str] = []
     for o in parsed.observations:
+        client_ts = fresh_ts if (o.covered_by_fresh and fresh_ts is not None) else cache_ts
+        captured_at = measured_at(client_ts, offset, arrived_at)
+        if captured_at is None:
+            # `limit_samples.captured_at` jest NOT NULL, wiec bez tej sciezki byloby to
+            # IntegrityError na calym zadaniu zamiast pominiecia jednej obserwacji.
+            undated += 1
+            continue
+        if newest_at is None or captured_at > newest_at:
+            newest_at = captured_at
         series, s_created = await get_or_create_series(db, o, cache)
         if s_created:
             new_series.append(o.series_key)
         w, sr = await _write_observation(
             db, account=account, series=series, o=o, captured_at=captured_at,
+            client_captured_at=client_ts,
             batch=batch, session_id=hook.get("session_id"), source=source,
             is_backlog=is_backlog,
             # Zwykly `get`: sonda ponizej wersji 4 tego pola nie przysyla i to jest
@@ -463,6 +560,19 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         )
         written += int(w)
         stale += int(sr)
+
+    if undated:
+        await _event(db, level="warn", event_type="no_captured_at", account_id=account.id,
+                     batch_id=batch.id,
+                     message="%d obserwacji bez czasu pomiaru — pominiete" % undated,
+                     detail={"captured_at": payload.get("captured_at"),
+                             "fresh_at": meas.get("fresh_at")})
+
+    # `max`, nie przypisanie: wpisy backlogu ida PO rekordzie biezacym, wiec oproznienie
+    # spoola cofneloby to pole o godziny.
+    if newest_at is not None and (account.last_sample_at is None
+                                  or newest_at > account.last_sample_at):
+        account.last_sample_at = newest_at
 
     if new_series:
         await _event(db, level="info", event_type="series_registered", account_id=account.id,
