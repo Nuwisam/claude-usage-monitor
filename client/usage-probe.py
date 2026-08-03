@@ -41,7 +41,7 @@ Celowo plik lokalny, a nie repo — token maszyny nie ma prawa trafic do gita.
 """
 import sys, os, json, time, re, socket, hashlib, http.client, urllib.parse
 
-SCRIPT_VERSION = 5
+SCRIPT_VERSION = 6
 
 # Znacznik dziedziczony przez proces potomny. `claude -p "/usage"` to normalna sesja
 # Claude Code — odpali hook Stop, ktory odpali sonde, ktora odpalilaby kolejnego
@@ -249,7 +249,10 @@ def spawn_refresh(cfg):
     zmian). Znaczenie ma tylko wtedy, gdy argument nie trafi w komende lokalna — wtedy leci
     platna tura, ktora bez tej flagi poszlaby na modelu z settings.json.
     Sonda i tak odrzuci taki zrzut po num_turns>0, ale koszt jest juz poniesiony; flaga go
-    obniza o rzad wielkosci. Alias, nie ID z data — ID bywaja wycofywane."""
+    obniza o rzad wielkosci. Alias, nie ID z data — ID bywaja wycofywane.
+
+    --strict-mcp-config --mcp-config {"mcpServers":{}} odcina boot MCP — sonda go nie uzywa,
+    a to kilkanascie procesow node/npx na przebieg."""
     exe = find_claude(cfg)
     if not exe:
         return "brak-claude-w-path"
@@ -258,8 +261,10 @@ def spawn_refresh(cfg):
     env[CHILD_ENV] = "1"                # zapora przed rekurencja hookow
     kw = {}
     if os.name == "nt":
-        # DETACHED_PROCESS | CREATE_NO_WINDOW — bez konsoli i bez wiazania z sesja rodzica
-        kw["creationflags"] = 0x00000008 | 0x08000000
+        # CREATE_NO_WINDOW (ukryta konsola, dziedziczona przez wnuki) | NEW_PROCESS_GROUP
+        # (brak Ctrl+C od rodzica). NIE dodawac DETACHED_PROCESS (0x8) — wygrywa z
+        # CREATE_NO_WINDOW, wnuki alokuja wtedy wlasna, widoczna konsole.
+        kw["creationflags"] = 0x08000000 | 0x00000200
     else:
         kw["start_new_session"] = True
     try:
@@ -270,7 +275,9 @@ def spawn_refresh(cfg):
     try:
         subprocess.Popen(
             [exe, "-p", "--no-session-persistence", "--model", "haiku",
-             "/usage", "--output-format", "json"],
+             "/usage", "--output-format", "json",
+             # tylko na koncu: --mcp-config jest wariadyczne, zjadloby prompt jako sciezke
+             "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'],
             stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.DEVNULL,
             cwd=OUTDIR,                 # neutralny katalog: bez CLAUDE.md i hookow projektu
             env=env, close_fds=True, **kw)
