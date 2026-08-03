@@ -13,14 +13,20 @@ odswiezyc fragmentu), ale wchodza dokladnie wtedy, gdy pracujesz — a wtedy sa
 najbardziej potrzebne. Poza praca wartosci same wchodza w minuty i godziny
 i panel milknie. Jedyny wyjatek to zegar w naglowku: on tyka niezaleznie od
 pracy, wiec pokazuje HH:MM.
+
+Z time.ts nie portujemy `stamp()` (stempel BEZ przyimka): na panelu nie ma dla
+niego wolajacego, bo nie ma podpisow "bez zmian od" ani "od". Gdy taki podpis
+sie pojawi, `stamp()` jest bliznakiem `at_stamp()` z time.ts:71-83.
 """
 import re
 from datetime import datetime, timezone
 
 _HAS_ZONE = re.compile(r"(Z|[+-]\d{2}:?\d{2})$")
 
-# Skroty dni jak w makiecie (blok text/x-dc): "pn 09:00".
-DAYS = ("pn", "wt", "śr", "cz", "pt", "sb", "nd")
+# Skroty dni DOKLADNIE jak time.ts:44 — indeksowane od NIEDZIELI, jak getDay().
+# Pythonowe weekday() liczy od poniedzialku, wiec indeks robi _day_index(), a nie
+# przestawiona tablica: napisy maja wychodzic identycznie jak w WWW.
+DAYS = ("ndz.", "pon.", "wt.", "śr.", "czw.", "pt.", "sob.")
 
 
 def parse_utc(iso):
@@ -70,10 +76,55 @@ def dm(d):
     return "%s.%s" % (_p2(d.day), _p2(d.month)) if d else "—"
 
 
-def day_hm(d):
-    """"pn 09:00" — tydzien resetuje sie za kilka dni, wiec sama godzina klamie."""
-    d = to_local(d)
-    return "%s %s:%s" % (DAYS[d.weekday()], _p2(d.hour), _p2(d.minute)) if d else "—"
+def _day_index(d):
+    """Indeks do DAYS w konwencji JS getDay(): 0 to niedziela."""
+    return (d.weekday() + 1) % 7
+
+
+def _day_diff(d, now):
+    """Roznica w DNIACH KALENDARZOWYCH po lokalnych polnocach (time.ts:51-55).
+
+    Nigdy delta_ms / 86_400_000: doba przy zmianie czasu ma 23 albo 25 h, a para
+    chwil po dwoch stronach polnocy rozni sie o dzien niezaleznie od tego, ile ms
+    je dzieli. Czlowiek czyta "wczoraj o 23:50", nie "26 godzin temu".
+    """
+    return (to_local(d).date() - to_local(now).date()).days
+
+
+def at_stamp(d, now_ms):
+    """Stempel chwili czytanej WZGLEDEM TERAZ, z przyimkiem — port atStamp().
+
+        dzis          ->  "o 11:58"
+        +/- 1 dzien   ->  "wczoraj o 23:50" / "jutro o 20:00"
+        +/- 2..6 dni  ->  "w śr. o 11:58"   ALE  "we wt. o 11:58"
+        dalej         ->  "26.07 o 11:58"   ("w 26.07" nie jest polszczyzna)
+        inny rok      ->  "26.07.2025 o 11:58"
+
+    Przyimek jest W SRODKU stempla, bo polszczyzna zmienia go razem z formatem,
+    a wolajacy nie ma prawa wiedziec, ktory wariant wyszedl.
+
+    Parametru `precise` z time.ts:94 nie portujemy: sekundowy wariant zapala sie
+    wylacznie w podpisie "potwierdzone …" w hero WWW, ktorego panel nie ma. To
+    samo kryterium, po ktorym z SeriesView wypadlo pole `outline` — nie ma
+    czytelnika, nie ma pola.
+    """
+    if d is None:
+        return "—"
+    now = datetime.fromtimestamp(now_ms / 1000.0, tz=timezone.utc)
+    diff = _day_diff(d, now)
+    if diff == 0:
+        return "o %s" % hm(d)
+    if diff == -1:
+        return "wczoraj o %s" % hm(d)
+    if diff == 1:
+        return "jutro o %s" % hm(d)
+    local = to_local(d)
+    if abs(diff) <= 6:
+        # "we wtorek", nie "w wtorek" — jedyny wyjatek i dlatego stoi tu.
+        idx = _day_index(local)
+        return "%s %s o %s" % ("we" if idx == 2 else "w", DAYS[idx], hm(d))
+    year = "" if local.year == to_local(now).year else ".%d" % local.year
+    return "%s%s o %s" % (dm(d), year, hm(d))
 
 
 def countdown(target_ms, now_ms):
@@ -94,7 +145,13 @@ def countdown(target_ms, now_ms):
 
 
 def ago(since_ms, now_ms):
-    """"3 s temu" / "5 min temu" / "1 h 25 min temu"."""
+    """"3 s temu" / "5 min temu" / "1 h 25 min temu" / "3 d 4 h temu".
+
+    Szczebel dobowy w ksztalcie countdown(), bo odkad swiezosc niesie sama
+    etykieta, trzydniowa cisza musi czytac sie od razu — "76 h 00 min temu"
+    wymaga dzielenia w glowie. Granica dokladnie na 24 h daje "1 d 0 h temu";
+    countdown() drukuje "1 d 0 h" dla tego samego wejscia, wiec to spojne.
+    """
     if since_ms is None:
         return "—"
     s = max(0, int(round((now_ms - since_ms) / 1000.0)))
@@ -103,7 +160,10 @@ def ago(since_ms, now_ms):
     m = s // 60
     if m < 60:
         return "%d min temu" % m
-    return "%d h %s min temu" % (m // 60, _p2(m % 60))
+    h = m // 60
+    if h < 24:
+        return "%d h %s min temu" % (h, _p2(m % 60))
+    return "%d d %d h temu" % (h // 24, h % 24)
 
 
 def pct(v):

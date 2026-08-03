@@ -208,26 +208,19 @@ seryjny `WCH32` (stała firmware'u), więc rozróżnia je tylko fizyczny port
 
 ### Dług: napisy panelu rozjechały się z WWW
 
-Model świeżości jest już **wspólny** (panel miał go pierwszy, WWW dogoniło), ale same napisy
-nie — WWW dostało dzień w stemplach i doby w wieku, panel został na starym porcie. Cztery
-konkretne różnice:
+**Etykiety czasu są już ujednolicone.** `panel/panel/fmt.py` ma port `at_stamp()` i szczebel
+dobowy w `ago()`, `DAYS` to dokładnie tablica z `time.ts` (indeksowana od niedzieli przez
+`_day_index()`, bo `weekday()` liczy od poniedziałku), a ręczna flaga `with_day` z `view.py`
+zniknęła — o dopisaniu dnia decyduje jedno miejsce, tak jak w WWW. Panel i WWW piszą teraz
+`· w pt. o 20:00` i `3 d 4 h temu` tak samo.
 
-1. `time.ts:ago` ma szczebel dobowy (`3 d 4 h temu`), `panel/panel/fmt.py:ago` nie
-   (`76 h 00 min temu`).
-2. Skróty dni: WWW `pon./wt./śr./czw./pt./sob./ndz.`, panel `pn/wt/śr/cz/pt/sb/nd`.
-   **Kolejność tablic musi zostać różna** — `getDay()` liczy od niedzieli, `weekday()` od
-   poniedziałku.
-3. Przyimek: WWW `· w pt. o 20:00`, panel `· 20:00` — `panel/panel/render.py` skleja
-   `"%s · %s"` bez `o`, więc panel **już wcześniej** pisał inaczej niż WWW i `UI-HANDOUT` §6.
-4. Docstring `panel/panel/view.py` twierdzi, że „WWW rozroznia `live`/`stale` kolorem
-   wypelnienia i daje `unknown` wlasny rysunek" — to już nieprawda.
+Co zostało: docstring `panel/panel/view.py` twierdzi, że „WWW rozroznia `live`/`stale` kolorem
+wypelnienia i daje `unknown` wlasny rysunek" — to już nieprawda, WWW przejęło model panelu.
 
-Domknięcie to port `stamp`/`atStamp` do `fmt.py` i wyrzucenie ręcznej flagi `with_day`
-z `view.py`. **Testy panelu tego nie złapią** i to jest ich znana słabość: `test_ago`
-w `test_fmt_port.py` kończy się na `1 h 25 min`, a `test_day_hm_ma_dzien` sprawdza tylko
-`.split()[0] in fmt.DAYS`, więc przeszłoby z całkowicie złym dniem tygodnia. Przy porcie
-najpierw dołóż twarde wartości do obu, potem zmieniaj kod. Uwaga na `test_render.py` —
-pinuje `"72 h 00 min temu"` i szerokość napisu w układzie 4a.
+Reszta różnic panel/WWW jest **świadoma**, nie długiem: 480×320 pokazuje mniej i krócej.
+Panel nie ma słowa `bez licznika`, rysunku `inferred_reset`, podpisu `potwierdzone …` ani
+wieku per-seria. Nie ma też wspólnego strażnika parytetu napisów — przy zmianach w `time.ts`
+port trzeba przenieść ręcznie, a `test_fmt_port.py` łapie tylko to, co ma wpisane.
 
 ## Pierwsze wdrożenie od zera
 

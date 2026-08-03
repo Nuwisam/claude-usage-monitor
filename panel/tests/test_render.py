@@ -162,7 +162,7 @@ def test_wiek_bierze_starsza_z_dwoch_serii():
                                 utilization=30,
                                 confirmedAt="2026-07-23T19:07:40Z",
                                 capturedAt="2026-07-23T19:07:40Z")])
-    assert render.band_state(acc, now_ms=now_ms).ago == "72 h 00 min temu"
+    assert render.band_state(acc, now_ms=now_ms).ago == "3 d 0 h temu"
 
 
 # --- pakowanie --------------------------------------------------------------

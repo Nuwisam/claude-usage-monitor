@@ -76,21 +76,22 @@ def missing_view():
                       number=None, words="nie wiem")
 
 
-def reset_note(s, now_ms, with_day=False):
+def reset_note(s, now_ms):
     """(lead, at) — podpis odliczania. Port resetNote() z freshness.ts.
 
     `resetsAt: null` ma KILKA powodow i sklejenie ich w jeden napis bylo bledem
     juz raz: Anthropic nie podaje granicy dla okna z 0% zuzycia, a sonda zeruje
     przedawniona granice z cache. Cztery rozne zdania, nie jedno.
 
-    `with_day` dla okna tygodniowego: sama godzina przy resecie za piec dni
-    klamie, bo nie mowi ktorego dnia (makieta: `dayHm`).
+    O tym, czy dopisac dzien, decyduje `at_stamp` — jedno miejsce dla wszystkich
+    okien, tak jak w time.ts. Przyimek jest W SRODKU stempla ("o 20:00", ale
+    "w pt. o 20:00"), wiec wolajacy (render.py) skleja tylko "%s · %s" i nie
+    dokleja wlasnego "o".
     """
     if s is None:
         return "brak danych", None
     if s.source in ("spend", "extra_usage"):
         return "bez resetu", None
-    stamp = fmt.day_hm if with_day else fmt.hm
     r = fmt.parse_utc(s.resets_at)
     if r is not None:
         target = fmt.ms(r)
@@ -98,8 +99,9 @@ def reset_note(s, now_ms, with_day=False):
         # wychodzi sklejka "reset za po resecie".
         secs = int(round((target - now_ms) / 1000.0))
         if secs > 0:
-            return "reset za %s" % fmt.countdown(target, now_ms), stamp(r)
-        return "reset minął", stamp(r)
+            return ("reset za %s" % fmt.countdown(target, now_ms),
+                    fmt.at_stamp(r, now_ms))
+        return "reset minął", fmt.at_stamp(r, now_ms)
     if s.utilization == 0:
         return "okno nie wystartowało", None
     return "czas resetu nieznany", None

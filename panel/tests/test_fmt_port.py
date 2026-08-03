@@ -4,6 +4,8 @@ To ten sam produkt ogladany z dwoch stron biurka — rozjazd w formacie czasu
 byloby widac natychmiast i wygladalby na blad danych, a nie na blad formatu.
 Kazdy przypadek ma w komentarzu miejsce w oryginale.
 """
+from datetime import timedelta
+
 import pytest
 
 from panel import fmt
@@ -42,8 +44,13 @@ def test_parse_utc_nie_wywraca_sie_na_nie_stringu(smiec):
     (59, "59 s temu"),
     (60, "1 min temu"),                     # time.ts:70
     (5 * 60, "5 min temu"),
-    (3600 + 25 * 60, "1 h 25 min temu"),    # time.ts:71
+    (3600 + 25 * 60, "1 h 25 min temu"),    # time.ts:161
     (-10, "0 s temu"),                      # ujemny wiek przycinamy do zera
+    # Szczebel dobowy (time.ts:162). Granica dokladnie na 24 h daje "1 d 0 h temu",
+    # tak jak countdown() dla tego samego wejscia drukuje "1 d 0 h".
+    (86400, "1 d 0 h temu"),
+    (64 * 3600 + 11 * 60, "2 d 16 h temu"),  # panel pisal tu "64 h 11 min temu"
+    (3 * 86400 + 4 * 3600, "3 d 4 h temu"),  # napis kanoniczny z AGENTS.md
 ])
 def test_ago(secs, want):
     assert fmt.ago(0.0, secs * 1000.0) == want
@@ -106,9 +113,45 @@ def test_godziny_sa_lokalne():
     assert fmt.hm(None) == "—"
 
 
-def test_day_hm_ma_dzien():
-    # Tydzien resetuje sie za kilka dni — sama godzina nie mowi ktorego dnia.
-    assert fmt.day_hm(fmt.parse_utc("2026-07-26T12:00:00Z")).split()[0] in fmt.DAYS
+_NOW = fmt.parse_utc("2026-07-26T12:00:00Z")     # niedziela, poludnie UTC
+
+
+def _at(days):
+    """Stempel chwili oddalonej o `days` dob od _NOW, liczony wzgledem _NOW."""
+    return fmt.at_stamp(_NOW + timedelta(days=days), fmt.ms(_NOW))
+
+
+def test_at_stamp_ma_szczeble_jak_www():
+    """Port atStamp() (time.ts:94-110). Tz-agnostycznie: sprawdzamy KSZTALT
+    napisu, bo sama godzina zalezy od strefy maszyny.
+
+    Sama godzina przy resecie za piec dni klamie — nie mowi ktorego dnia."""
+    assert _at(0).startswith("o "), "dzis: sama godzina z przyimkiem"
+    assert _at(-1).startswith("wczoraj o ")
+    assert _at(1).startswith("jutro o ")
+    for days in (-6, -2, 2, 6):
+        first, second = _at(days).split()[:2]
+        assert first in ("w", "we"), "przyimek jest W SRODKU stempla"
+        assert second in fmt.DAYS, "skrot dnia dokladnie jak w WWW"
+    # 7 dni to znowu ten sam skrot, wiec od tego miejsca ida daty; "w 26.07" nie
+    # jest polszczyzna, wiec przyimka tam nie ma.
+    daleko = _at(30)
+    assert "." in daleko.split()[0] and " o " in daleko
+    assert not daleko.startswith(("w ", "we "))
+
+
+def test_at_stamp_ma_we_przed_wtorkiem():
+    # "we wtorek", nie "w wtorek" — jedyny wyjatek (time.ts:104-105).
+    assert _at(2).startswith("we wt. o ")
+    assert _at(3).startswith("w śr. o ")
+
+
+def test_at_stamp_inny_rok_ma_rok():
+    assert _at(-400).split()[0].count(".") == 2
+
+
+def test_at_stamp_bez_daty():
+    assert fmt.at_stamp(None, fmt.ms(_NOW)) == "—"
 
 
 def test_server_clock_idzie_monotonicznie():

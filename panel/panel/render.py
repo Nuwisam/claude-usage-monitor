@@ -96,7 +96,7 @@ def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None):
         session_view=V.describe_series(session) if session else V.missing_view(),
         weekly_view=V.describe_series(weekly) if weekly else V.missing_view(),
         reset_session=V.reset_note(session, now_ms),
-        reset_week=V.reset_note(weekly, now_ms, with_day=True),
+        reset_week=V.reset_note(weekly, now_ms),
         ago=age,
         note=note,
         show_clock=show_clock,

@@ -96,9 +96,12 @@ def test_reset_w_przyszlosci_ma_odliczanie_i_godzine():
 
 
 def test_tydzien_dostaje_dzien_tygodnia():
+    """Reset za 6 dni: sama godzina klamie, bo nie mowi ktorego dnia. Decyduje
+    o tym `at_stamp`, ten sam co w WWW — przyimek jest w srodku stempla."""
     _, at = view.reset_note(series(resetsAt="2026-08-01T16:00:00Z", utilization=30),
-                            NOW, with_day=True)
-    assert at.split()[0] in fmt.DAYS, "sama godzina przy resecie za 5 dni klamie"
+                            NOW)
+    przyimek, dzien = at.split()[:2]
+    assert przyimek in ("w", "we") and dzien in fmt.DAYS
 
 
 def test_brak_serii_nie_wybucha():
