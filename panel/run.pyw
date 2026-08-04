@@ -62,6 +62,13 @@ def _card(lines):
             value = entry.get(key)
             if isinstance(value, (str, int)) and not isinstance(value, bool):
                 clean[key] = value
+        # `rotate` ZOSTAJE, w przeciwienstwie do brightness: ekran powieszony do
+        # gory nogami dostalby karte bledu do gory nogami, czyli nieczytelna —
+        # a to jest dokladnie ta jedna rzecz, ktora ta funkcja ma pokazac.
+        # Bezpiecznie, bo przepuszczamy tylko dwie znane wartosci; cokolwiek
+        # innego znaczy 0 i widoczna karte, nie ciemne szklo.
+        if entry.get("rotate") in C.ROTATIONS:
+            clean["rotate"] = entry["rotate"]
         entries.append(clean)
     if not entries:
         # Nic nie przetrwalo — wracamy do dzisiejszej semantyki: bez selektora,

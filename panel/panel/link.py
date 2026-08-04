@@ -40,6 +40,12 @@ class PanelLink:
         self.cfg = cfg
         self.tag = spec.tag
         self.dev = None
+        # The driver's capabilities composed with how THIS panel is mounted. Set
+        # on open, because a driver only knows its geometry once it has a device.
+        # Everything downstream reads this, never dev.caps: with two sources of
+        # truth the surface would rotate while the acknowledgement ladder consulted
+        # an unrotated copy.
+        self.caps = None
         # Resolved on open: a panel entry may leave it out, and the default is the
         # driver's, because the scales are not comparable across displays.
         self.brightness = spec.brightness
@@ -70,9 +76,13 @@ class PanelLink:
         now = time.monotonic()
         if now < self._next_try:
             return False
+        dev = None
         try:
             dev = device.open_panel(self.spec, device.options_for(self.cfg))
-            caps = dev.caps
+            # DriverError on an unsupported angle, which is why it sits inside the
+            # try: validate() rejects those, but run.pyw's error card never
+            # validates, and a bad angle there must mean backoff, not a traceback.
+            caps = dev.caps.rotated(self.spec.rotate)
             if caps.reset_on_open:
                 # Reset on EVERY open. 03.08, after taking the module over from
                 # another process, the panel acknowledged every frame (status=0)
@@ -86,16 +96,30 @@ class PanelLink:
                                else caps.brightness.default)
             dev.set_brightness(self.brightness)
         except DEVICE_ERRORS as e:
+            # Whatever failed happened AFTER open_panel() as often as before it
+            # (reset, brightness, an impossible mounting angle), and a handle we
+            # never store is a handle nobody can close - on the AX206 an exclusive
+            # one, which would lock the module out of the next attempt too.
+            if dev is not None:
+                try:
+                    dev.close()
+                except Exception:
+                    pass
             self._fail("%s: %s" % (type(e).__name__, e))
             return False
         self.dev = dev
+        self.caps = caps
         self._attempt = 0
         self._last_error = None
         self._missed_run = 0
         # We do not know what is on the screen after another process had it, so a
         # brand new Surface (which knows nothing) forces the next frame out whole.
-        self.surface = surfaces.for_caps(dev.caps, log=log().warning)
-        log().info("%s: otwarty (jasnosc %s)", self.tag, self.brightness)
+        self.surface = surfaces.for_caps(caps, log=log().warning)
+        if self.spec.rotate:
+            log().info("%s: otwarty (jasnosc %s, obrot %d st.)",
+                       self.tag, self.brightness, self.spec.rotate)
+        else:
+            log().info("%s: otwarty (jasnosc %s)", self.tag, self.brightness)
         return True
 
     def _fail(self, message):
@@ -115,6 +139,7 @@ class PanelLink:
             except Exception:
                 pass
         self.dev = None
+        self.caps = None
         self.surface = None
         self._fail(why)
 
@@ -148,7 +173,7 @@ class PanelLink:
         """
         if not self.ensure():
             return False
-        caps = self.dev.caps
+        caps = self.caps
         # Periodic full repaint, timed from the last FULL write. On a display that
         # acknowledges nothing this is the only way back from a silently
         # desynchronised screen, so it must not be reset by ordinary partial writes.
@@ -221,3 +246,4 @@ class PanelLink:
             except Exception:
                 pass
             self.dev = None
+            self.caps = None

@@ -61,17 +61,30 @@ class Account:
         return "<Account %s %s>" % (self.slot, self.name or self.uuid)
 
 
+# Keys of a `panels` entry that describe the panel rather than pointing at a
+# device. Everything else in the entry is a selector, so a key missing from here
+# would travel into select() and be silently ignored there.
+PANEL_KEYS = ("backend", "brightness", "name", "rotate")
+
+# How the glass is mounted, in degrees counter-clockwise, ON TOP of whatever
+# rotation the driver already applies. Half turns only: see Caps.rotated().
+ROTATIONS = (0, 180)
+
+
 class PanelSpec:
-    """One screen from the `panels` list: which driver, which device, how bright."""
+    """One screen from the `panels` list: which driver, which device, how bright,
+    which way up."""
 
-    __slots__ = ("backend", "selector", "brightness", "name", "index")
+    __slots__ = ("backend", "selector", "brightness", "name", "index", "rotate")
 
-    def __init__(self, backend, selector, brightness=None, name=None, index=0):
+    def __init__(self, backend, selector, brightness=None, name=None, index=0,
+                 rotate=0):
         self.backend = backend
         self.selector = selector or {}
         self.brightness = brightness
         self.name = name
         self.index = index                  # position in the list, for messages
+        self.rotate = rotate or 0
 
     @property
     def tag(self):
@@ -155,10 +168,9 @@ class Config:
         for i, raw in enumerate(self._d.get("panels") or []):
             if not isinstance(raw, dict) or not raw.get("backend"):
                 continue
-            selector = {k: v for k, v in raw.items()
-                        if k not in ("backend", "brightness", "name")}
+            selector = {k: v for k, v in raw.items() if k not in PANEL_KEYS}
             out.append(PanelSpec(raw["backend"], selector, raw.get("brightness"),
-                                 raw.get("name"), i))
+                                 raw.get("name"), i, raw.get("rotate")))
         return out
 
     def validate(self):
@@ -271,8 +283,7 @@ class Config:
                 continue
 
             extra = [k for k in entry
-                     if k not in mod.SELECTOR_KEYS
-                     and k not in ("backend", "brightness", "name")]
+                     if k not in mod.SELECTOR_KEYS and k not in PANEL_KEYS]
             if extra:
                 # An unknown key used to match nothing and fall through to "the
                 # only device there is" - a typo quietly aimed the client at
@@ -294,6 +305,9 @@ class Config:
                 self._panel_number(problems, "%s.brightness" % where,
                                    entry["brightness"], scale)
 
+            if entry.get("rotate") is not None:
+                self._panel_rotate(problems, where, entry["rotate"])
+
     def _canvas(self):
         """(width, height) if they are usable, else None.
 
@@ -305,6 +319,26 @@ class Config:
             return (int(self._d["width"]), int(self._d["height"]))
         except (TypeError, ValueError, OverflowError, KeyError):
             return None
+
+    @staticmethod
+    def _panel_rotate(problems, where, raw):
+        """How the panel is mounted. Two separate messages on purpose.
+
+        "180" as a string and 90 as a number are different mistakes: the first is
+        a typing slip, the second is someone asking for a portrait screen. Telling
+        them apart is the difference between a fix and a puzzle.
+        """
+        try:
+            value = int(raw)
+        except (TypeError, ValueError, OverflowError):
+            problems.append("%s.rotate musi byc liczba stopni (jest: %r)"
+                            % (where, raw))
+            return
+        if value not in ROTATIONS:
+            problems.append(
+                "%s.rotate=%r — wolno tylko %s. Cwierc obrotu wymagalaby ukladu "
+                "pionowego (320x480), a rysowany jest jeden uklad 3:2"
+                % (where, raw, " albo ".join(str(v) for v in ROTATIONS)))
 
     @staticmethod
     def _panel_number(problems, name, raw, scale):

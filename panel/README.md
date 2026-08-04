@@ -238,10 +238,20 @@ token ingestu, a plik sondy bywa nadpisywany przy jej aktualizacji.
   "account_2": {"uuid": "...", "name": "billing@example.org"},
   "panels": [
     {"backend": "ax206",        "port_path": "3.4", "brightness": 5},
-    {"backend": "turing-rev-a", "port_path": "8.4", "brightness": 40, "name": "prawy"}
+    {"backend": "turing-rev-a", "port_path": "8.4", "brightness": 40, "name": "prawy",
+     "rotate": 180}
   ]
 }
 ```
+
+**`rotate` mówi, jak ekran wisi**, w stopniach przeciwnie do ruchu wskazówek
+zegara, **doliczane do obrotu, który sterownik i tak stosuje** (`turing-rev-a` ma
+własne 90°, więc `180` daje 270°). Wolno **tylko `0` albo `180`** — ćwierć obrotu
+wymagałaby układu pionowego 320×480, a rysowany jest jeden układ 3:2; sama zmiana
+kąta dałaby albo skalowanie (ten układ to włoskowate linie, nie przetrwa go),
+albo ładunek o długości, która nie pasuje do prostokąta. Pominięte znaczy `0`.
+Do sprawdzenia bez zmiany pliku: `python -m panel --identify turing-rev-a#0
+--rotate 180`.
 
 **Jasność jest per ekran, bo skale są nieporównywalne**: `ax206` to 0..7
 (właściwość firmware'u), `turing-rev-a` to 0..100 %. Pominięta znaczy „domyślna

@@ -45,6 +45,15 @@ def test_construction_builds_one_link_per_entry_and_touches_no_hardware():
     assert all(l.dev is None for l in app.panels)
 
 
+def test_each_link_carries_its_own_mounting_angle():
+    """One frame, two screens, one of them upside down. The angle belongs to the
+    panel, not to the render: the frame handed out is the same object for both."""
+    app = app_mod.App(cfg(panels=[{"backend": "ax206", "port_path": "3.4"},
+                                  {"backend": "ax206", "index": 1,
+                                   "rotate": 180}]))
+    assert [l.spec.rotate for l in app.panels] == [0, 180]
+
+
 def test_one_frame_reaches_every_panel():
     a, b = FakeLink("a"), FakeLink("b")
     frame = app_with([a, b]).tick()

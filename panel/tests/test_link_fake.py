@@ -27,7 +27,8 @@ class FakeDriver:
                          rect_updates=rect_updates, acked=acked,
                          brightness=Scale("steps", 0, 7, 5),
                          bytes_per_sec=870_000)
-        self.writes = []
+        self.writes = []                   # [(rect, length)] - what most tests read
+        self.payloads = []                 # the bytes, for the rotation tests
         self.status = 0 if acked else None
         self.fail_next = False
         self.resets = 0
@@ -38,6 +39,7 @@ class FakeDriver:
             self.fail_next = False
             raise DriverError("fake write failure")
         self.writes.append((rect, len(payload)))
+        self.payloads.append(bytes(payload))
         return self.status
 
     def set_brightness(self, level):
@@ -76,21 +78,27 @@ def cfg(**over):
     return C.Config(data)
 
 
-def spec(**over):
+def spec(rotate=0, **over):
     data = {"backend": "fake", "selector": {}, "brightness": 5}
     data.update(over)
-    return C.PanelSpec(data["backend"], data["selector"], data["brightness"])
+    return C.PanelSpec(data["backend"], data["selector"], data["brightness"],
+                       rotate=rotate)
 
 
-def make_link(dev, **over):
+def make_link(dev, rotate=0, **over):
     """A PanelLink wired to `dev`, with the opening path stubbed out - opening is
-    the device layer's business and has its own tests."""
-    link = link_mod.PanelLink(spec(), cfg(**over))
+    the device layer's business and has its own tests.
+
+    The stub composes the mounting angle exactly as ensure() does, because that
+    composition is the thing several tests below are about.
+    """
+    link = link_mod.PanelLink(spec(rotate), cfg(**over))
 
     def ensure():
         if link.dev is None:
             link.dev = dev
-            link.surface = surface.for_caps(dev.caps)
+            link.caps = dev.caps.rotated(link.spec.rotate)
+            link.surface = surface.for_caps(link.caps)
         return True
 
     link.ensure = ensure
@@ -217,6 +225,68 @@ def test_byte_order_and_rotation_come_from_the_driver(clock):
     a, _ = frames()
     link.send(a)
     assert dev.writes == [((0, 0, 320, 480), FULL)]
+
+
+def test_a_mounted_upside_down_panel_gets_a_turned_frame(clock):
+    """The angle the file asks for composes with the driver's own, and what lands
+    on the glass is the frame turned by the sum - not by either half."""
+    dev = FakeDriver()
+    link = make_link(dev, rotate=180)
+    a, _ = frames()
+    link.send(a)
+    assert link.caps.rotate == 180
+    assert dev.payloads == [a.rgb565(BIG, 180)]
+    assert a.rgb565(BIG, 180) != a.rgb565(BIG, 0), "a half turn must change pixels"
+
+
+def test_rotation_composes_with_the_drivers_own(clock):
+    dev = FakeDriver(native=(320, 480), byte_order=LITTLE, rotate=90)
+    link = make_link(dev, rotate=180)
+    a, _ = frames()
+    link.send(a)
+    assert link.caps.rotate == 270
+    assert dev.payloads == [a.rgb565(LITTLE, 270)]
+    assert dev.writes == [((0, 0, 320, 480), FULL)]
+
+
+def test_partial_updates_still_reconstruct_a_turned_frame(clock):
+    """The diff runs in device space, after rotation, so a half turn must be
+    invisible to it. Written as the reconstruction property, because that is the
+    only thing that would catch a rotation applied twice or on the wrong side."""
+    dev = FakeDriver(acked=False, rect_updates=True, native=(320, 480),
+                     byte_order=LITTLE, rotate=90)
+    link = make_link(dev, rotate=180)
+    a, b = frames()
+    link.send(a)
+    link.send(b)
+    assert len(dev.writes) > 1
+    glass = bytearray(a.rgb565(LITTLE, 270))
+    for ((x0, y0, x1, y1), _), payload in zip(dev.writes[1:], dev.payloads[1:]):
+        row = (x1 - x0) * 2
+        for i, y in enumerate(range(y0, y1)):
+            at = y * 320 * 2 + x0 * 2
+            glass[at:at + row] = payload[i * row:(i + 1) * row]
+    assert bytes(glass) == b.rgb565(LITTLE, 270)
+
+
+def test_an_impossible_angle_backs_off_instead_of_dying(clock, caplog, monkeypatch):
+    """A quarter turn never passes validation, but run.pyw's error card builds a
+    Config without validating. It has to end in a logged retry with the handle
+    given back, not a traceback and not a locked module."""
+    dev = FakeDriver()
+    dev.closed = 0
+
+    def close():
+        dev.closed += 1
+
+    dev.close = close
+    monkeypatch.setattr(link_mod.device, "open_panel", lambda spec, opts: dev)
+    link = link_mod.PanelLink(spec(rotate=90), cfg())
+    with caplog.at_level("WARNING"):
+        assert link.ensure() is False
+    assert link.dev is None and link.caps is None
+    assert dev.closed == 1, "a handle we do not keep must be given back"
+    assert any("obrot" in r.getMessage() for r in caplog.records)
 
 
 def test_failures_log_once_per_changed_message(clock, caplog):

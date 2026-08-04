@@ -125,6 +125,50 @@ def test_top_level_brightness_still_checked_in_the_old_shape():
     assert any("brightness" in p for p in problems(brightness=9))
 
 
+# --- orientation ------------------------------------------------------------
+
+
+def test_a_half_turn_reaches_the_spec_and_not_the_selector():
+    """The trap: any key not explicitly excluded becomes a selector, where
+    select() ignores it silently and the panel is picked by something else."""
+    spec, = base(panels=[{"backend": "ax206", "port_path": "3.4",
+                          "rotate": 180}]).panels
+    assert spec.rotate == 180
+    assert spec.selector == {"port_path": "3.4"}
+
+
+def test_rotate_is_not_an_unknown_key():
+    ps = problems(panels=[{"backend": "ax206", "port_path": "3.4", "rotate": 180}])
+    assert not any("nieznane klucze" in p for p in ps)
+
+
+def test_an_omitted_angle_means_the_ordinary_mounting():
+    spec, = base(panels=[{"backend": "ax206"}]).panels
+    assert spec.rotate == 0
+
+
+def test_a_quarter_turn_says_why_not():
+    """Not "invalid value": someone asking for 90 wants a portrait screen, and the
+    answer is that the layout does not exist, not that they mistyped."""
+    ps = problems(panels=[{"backend": "turing-rev-a", "rotate": 90}])
+    assert any("rotate" in p and "pionow" in p for p in ps)
+
+
+@pytest.mark.parametrize("value", ["do gory nogami", float("nan"), True])
+def test_a_nonsense_angle_is_a_problem_not_an_exception(value):
+    ps = problems(panels=[{"backend": "ax206", "rotate": value}])
+    assert any("rotate" in p for p in ps)
+
+
+def test_two_entries_differing_only_by_the_angle_are_still_one_device():
+    """Orientation is not identity: pointing two entries at one screen and turning
+    one of them would mean the screen flips with every tick."""
+    ps = problems(panels=[{"backend": "ax206", "port_path": "3.4"},
+                          {"backend": "ax206", "port_path": "3.4",
+                           "rotate": 180}])
+    assert any("to samo urzadzenie" in p for p in ps)
+
+
 def test_broken_width_does_not_break_panel_validation():
     """The canvas is validated further down; asking a driver for its capabilities
     must not be the place that trips over "480"."""

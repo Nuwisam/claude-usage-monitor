@@ -94,6 +94,33 @@ class Caps:
         self.brightness = brightness        # Scale
         self.bytes_per_sec = bytes_per_sec  # measured, used for write timeouts
 
+    def rotated(self, extra):
+        """These capabilities as seen by a panel MOUNTED `extra` degrees round.
+
+        `rotate` here means two different things composed into one number: how the
+        logical canvas maps onto this model's framebuffer (the driver's business)
+        and how the glass hangs on the wall (the owner's). Composing them here
+        rather than in every reader keeps `caps.rotate` the single value that
+        surface.py, link.py and the CLI already trust.
+
+        Only half turns. A quarter turn would swap `native` and demand a portrait
+        canvas the renderer does not draw; config validation says so with a
+        readable message long before this. The raise is the guard for the paths
+        that never validate - run.pyw's error card builds a Config by hand.
+        """
+        if not extra:
+            return self
+        if extra != 180:
+            raise DriverError(
+                "obrot %r nie jest obslugiwany: wolno 0 albo 180 (cwierc obrotu "
+                "wymagalaby ukladu pionowego, ktorego nie ma)" % (extra,))
+        return Caps(name=self.name, canvas=self.canvas, native=self.native,
+                    rotate=(self.rotate + extra) % 360,
+                    byte_order=self.byte_order, rect_updates=self.rect_updates,
+                    acked=self.acked, brightness=self.brightness,
+                    bytes_per_sec=self.bytes_per_sec,
+                    reset_on_open=self.reset_on_open)
+
     def __repr__(self):
         return "<Caps %s %dx%d %s%s%s>" % (
             self.name, self.native[0], self.native[1], self.byte_order,

@@ -83,10 +83,13 @@ def cmd_identify(args):
     client uses, so rotation and byte order are exercised, not bypassed."""
     cfg, opts = _options(args)
     backend, index = _parse_id(args.identify)
-    spec = C.PanelSpec(backend, {"index": index})
+    spec = C.PanelSpec(backend, {"index": index}, rotate=args.rotate or 0)
     dev = device.open_panel(spec, opts)
     try:
-        caps = dev.caps
+        # Rotated like the client would rotate it: a picture that tells you which
+        # screen is which has to match the one the client will draw, or the answer
+        # is about the wrong screen.
+        caps = dev.caps.rotated(spec.rotate)
         dev.set_brightness(caps.brightness.hi)
         width, height = caps.canvas
         img, d = draw.new_canvas((width, height))
@@ -114,10 +117,10 @@ def cmd_probe(args):
     spec = args.panel_spec(cfg)
     dev = device.open_panel(spec, opts)
     try:
-        caps = dev.caps
-        print("otwarty: %s  plotno=%dx%d  natywnie=%dx%d  %s  %s  %s"
+        caps = dev.caps.rotated(spec.rotate)
+        print("otwarty: %s  plotno=%dx%d  natywnie=%dx%d  obrot=%d st.  %s  %s  %s"
               % (spec.tag, caps.canvas[0], caps.canvas[1], caps.native[0],
-                 caps.native[1], caps.byte_order,
+                 caps.native[1], caps.rotate, caps.byte_order,
                  "prostokaty" if caps.rect_updates else "tylko pelne klatki",
                  "z potwierdzeniem" if caps.acked else "BEZ potwierdzen"))
 
@@ -238,6 +241,9 @@ def build_parser():
     ap.add_argument("--index", type=int, help="wymus urzadzenie o tym indeksie")
     ap.add_argument("--port-path", dest="port_path",
                     help="wymus urzadzenie o tym lancuchu portow, np. 3.4")
+    ap.add_argument("--rotate", type=int, choices=C.ROTATIONS,
+                    help="jak ekran wisi: 180 = do gory nogami (domyslnie "
+                         "z panel.json)")
     return ap
 
 
@@ -259,12 +265,18 @@ def main(argv=None):
         panels = cfg.panels
         if selector or args.backend:
             backend = args.backend or (panels[0].backend if panels else "ax206")
-            return C.PanelSpec(backend, selector)
+            return C.PanelSpec(backend, selector, rotate=args.rotate or 0)
         if not panels:
             raise DriverError(
                 "nie wiem, ktory ekran wziac: brak `panels` w panel.json. "
                 "Uruchom `python -m panel --list`")
-        return panels[0]
+        spec = panels[0]
+        if args.rotate is not None:
+            # The flag wins, but only over the angle - reusing the configured spec
+            # keeps the device selector and the brightness the file chose.
+            spec = C.PanelSpec(spec.backend, spec.selector, spec.brightness,
+                               spec.name, spec.index, args.rotate)
+        return spec
     args.panel_spec = panel_spec
 
     try:
