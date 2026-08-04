@@ -11,7 +11,8 @@ zostaje ostatni znany stan limitow.
 """
 import time
 
-from . import ax206, device
+from . import device, surface as surfaces
+from .drivers.base import DriverError
 from .log import get as log
 
 BACKOFF = (1.0, 2.0, 5.0, 10.0, 30.0)
@@ -30,15 +31,27 @@ MISSED_CSW_LIMIT = 3
 # Swiadomie NIE ma tu ctypes.ArgumentError: on znaczy zla sygnature wywolania,
 # czyli blad w nas. Taki ma dojsc do excepthooka i zostac naprawiony, nie
 # wpasc w petle ponawiania.
-DEVICE_ERRORS = (ax206.AX206Error, OSError)
+DEVICE_ERRORS = (DriverError, OSError)
 
 
 class PanelLink:
-    def __init__(self, cfg):
+    def __init__(self, spec, cfg):
+        self.spec = spec
         self.cfg = cfg
+        self.tag = spec.tag
         self.dev = None
-        self.last_payload = None
-        self.last_sent = 0.0
+        # Resolved on open: a panel entry may leave it out, and the default is the
+        # driver's, because the scales are not comparable across displays.
+        self.brightness = spec.brightness
+        # What we believe is on the glass. None means "no display open"; a fresh
+        # Surface means "open, but we know nothing about its pixels yet".
+        self.surface = None
+        # Full repaints are timed separately from writes. Once a display can take
+        # partial updates, a write happens every time the clock ticks, so timing
+        # the periodic repaint off "last write" would mean it never happens - and
+        # on a link that acknowledges nothing, that repaint is the only way back
+        # from a silent desync.
+        self.last_full_sent = 0.0
         self._attempt = 0
         self._next_try = 0.0
         self._last_error = None
@@ -58,18 +71,20 @@ class PanelLink:
         if now < self._next_try:
             return False
         try:
-            finder = device.finder_for(self.cfg.device, self.cfg.libusb_dll)
-            dev = ax206.AX206(finder=finder, width=self.cfg.width,
-                              height=self.cfg.height,
-                              dll_path=self.cfg.libusb_dll).open()
-            # Reset przy KAZDYM otwarciu. 03.08 po przejeciu modulu od innego
-            # procesu panel potwierdzal kazda klatke (status=0) i nie rysowal nic;
-            # ten sam kod po reset() rysowal. resync() z open() nie wystarczyl —
-            # potok byl drozny, zabrudzony byl firmware. MISSED_CSW_LIMIT tego nie
-            # zlapie, bo liczy klatki BEZ potwierdzenia. Kosztuje ~1,5 s, ale
-            # ensure() otwiera tylko przy starcie i po awarii, nie co tick.
-            dev.reset()
-            dev.set_brightness(self.cfg.brightness)
+            dev = device.open_panel(self.spec, device.options_for(self.cfg))
+            caps = dev.caps
+            if caps.reset_on_open:
+                # Reset on EVERY open. 03.08, after taking the module over from
+                # another process, the panel acknowledged every frame (status=0)
+                # and drew nothing; the same code after reset() drew. The resync()
+                # inside open() was not enough - the pipe was clear, the firmware
+                # was dirty. MISSED_CSW_LIMIT cannot catch that, because it counts
+                # frames WITHOUT acknowledgement. It costs ~1.5 s, but ensure()
+                # opens at startup and after a failure, not every tick.
+                dev.reset()
+            self.brightness = (self.spec.brightness if self.spec.brightness is not None
+                               else caps.brightness.default)
+            dev.set_brightness(self.brightness)
         except DEVICE_ERRORS as e:
             self._fail("%s: %s" % (type(e).__name__, e))
             return False
@@ -77,17 +92,17 @@ class PanelLink:
         self._attempt = 0
         self._last_error = None
         self._missed_run = 0
-        # Nie wiemy, co jest na ekranie po cudzym procesie — nastepna klatka
-        # musi pojsc bezwarunkowo.
-        self.last_payload = None
-        log().info("panel: otwarty (%s, jasnosc %s)", dev.serial, self.cfg.brightness)
+        # We do not know what is on the screen after another process had it, so a
+        # brand new Surface (which knows nothing) forces the next frame out whole.
+        self.surface = surfaces.for_caps(dev.caps, log=log().warning)
+        log().info("%s: otwarty (jasnosc %s)", self.tag, self.brightness)
         return True
 
     def _fail(self, message):
         # Log RAZ na zmiane stanu. Panel zajety przez inny program potrafi byc zajety
         # godzinami i linia co sekunde zalalaby plik.
         if message != self._last_error:
-            log().warning("panel: %s", message)
+            log().warning("%s: %s", self.tag, message)
             self._last_error = message
         delay = BACKOFF[min(self._attempt, len(BACKOFF) - 1)]
         self._attempt += 1
@@ -100,17 +115,17 @@ class PanelLink:
             except Exception:
                 pass
         self.dev = None
-        self.last_payload = None
+        self.surface = None
         self._fail(why)
 
     def reset(self, why):
         """Twarde odzyskanie panelu. Po nim ekran jest nieznany, wiec kasujemy
         pamiec ostatniej klatki."""
-        log().warning("panel: reset (%s)", why)
+        log().warning("%s: reset (%s)", self.tag, why)
         try:
             self.dev.reset()
-            self.dev.set_brightness(self.cfg.brightness)
-            self.last_payload = None
+            self.dev.set_brightness(self.brightness)
+            self.surface.invalidate()
             self._missed_run = 0
             return True
         except DEVICE_ERRORS + (AttributeError,) as e:
@@ -124,50 +139,75 @@ class PanelLink:
     # -- wysylka -----------------------------------------------------------
 
     def send(self, frame, force=False):
-        """Wysyla klatke, jesli rozni sie od tego, co panel juz pokazuje.
+        """Put `frame` on the glass, writing as little as the display allows.
 
-        Porownanie 307 kB bajtow kosztuje ulamek milisekundy, a transfer 376 ms —
-        wiec to porownanie jest tu glownym mechanizmem oszczedzania, jedynym
-        jaki ten firmware zostawia (blitu czesciowego nie ma, patrz ax206.py).
+        What to write is the Surface's decision; whether we can trust our belief
+        about the glass is this layer's. The three cases where we cannot trust it
+        all end in `invalidate()`, never in "skip the comparison": with a diff
+        engine those are different things, and only the first one actually draws.
         """
         if not self.ensure():
             return False
+        caps = self.dev.caps
+        # Periodic full repaint, timed from the last FULL write. On a display that
+        # acknowledges nothing this is the only way back from a silently
+        # desynchronised screen, so it must not be reset by ordinary partial writes.
         heal = (self.cfg.heal_repaint_sec
-                and time.monotonic() - self.last_sent >= self.cfg.heal_repaint_sec)
-        # Otwarty ciag klatek bez potwierdzenia ZNOSI skrot po rownosci. Skoro
-        # nie wiemy, czy panel przyjal ostatnia klatke, to "obraz sie nie zmienil"
-        # przestaje znaczyc "na szkle jest to, co trzeba".
+                and time.monotonic() - self.last_full_sent >= self.cfg.heal_repaint_sec)
+        # An open run of unacknowledged frames cancels our belief about the glass.
+        # If we do not know whether the display took the last frame, "the image did
+        # not change" stops meaning "the right image is on the screen".
         #
-        # Bez tego prog MISSED_CSW_LIMIT byl w praktyce martwy: licznik rosl
-        # wylacznie przy faktycznej wysylce, a wysylamy mniej wiecej raz na
-        # minute — wiec trzy klatki to bylo od trzech minut do kwadransa
-        # (przy nieruchomym obrazie dopiero heal_repaint_sec ruszal licznik).
-        # Teraz prog jest osiagany w kolejnych tickach, czyli w sekundach.
-        unsure = self._missed_run > 0
-        if not force and not heal and not unsure and frame.payload == self.last_payload:
+        # Only for displays that acknowledge at all: where status is always None by
+        # design, this would be permanently true and every tick would repaint.
+        unsure = caps.acked and self._missed_run > 0
+        if force or heal or unsure:
+            self.surface.invalidate()
+        first = self.surface.blank
+        update = self.surface.plan(frame)
+        if not update:
             return True
-        first = self.last_payload is None
         try:
             t0 = time.monotonic()
-            status = self.dev.blit(frame.payload)
+            status = None
+            for rect, payload in update.writes:
+                status = self.dev.write(payload, rect)
         except DEVICE_ERRORS as e:
-            self.drop("blit nieudany: %s: %s" % (type(e).__name__, e))
+            # A partially written frame leaves the glass in a state we cannot
+            # describe, so the next plan has to be a whole one.
+            self.surface.invalidate()
+            self.drop("zapis nieudany: %s: %s" % (type(e).__name__, e))
             return False
 
         if first:
-            # JEDNA linia na otwarcie, nie co klatke. "panel: otwarty" mowi tylko,
-            # ze mamy uchwyt — a milczacy ekran przy otwartym uchwycie wyglada
-            # w logu identycznie jak poprawna praca. Bez tej linii jedynym
-            # sposobem na rozstrzygniecie bylo zatrzymanie zadania i --probe.
-            log().info("panel: pierwsza klatka po otwarciu (status=%s, %.0f ms)",
-                       status, (time.monotonic() - t0) * 1000)
+            # ONE line per open, not per frame. "panel: otwarty" only says we hold a
+            # handle, and a silent screen behind an open handle looks exactly like
+            # correct operation in the log.
+            ms = (time.monotonic() - t0) * 1000
+            if caps.acked:
+                log().info("%s: pierwsza klatka po otwarciu (status=%s, %.0f ms)",
+                           self.tag, status, ms)
+            else:
+                # Deliberately different wording: this driver confirms nothing, so
+                # the line proves the bytes were accepted, not that anything is
+                # visible. An unplugged or scrambled screen would log the same.
+                # ASCII only: panel.log is written in the system encoding, and a
+                # dash outside it comes back as mojibake in every reader.
+                log().info("%s: wyslano pierwsza klatke po otwarciu "
+                           "(bez potwierdzenia - sprawdz wzrokiem, %.0f ms)",
+                           self.tag, ms)
 
-        self.last_payload = frame.payload
-        self.last_sent = time.monotonic()
+        # Commit BEFORE the acknowledgement ladder below: reset() invalidates the
+        # surface, and committing afterwards would quietly undo that.
+        self.surface.commit(update)
+        if update.full:
+            self.last_full_sent = time.monotonic()
+        if not caps.acked:
+            return True
         if status is None:
             self._missed_run += 1
             if self._missed_run >= MISSED_CSW_LIMIT:
-                # Brak CSW przy poprawnej klatce znaczy, ze potok jest zabrudzony.
+                # No CSW for a well-formed frame means the pipe is dirty.
                 self.reset("%d klatek bez potwierdzenia" % self._missed_run)
         else:
             self._missed_run = 0

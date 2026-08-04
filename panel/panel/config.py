@@ -61,11 +61,69 @@ class Account:
         return "<Account %s %s>" % (self.slot, self.name or self.uuid)
 
 
+class PanelSpec:
+    """One screen from the `panels` list: which driver, which device, how bright."""
+
+    __slots__ = ("backend", "selector", "brightness", "name", "index")
+
+    def __init__(self, backend, selector, brightness=None, name=None, index=0):
+        self.backend = backend
+        self.selector = selector or {}
+        self.brightness = brightness
+        self.name = name
+        self.index = index                  # position in the list, for messages
+
+    @property
+    def tag(self):
+        """What this panel is called in the log. With more than one screen every
+        line has to say which one it is about."""
+        where = self.selector.get("port_path") or self.selector.get("com")
+        if self.name:
+            return "%s %s" % (self.backend, self.name)
+        return "%s %s" % (self.backend, where) if where else self.backend
+
+    def __repr__(self):
+        return "<PanelSpec %s %r>" % (self.backend, self.selector)
+
+
 class Config:
     def __init__(self, data, path=CONFIG_PATH):
         self.path = path
+        # The raw file as written, kept for PRESENCE checks only - values are
+        # always read from _d. Without it there is no way to tell "the user wrote
+        # brightness" from "DEFAULTS put brightness there", and rules about which
+        # keys may appear together become impossible to state.
+        self._raw = dict(data or {})
         self._d = dict(DEFAULTS)
         self._d.update(data or {})
+        self._d["panels"] = self._migrate_panels()
+
+    def _migrate_panels(self):
+        """The old single-screen shape becomes a one-entry list.
+
+        This runs in __init__, not in validate(), because everything that builds a
+        Config expects `panels` to exist - including run.pyw's error card path and
+        the tests, neither of which validates first.
+
+        Migrating `device` is safe precisely because the old value had exactly one
+        possible meaning: there was one driver. That is the difference from the
+        legacy `location` selector, which is rejected instead of migrated - there
+        the VALUE itself was untrustworthy, so honouring it would mean guessing
+        which module the author meant.
+        """
+        raw = self._raw.get("panels")
+        if raw is not None:
+            return raw if isinstance(raw, list) else []
+        device = self._raw.get("device")
+        entry = {}
+        if isinstance(device, dict):
+            entry.update(device)
+        if "brightness" in self._raw:
+            entry["brightness"] = self._raw["brightness"]
+        # `backend` last: a file with a stray "device": {"backend": ...} must not
+        # be able to point the old shape at a different driver.
+        entry["backend"] = "ax206"
+        return [entry]
 
     def __getattr__(self, name):
         try:
@@ -86,6 +144,21 @@ class Config:
             if not raw:
                 continue
             out.append(Account(raw.get("uuid"), raw.get("name"), slot))
+        return out
+
+    @property
+    def panels(self):
+        """Configured screens, in file order. Malformed entries are skipped here
+        and reported by validate() - this property is read by code that already
+        passed validation."""
+        out = []
+        for i, raw in enumerate(self._d.get("panels") or []):
+            if not isinstance(raw, dict) or not raw.get("backend"):
+                continue
+            selector = {k: v for k, v in raw.items()
+                        if k not in ("backend", "brightness", "name")}
+            out.append(PanelSpec(raw["backend"], selector, raw.get("brightness"),
+                                 raw.get("name"), i))
         return out
 
     def validate(self):
@@ -114,6 +187,8 @@ class Config:
         if not seen:
             problems.append("nie wskazano zadnego konta (account_1 / account_2)")
 
+        self._check_panels(problems)
+
         dev = self._d.get("device")
         if dev is not None and not isinstance(dev, dict):
             problems.append("device musi byc obiektem, np. "
@@ -133,11 +208,119 @@ class Config:
         # PROPERTY_BRIGHTNESS z firmware'u AX206. Reszta dostaje sama podloge,
         # bo sufit musialbym wymyslic — a wymyslony prog, ktory odrzuca poprawna
         # konfiguracje, jest gorszy niz brak progu.
-        self._number(problems, "brightness", int, 0, 7)
+        #
+        # In the new shape brightness is per panel and the scales differ, so the
+        # top-level key is checked only where it can still mean the AX206 range.
+        if "panels" not in self._raw:
+            self._number(problems, "brightness", int, 0, 7)
         self._number(problems, "tick_sec", float, 0.01)
         self._number(problems, "width", int, 1)
         self._number(problems, "height", int, 1)
         return problems
+
+    def _check_panels(self, problems):
+        """The `panels` list: shape, driver names, selector keys, brightness.
+
+        Everything here APPENDS a problem and never raises, including the numeric
+        checks - a hand-edited panel.json is the normal case, and a TypeError out
+        of validate() would reach the excepthook under pythonw, where nobody sees
+        it and the task restarts every minute.
+        """
+        from .drivers import REGISTRY, known
+
+        if "panels" in self._raw and "device" in self._raw:
+            problems.append(
+                "panel.json ma naraz `device` (stary ksztalt) i `panels` (nowy) "
+                "— zostaw jedno; scalanie ich znaczyloby zgadywanie")
+        if "panels" in self._raw and "brightness" in self._raw:
+            problems.append(
+                "jasnosc jest teraz per panel, w kazdym wpisie `panels` — skale "
+                "sterownikow sa rozne, wiec gorne `brightness` byloby dwuznaczne")
+
+        raw = self._raw.get("panels")
+        if raw is not None and not isinstance(raw, list):
+            problems.append("panels musi byc lista obiektow")
+            return
+        entries = self._d.get("panels") or []
+        if not entries:
+            problems.append("nie wskazano zadnego panelu (`panels`)")
+            return
+
+        seen = {}
+        for i, entry in enumerate(entries):
+            where = "panels[%d]" % i
+            if not isinstance(entry, dict):
+                problems.append("%s musi byc obiektem" % where)
+                continue
+            backend = entry.get("backend")
+            if backend not in REGISTRY:
+                problems.append("%s: nieznany backend %r (znam: %s)"
+                                % (where, backend, ", ".join(known())))
+                continue
+            mod = REGISTRY[backend]
+
+            if "location" in entry:
+                # The value itself is untrustworthy, so there is nothing to
+                # migrate: `Hub_#NNNN` inside it is an enumeration counter that
+                # jumped without anyone touching a plug.
+                problems.append(
+                    "%s.location (\"%s\") nie jest juz obslugiwane — czlon Hub_# "
+                    "to licznik enumeracji, ktory przeskakuje bez ruszania "
+                    "wtyczki. Uruchom `python -m panel --list` i wpisz podany "
+                    "port_path" % (where, entry.get("location")))
+                continue
+
+            extra = [k for k in entry
+                     if k not in mod.SELECTOR_KEYS
+                     and k not in ("backend", "brightness", "name")]
+            if extra:
+                # An unknown key used to match nothing and fall through to "the
+                # only device there is" - a typo quietly aimed the client at
+                # whatever happened to be plugged in.
+                problems.append(
+                    "%s: nieznane klucze %s; dla %s wolno: %s"
+                    % (where, ", ".join(sorted(extra)), backend,
+                       ", ".join(mod.SELECTOR_KEYS)))
+
+            key = (backend, tuple(sorted((k, str(v)) for k, v in entry.items()
+                                         if k in mod.SELECTOR_KEYS)))
+            if key in seen and key[1]:
+                problems.append("%s wskazuje to samo urzadzenie co %s"
+                                % (where, seen[key]))
+            seen.setdefault(key, where)
+
+            if entry.get("brightness") is not None:
+                scale = mod.caps_for(self._canvas()).brightness
+                self._panel_number(problems, "%s.brightness" % where,
+                                   entry["brightness"], scale)
+
+    def _canvas(self):
+        """(width, height) if they are usable, else None.
+
+        This runs before the numeric checks below, and a hand-edited file can hold
+        "480" or nonsense there; a driver asked for its capabilities must not be
+        the place that discovers it.
+        """
+        try:
+            return (int(self._d["width"]), int(self._d["height"]))
+        except (TypeError, ValueError, OverflowError, KeyError):
+            return None
+
+    @staticmethod
+    def _panel_number(problems, name, raw, scale):
+        """Per-panel brightness against that driver's own scale.
+
+        int() is the whole guard: it rejects strings, None, Infinity (OverflowError)
+        and NaN (ValueError) alike, so nothing untyped reaches the comparison.
+        """
+        try:
+            value = int(raw)
+        except (TypeError, ValueError, OverflowError):
+            problems.append("%s musi byc liczba (jest: %r)" % (name, raw))
+            return
+        if not (scale.lo <= value <= scale.hi):
+            problems.append("%s poza zakresem %s dla tego sterownika"
+                            % (name, scale.describe()))
 
     def _number(self, problems, name, kind, low, high=None):
         """Jedno pole liczbowe: DOPISUJE problem, nigdy nie rzuca.
@@ -201,6 +384,5 @@ def example():
         "stream_token": "<wpis z STREAM_TOKENS o etykiecie panel>",
         "account_1": {"uuid": "<uuid konta>", "name": "you@example.org"},
         "account_2": {"uuid": "<uuid konta>", "name": "billing@example.org"},
-        "device": {"port_path": "3.4"},
-        "brightness": 5,
+        "panels": [{"backend": "ax206", "port_path": "3.4", "brightness": 5}],
     }, indent=2, ensure_ascii=False)

@@ -45,7 +45,9 @@ class App:
         self.cfg = cfg
         self.clock = fmt.ServerClock(time.monotonic)
         self.renderer = render.Renderer(cfg.width, cfg.height)
-        self.panel = PanelLink(cfg)
+        # One link per configured screen. Constructing them must not enumerate or
+        # open anything: App(cfg) has to stay cheap and hardware-free.
+        self.panels = [PanelLink(spec, cfg) for spec in cfg.panels]
         self.q = queue.Queue()
         self.stop = threading.Event()
 
@@ -160,15 +162,18 @@ class App:
         if self.holding():
             return None
         frame = self.renderer.frame(self.screen())
-        self.panel.send(frame)
+        # Every panel gets the same frame and handles its own failures: one screen
+        # held by another program must not stop the one next to it from drawing.
+        for link in self.panels:
+            link.send(frame)
         return frame
 
     def run(self):
         uuids = [a.uuid for a in self.cfg.accounts]
         client = stream.StreamClient(self.cfg, uuids, self.q, self.stop)
         client.start()
-        log().info("start: %d konto(a), panel %s", len(uuids),
-                   self.cfg.device or "(jedyny)")
+        log().info("start: %d konto(a), panele: %s", len(uuids),
+                   ", ".join(link.tag for link in self.panels) or "(brak)")
         deadline = time.monotonic()
         try:
             while not self.stop.is_set():
@@ -183,7 +188,8 @@ class App:
                 self.stop.wait(delay)
         finally:
             self.stop.set()
-            self.panel.close()      # bez czyszczenia ekranu, celowo
+            for link in self.panels:
+                link.close()        # bez czyszczenia ekranu, celowo
 
     def run_once(self, wait_sec=30.0):
         """Polacz, poczekaj na pierwsza ramke, narysuj raz, wyjdz."""
@@ -197,9 +203,12 @@ class App:
         self.stop.set()
         got = self.first_data_at is not None
         frame = self.renderer.frame(self.screen())
-        self.panel.send(frame, force=True)
-        self.panel.close()
-        return got, frame
+        # Per-panel result, not just the stream's: a run where no screen drew
+        # anything used to exit 0 because send()'s answer was thrown away.
+        drew = [(link.tag, link.send(frame, force=True)) for link in self.panels]
+        for link in self.panels:
+            link.close()
+        return got, frame, drew
 
 
 def main(argv=None):

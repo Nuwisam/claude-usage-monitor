@@ -22,3 +22,9 @@ libusb==1.0.29.post7
 # certifi to magazyn CA — jego odswiezanie ma byc decyzja, nie skutkiem ubocznym.
 # Podbijaj swiadomie, gdy przestanie ufac lancuchowi certyfikatow Twojego serwera.
 certifi==2026.7.22
+# pyserial obsluguje DRUGI ekran (Turing rev A na CH340). Wersja jest przypieta
+# takze dlatego, ze sterownik czyta z niej jedna rzecz prywatna: licznik bajtow
+# z `_overlapped_write.InternalHigh` po przeterminowanym zapisie. Bez niego nie
+# da sie dopchnac dokladnej reszty urwanej bitmapy, a to jedyny znany sposob
+# wyjscia z rozjazdu na laczu, ktore niczego nie potwierdza.
+pyserial==3.5

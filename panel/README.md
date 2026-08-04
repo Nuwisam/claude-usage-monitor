@@ -1,16 +1,22 @@
-# panel — limity Claude na wyświetlaczu USB 480×320
+# panel — limity Claude na wyświetlaczach USB
 
-Klient headless, który subskrybuje `/api/stream` i rysuje stan limitów na module
-AX206 stojącym na biurku. Układ **4a** z makiety: dwa konta w pasach, procent
-obok bloku, kredyty na dole pasa.
+Klient headless, który subskrybuje `/api/stream` i rysuje stan limitów na
+ekranach stojących na biurku. Układ **4a** z makiety: dwa konta w pasach, procent
+obok bloku, kredyty na dole pasa. Renderer jest jeden i rysuje jedno logiczne
+płótno 480×320; ekrany różnią się tym, co z tym płótnem robią.
 
 ```
-python -m panel                 pętla (to samo, co robi zadanie harmonogramu)
-python -m panel --list          jakie moduły widać i na których portach
-python -m panel --identify 0    namaluj wielki numer na wskazanym module
-python -m panel --probe         karta testowa: kolory, cztery rysunki paska, ogonki
-python -m panel --once          jedna klatka z prawdziwych danych i wyjście
+python -m panel                          pętla (to samo, co robi zadanie harmonogramu)
+python -m panel --list                   jakie ekrany widać i na których portach
+python -m panel --identify ax206#0       namaluj wielki numer na wskazanym ekranie
+python -m panel --probe [--backend N]    karta testowa: kolory, paski, ogonki, prostokąty
+python -m panel --once                   jedna klatka z prawdziwych danych i wyjście
 ```
+
+Jedna wyrenderowana klatka idzie na **wszystkie** skonfigurowane ekrany; każdy ma
+własne połączenie, własny backoff i własną pamięć tego, co pokazuje. Sterowniki
+siedzą w [`panel/drivers/`](panel/drivers) — jeden plik na typ ekranu, rejestr
+jest jawnym słownikiem w `__init__.py`.
 
 Bez sprzętu:
 
@@ -83,6 +89,83 @@ identyczny protokół (komenda blit zgadza się co do bajtu), ale na tym egzempl
 nie działa: jej `init()` traktuje brak CSW jako błąd krytyczny i wywala się
 w każdej próbie, także po czystym resecie.
 
+## The second screen: Turing rev A over a serial port
+
+A different device in every respect except the pixel format. Measured on the unit
+on this desk; the driver is [`panel/drivers/turing_rev_a.py`](panel/drivers/turing_rev_a.py).
+
+| | |
+|---|---|
+| identity | `USB\VID_1A86&PID_5722\USB35INCHIPSV2`, CompatibleIds `USB\Class_02&SubClass_02&Prot_01` |
+| driver | in-box **usbser.sys** (CDC-ACM), no CH34x install on a fresh machine |
+| BusReportedDeviceDesc | `UsbMonitor`; Windows shows it as "Urządzenie szeregowe USB (COMn)" |
+| resolution | 320 × 480 **portrait**; our 480 × 320 layout is rotated 90° host-side |
+| pixels | RGB565 **low byte first** (the AX206 wants the other order) |
+| wire | 115200 8N1 with rtscts — **the configured baud is ignored**, 1 M and 2 M measure the same |
+| throughput | **6.1 µs/byte, zero fixed overhead**; full frame 307 200 B = 1.87 s |
+| partial updates | **real** — a rect updates exactly that rect |
+| brightness | percent, 0..100, inverted on the wire |
+| acknowledgement | **none, ever** |
+
+**It is rev A, and that was measured, not assumed.** It ignores the rev B
+handshake (`0xCA 'HELLO' … 0xCA`) at 115200 and at 1 Mbaud, and it draws
+correctly for every rev A command we send. Rev B is a different command set
+(`0xCA`–`0xCE`) and will get its own file next to this one, never a flag inside it.
+
+**Nothing is acknowledged, so nothing detects a wrong frame.** There is no CSW
+analogue and no read-back: an unplugged, upside-down or desynchronised screen
+accepts bytes exactly like a healthy one. Two consequences the code is built
+around:
+
+- A **torn write is not recoverable by reopening the port.** The firmware counts
+  pixel bytes; closing the COM port does not touch the MCU, so the next command's
+  6 bytes get eaten as pixels and the stream desynchronises for good — with an
+  odd offset that means permanently byte-swapped colour. The driver pads the exact
+  remainder (the count survives in pyserial's `_overlapped_write.InternalHigh`
+  even though the exception drops it) and forces a full repaint. **If the padding
+  fails too, only unplugging the screen fixes it.**
+- **Every write is time-bounded.** pyserial's default `write_timeout=None` waits
+  forever on Windows, and with rtscts a screen that deasserts CTS would freeze the
+  tick loop — and with it *the other screen*, silently, with the scheduled task
+  seeing a live process and never restarting it.
+
+`RESET` (101) is never sent (unmeasured, and a firmware mid-payload would eat it
+as pixels). `SET_ORIENTATION` (121) is never sent either: rotation is host-side
+and measured, and without acknowledgement a coordinate-space mistake would show
+up as a scrambled screen rather than an error.
+
+**Identity is the port chain, same as the AX206.** pyserial reports `1-8.4`; we
+keep `8.4` and drop the bus for exactly the reason `Hub_#` was dropped before.
+`USB35INCHIPSV2` is a firmware constant, so it filters (other WCH serial devices
+share the VID/PID and must never receive bitmap commands) but never selects.
+Verified on **one** unit — a second identical screen has not been tested.
+
+### Partial updates: what actually gets written
+
+A full frame every second is impossible here (1.87 s), and unnecessary. The
+client diffs the packed 565 buffer in device space on an 8 × 8 tile grid,
+coalesces tiles into rectangles without ever covering a clean pixel, and cuts each
+rectangle straight out of the full-frame payload. Measured on real frames
+(cost = bytes × 6.1 µs):
+
+| change | rectangles | bytes | scan | on the wire |
+|---|---|---|---|---|
+| one tick (seconds counter) | 3 | 1 536 | 2.3 ms | 9 ms |
+| clock minute rollover | 3 | 1 792 | 2.0 ms | 11 ms |
+| `base` → `states` | 63 | 87 680 | 4.5 ms | 535 ms |
+| `base` → `edges` | 69 | 129 920 | 5.8 ms | 793 ms |
+
+So the steady state is ~1 % of a tick and a **scene change costs 0.5–0.9 s** —
+rare, always cheaper than a full frame, and the loop drops ticks rather than
+catching up. Above 256 rectangles or 60 % of the frame the client sends the whole
+frame instead: on a scene change a bounding box *is* the whole frame, and a
+thousand crops on top of it are pure loss.
+
+**The periodic full repaint is timed from the last FULL write**, not from the last
+write. With partial updates the clock writes something every minute, so timing it
+off "last write" would mean it never fires — and on a link that confirms nothing,
+that repaint is the only way back from a silent desync.
+
 ## Skąd biorą się dane
 
 `GET /api/stream?account=<uuid>&account=<uuid>` z `Authorization: Bearer`.
@@ -101,9 +184,11 @@ zgubiona ramka jest nieszkodliwa.
 
 ## Odświeżanie
 
-Tick co sekundę, ale klatka leci na panel **tylko gdy obraz się różni** — przy
-307 kB na transfer to jedyna oszczędność, jaką ten firmware zostawia. Zmierzone
-w spoczynku: 3 klatki na 45 s, czyli ~2,5 % czasu na USB.
+Tick co sekundę, ale na ekran leci **tylko to, co się różni**. Ile z tego wynika,
+zależy od sprzętu: AX206 rysuje wyłącznie pełne klatki, więc oszczędnością jest
+niewysłanie identycznej (zmierzone w spoczynku: 3 klatki na 45 s, ~2,5 % czasu na
+USB); ekran szeregowy przyjmuje prostokąty, więc typowy tick to ~1,5 kB zamiast
+307 kB.
 
 Sekundy zostają tam, gdzie są w makiecie: w odliczaniu poniżej godziny i w wieku
 odczytu poniżej minuty. Wchodzą dokładnie wtedy, gdy pracujesz — a wtedy są
@@ -151,10 +236,25 @@ token ingestu, a plik sondy bywa nadpisywany przy jej aktualizacji.
   "stream_token": "<wpis z STREAM_TOKENS o etykiecie panel>",
   "account_1": {"uuid": "...", "name": "you@example.org"},
   "account_2": {"uuid": "...", "name": "billing@example.org"},
-  "device": {"port_path": "3.4"},
-  "brightness": 5
+  "panels": [
+    {"backend": "ax206",        "port_path": "3.4", "brightness": 5},
+    {"backend": "turing-rev-a", "port_path": "8.4", "brightness": 40, "name": "prawy"}
+  ]
 }
 ```
+
+**Jasność jest per ekran, bo skale są nieporównywalne**: `ax206` to 0..7
+(właściwość firmware'u), `turing-rev-a` to 0..100 %. Pominięta znaczy „domyślna
+tego sterownika". Górne `brightness` obok `panels` jest **błędem konfiguracji**,
+nie kompromisem — `5` znaczyłoby środek zakresu na jednym ekranie i prawie
+zgaszony na drugim.
+
+**Stary kształt (`"device": {...}` + górne `brightness`) nadal działa** i zamienia
+się w jednoelementową listę `ax206`. Wolno go zmigrować, bo miał dokładnie jedno
+możliwe znaczenie — był jeden sterownik. To jest różnica wobec `location`, gdzie
+niewiarygodna była sama wartość. `device` i `panels` naraz to błąd: scalanie
+znaczyłoby zgadywanie. Nieznany klucz w selektorze też jest błędem — kiedyś nie
+pasował do niczego i cicho spadał do „jedyne, co widać".
 
 **Konta to dwa nazwane pola, nie lista** — kształt konfiguracji jest tu kształtem
 ekranu, więc trzeciego konta nie da się dopisać przez nieuwagę. Po `/login` na
@@ -193,6 +293,10 @@ bo łańcuch przychodzi z tej samej enumeracji co otwierany uchwyt. Który modu�
 biurku jest który, i tak rozstrzyga wyłącznie `--identify` — tego żaden odczyt
 nie załatwi.
 
+Instalator przyjmuje liczbę ekranów: `.\deploy\install-task.ps1 -Panels 2`. Bez
+niej „OK" po pierwszej linii z logu znaczyłoby „rysuje jeden z dwóch". Skrypt
+celowo nie czyta `panel.json` — przy pierwszej instalacji tego pliku jeszcze nie ma.
+
 Zadanie harmonogramu musi mieć „uruchom **tylko gdy użytkownik jest zalogowany**"
 (dysk sieciowy jest mapowany per sesja, a USB wymaga sesji interaktywnej) i wyłączone
 „zatrzymaj po 3 dniach" — domyślnie włączone, zabijałoby panel co tydzień.
@@ -203,7 +307,9 @@ Zadanie harmonogramu musi mieć „uruchom **tylko gdy użytkownik jest zalogowa
 |---|---|
 | panel czarny / stara treść | `panel.log`; czy zadanie chodzi; czy inny program nie trzyma modułu |
 | „panel zajęty przez inny proces" | inny program albo drugi egzemplarz klienta |
-| `missed_csw` rośnie | wysłaliśmy złą liczbę bajtów — błąd w kodzie, nie w sprzęcie |
+| `missed_csw` rośnie | wysłaliśmy złą liczbę bajtów — błąd w kodzie, nie w sprzęcie (tylko AX206; ekran szeregowy nic nie potwierdza) |
+| ekran szeregowy: kolory zamienione, obraz „przesunięty" | rozjazd bajtowy po urwanym zapisie. Pełne przemalowanie tego **nie** naprawia — wypnij i wepnij wtyczkę |
+| jeden ekran rysuje, drugi nie | każdy panel ma własny backoff; szukaj w logu linii z jego tagiem (`turing-rev-a 8.4: …`) |
 | liczby stoją, wiek rośnie | strumień żyje, ale sonda milczy — to poprawny obraz |
 | „nie wiem" na obu kontach | brak ramek; sprawdź token i UUID-y w `panel.json` |
 | twarda awaria bez śladu | `panel.log.fault` (faulthandler — nie ma konsoli pod `pythonw`) |

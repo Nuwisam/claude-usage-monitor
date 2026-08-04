@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 from PIL import Image                                      # noqa: E402
 
-from panel import ax206, fmt, render                       # noqa: E402
+from panel import fmt, render                              # noqa: E402
 from tests import fixtures                                 # noqa: E402
 
 
@@ -64,13 +64,13 @@ def main():
     frame = render.Renderer().frame(state)
     img = frame.image
     if args.rgb565:
-        img = unpack_rgb565(frame.payload, img.size)
+        img = unpack_rgb565(frame.rgb565("be"), img.size)
     if args.zoom > 1:
         img = img.resize((img.width * args.zoom, img.height * args.zoom),
                          Image.NEAREST)
     img.save(args.out)
     print("%s  %dx%d  ladunek %d B" % (args.out, frame.image.width,
-                                       frame.image.height, len(frame.payload)))
+                                       frame.image.height, len(frame.rgb565("be"))))
 
 
 if __name__ == "__main__":

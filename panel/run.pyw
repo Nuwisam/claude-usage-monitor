@@ -25,16 +25,18 @@ def _card(lines):
     zasada 4 z AGENTS.md. Log tego nie zastepuje: nikt go nie otwiera, dopoki
     nie zobaczy, ze cos jest nie tak.
 
-    Selektor urzadzenia bierzemy z DOMYSLNYCH ustawien, bo zepsuta jest wlasnie
-    konfiguracja — przy jednym module trafia w niego bez zadnej wskazowki.
+    Karta idzie na WSZYSTKIE skonfigurowane ekrany, kazdy osobno: pol biurka
+    z bledem, a pol z zamrozonymi, wiarygodnie wygladajacymi liczbami byloby
+    gorsze niz stan sprzed tej funkcji.
     """
     from panel import config as C, render
+    from panel.drivers import REGISTRY
     from panel.link import PanelLink
 
-    # Z pliku bierzemy WYLACZNIE selektor modulu i sciezke do libusb, i tylko gdy
+    # Z pliku bierzemy WYLACZNIE wskazanie ekranu i sciezke do libusb, i tylko gdy
     # maja poprawny ksztalt. Powod na "bierzemy": walidacja odrzuca konfiguracje
     # najczesciej z powodu, ktory z wyborem urzadzenia nie ma nic wspolnego (brak
-    # tokenu, zle uuid), a przy dwoch modulach domyslny brak selektora nie trafilby
+    # tokenu, zle uuid), a przy dwoch ekranach domyslny brak selektora nie trafilby
     # w zaden. Powod na "wylacznie": to jest sciezka wyswietlania BLEDU KONFIGURACJI,
     # wiec nie wolno jej karmic niesprawdzonymi polami z tego samego pliku —
     # `"device": "cos"` rzucaloby AttributeError w select(), a `"brightness": "duzo"`
@@ -43,15 +45,44 @@ def _card(lines):
         raw = C.load()._d
     except C.ConfigError:
         raw = {}
-    safe = {k: raw[k] for k, kind in (("device", dict), ("libusb_dll", str))
-            if isinstance(raw.get(k), kind)}
+    safe = {}
+    if isinstance(raw.get("libusb_dll"), str):
+        safe["libusb_dll"] = raw["libusb_dll"]
+    entries = []
+    for entry in (raw.get("panels") or []):
+        if not isinstance(entry, dict) or entry.get("backend") not in REGISTRY:
+            continue
+        mod = REGISTRY[entry["backend"]]
+        # Sanityzacja per wpis: zostaje backend i dobrze otypowany selektor.
+        # `brightness` ODPADA celowo — wartosc z zepsutego pliku poszlaby prosto
+        # do set_brightness(), a to jest jedyna rzecz, ktora ta funkcja musi
+        # przezyc.
+        clean = {"backend": entry["backend"]}
+        for key in mod.SELECTOR_KEYS:
+            value = entry.get(key)
+            if isinstance(value, (str, int)) and not isinstance(value, bool):
+                clean[key] = value
+        entries.append(clean)
+    if not entries:
+        # Nic nie przetrwalo — wracamy do dzisiejszej semantyki: bez selektora,
+        # czyli "dokladnie jeden ekran albo DeviceNotFound". Braniem wszystkiego,
+        # co widac, zlamalibysmy zasade z naglowka device.py wlasnie tam, gdzie
+        # niczego nie da sie sprawdzic.
+        entries = [{"backend": name} for name in sorted(REGISTRY)]
+    safe["panels"] = entries
+
     cfg = C.Config(safe)
-    link = PanelLink(cfg)
-    try:
-        link.send(render.Renderer(cfg.width, cfg.height).frame(
-            render.ScreenState(message=lines)), force=True)
-    finally:
-        link.close()
+    frame = render.Renderer(cfg.width, cfg.height).frame(
+        render.ScreenState(message=lines))
+    for spec in cfg.panels:
+        link = PanelLink(spec, cfg)
+        try:
+            link.send(frame, force=True)
+        except Exception:
+            # Jeden ekran zajety nie moze zabrac karty pozostalym.
+            pass
+        finally:
+            link.close()
 
 
 def main():

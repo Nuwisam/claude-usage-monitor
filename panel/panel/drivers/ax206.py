@@ -92,6 +92,10 @@ referencyjnym:
 import ctypes as C
 import time
 
+from ..pixels import BIG, pack_rgb565, rgb565_bytes as pack_pixel
+from .base import (Caps, DriverError, Scale, Target, check_rect, release,
+                   select)
+
 VID, PID = 0x1908, 0x0102
 EP_OUT, EP_IN = 0x01, 0x81
 
@@ -116,8 +120,17 @@ PROPERTY_ORIENTATION = 0x10
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 480, 320
 
 
-class AX206Error(RuntimeError):
-    pass
+class AX206Error(DriverError):
+    """Kept as its own name because the messages are protocol-specific, but it is
+    a DriverError: link.py catches the whole family, not this one."""
+
+
+NAME = "ax206"
+
+# Measured on this unit, our (dark) layout: 307200 B in ~355 ms. Used for write
+# timeouts, so it is deliberately the throughput we actually see rather than any
+# nominal bus figure.
+BYTES_PER_SEC = 870_000
 
 
 # --- struktury i wiazania libusb-1.0 ----------------------------------------
@@ -319,6 +332,79 @@ def release_all(found, keep=None):
             f.release()
 
 
+# --- driver module API (see drivers/base.py) --------------------------------
+
+# What may appear in a panel entry as a selector for THIS driver. Anything else
+# is a config error: an unknown key silently matched nothing and fell through to
+# "the only device there is", which is how a stale `location` selector used to
+# quietly take over whichever module happened to be plugged in.
+SELECTOR_KEYS = ("port_path", "index")
+
+
+def caps_for(canvas=None):
+    """What this driver promises, without opening anything.
+
+    Config validation needs it before any device exists - and this module happens
+    to take the canvas it is given, which is exactly why the check has to ask the
+    driver rather than assume: another screen has a fixed native size and must be
+    able to say so.
+    """
+    size = tuple(canvas or (DEFAULT_WIDTH, DEFAULT_HEIGHT))
+    return Caps(name=NAME, canvas=size, native=size, rotate=0,
+                byte_order=BIG, rect_updates=False, acked=True,
+                reset_on_open=True,
+                brightness=Scale("steps", 0, 7, 5),
+                bytes_per_sec=BYTES_PER_SEC)
+
+
+def unavailable(options=None):
+    """None when this driver can run on this machine, otherwise the reason.
+
+    Never raises: `--list` has to be able to say why a driver is missing while
+    still listing the ones that work.
+    """
+    try:
+        load((options or {}).get("dll"))
+    except (DriverError, OSError) as e:
+        return "libusb-1.0 niedostepne (%s)" % e
+    return None
+
+
+def discover(options=None):
+    """Every AX206 on the bus, as neutral Targets.
+
+    Each carries a live libusb reference; whoever does not open it must call
+    `release()`.
+    """
+    options = options or {}
+    return [Target(backend=NAME, index=f.index, port_path=f.port_path, handle=f,
+                   bus=f.bus, address=f.address)
+            for f in find_all(options.get("dll"))]
+
+
+def open_panel(selector, options=None):
+    """Open the module a selector points at and return the driver.
+
+    The search runs again on EVERY open, deliberately: after a reset the old
+    libusb pointers are invalid and the module gets a new bus address.
+    """
+    options = options or {}
+    width, height = options.get("canvas", (DEFAULT_WIDTH, DEFAULT_HEIGHT))
+
+    def finder():
+        targets = discover(options)
+        picked = None
+        try:
+            picked = select(targets, selector,
+                            what="modul %04x:%04x" % (VID, PID))
+        finally:
+            release(targets, keep=picked)
+        return picked.handle
+
+    return AX206(finder=finder, width=width, height=height,
+                 dll_path=options.get("dll")).open()
+
+
 def first_finder(dll_path=None):
     """Domyslny selektor: pierwszy pasujacy modul.
 
@@ -334,39 +420,22 @@ def first_finder(dll_path=None):
     return finder
 
 
-# --- pakowanie pikseli ------------------------------------------------------
+# --- pixel packing ----------------------------------------------------------
 
-_T_R = bytes(i & 0xF8 for i in range(256))
-_T_GH = bytes(i >> 5 for i in range(256))
-_T_GL = bytes((i & 0x1C) << 3 for i in range(256))
-_T_B = bytes(i >> 3 for i in range(256))
+# The packing itself lives in panel/pixels.py, shared with every other driver.
+# These two names stay here because "RGB565 high byte first" is what the AX206
+# protocol calls for; callers that mean "this display's byte order" should keep
+# saying it through the driver.
 
 
 def image_to_rgb565(img):
-    """Obraz PIL -> RGB565, starszy bajt pierwszy (kolejnosc RGB565_0/_1 z dpf-ax).
-
-    Kanaly skladane sa przez translacje tablicowa i JEDNA operacje OR na duzych
-    liczbach calkowitych — obie ida w C. Pelna klatka 480x320 pakuje sie w ~3 ms
-    zamiast ~36 ms petla po pikselach; numpy jest tu niepotrzebne.
-    """
-    if img.mode != "RGB":
-        img = img.convert("RGB")
-    r, g, b = img.split()
-    rb, gb, bb = r.tobytes(), g.tobytes(), b.tobytes()
-    n = len(rb)
-    hi = (int.from_bytes(rb.translate(_T_R), "big")
-          | int.from_bytes(gb.translate(_T_GH), "big")).to_bytes(n, "big")
-    lo = (int.from_bytes(gb.translate(_T_GL), "big")
-          | int.from_bytes(bb.translate(_T_B), "big")).to_bytes(n, "big")
-    out = bytearray(2 * n)
-    out[0::2] = hi
-    out[1::2] = lo
-    return bytes(out)
+    """PIL image -> RGB565 for this display (high byte first)."""
+    return pack_rgb565(img, BIG)
 
 
 def rgb565_bytes(r, g, b):
-    """Jeden piksel, starszy bajt pierwszy."""
-    return bytes(((r & 0xF8) | ((g & 0xE0) >> 5), ((g & 0x1C) << 3) | ((b & 0xF8) >> 3)))
+    """One pixel for this display (high byte first)."""
+    return pack_pixel(r, g, b, BIG)
 
 
 # --- panel ------------------------------------------------------------------
@@ -571,6 +640,17 @@ class AX206:
     def set_brightness(self, level):
         """0 (przygaszony) .. 7 (najjasniejszy)."""
         return self.set_property(PROPERTY_BRIGHTNESS, max(0, min(7, int(level))))
+
+    @property
+    def caps(self):
+        return caps_for((self.width, self.height))
+
+    def write(self, rgb565, rect):
+        """Driver contract (drivers/base.py). Here it is one line over blit(),
+        so the partial-rect rejection, the byte count and the missed_csw
+        bookkeeping stay exactly where they were measured."""
+        check_rect(rect, self.width, self.height, len(rgb565))
+        return self.blit(rgb565, rect)
 
     def blit(self, rgb565, rect=None):
         """Wysyla piksele RGB565. rect = (x0, y0, x1, y1), x1/y1 wylaczne.

@@ -8,7 +8,6 @@ import pytest
 from PIL import Image
 
 from panel import draw, layout as L, render, theme, view
-from panel.ax206 import image_to_rgb565
 from tests import fixtures
 
 
@@ -102,7 +101,7 @@ def test_kazda_scena_renderuje_sie(scene):
     frame = render.Renderer().frame(
         render.ScreenState(clock="21:07", link="live", bands=bands))
     assert frame.image.size == (480, 320)
-    assert len(frame.payload) == 480 * 320 * 2
+    assert len(frame.rgb565("be")) == 480 * 320 * 2
 
 
 def test_ta_sama_scena_daje_ten_sam_ladunek():
@@ -114,7 +113,7 @@ def test_ta_sama_scena_daje_ten_sam_ladunek():
         bands = [render.band_state(a, now_ms=now_ms, show_clock=(i == 0))
                  for i, a in enumerate(fixtures.base())]
         return render.Renderer().frame(
-            render.ScreenState(clock="21:07", link="live", bands=bands)).payload
+            render.ScreenState(clock="21:07", link="live", bands=bands)).rgb565("be")
     assert zbuduj() == zbuduj()
 
 
@@ -127,7 +126,7 @@ def test_karta_stanu_zamiast_pasow():
 def test_pusty_slot_nie_wybucha():
     frame = render.Renderer().frame(
         render.ScreenState(clock="21:07", link="down", bands=[None, None]))
-    assert len(frame.payload) == 480 * 320 * 2
+    assert len(frame.rgb565("be")) == 480 * 320 * 2
 
 
 def test_trzy_stany_lacza_daja_trzy_rozne_obrazy():
@@ -139,7 +138,7 @@ def test_trzy_stany_lacza_daja_trzy_rozne_obrazy():
         bands = [render.band_state(a, now_ms=now_ms, show_clock=(i == 0))
                  for i, a in enumerate(fixtures.base())]
         return render.Renderer().frame(
-            render.ScreenState(clock="21:07", link=link, bands=bands)).payload
+            render.ScreenState(clock="21:07", link=link, bands=bands)).rgb565("be")
     assert len({klatka("live"), klatka("reconnecting"), klatka("down")}) == 3
 
 
@@ -165,28 +164,7 @@ def test_wiek_bierze_starsza_z_dwoch_serii():
     assert render.band_state(acc, now_ms=now_ms).ago == "3 d 0 h temu"
 
 
-# --- pakowanie --------------------------------------------------------------
-
-def test_pakowanie_rgb565_zgadza_sie_z_petla():
-    """Szybka sciezka (translate + OR na duzych liczbach) musi dawac BAJT W BAJT
-    to samo, co naiwna petla po pikselach."""
-    import random
-    random.seed(11)
-    img = Image.new("RGB", (64, 32))
-    img.putdata([(random.randrange(256), random.randrange(256), random.randrange(256))
-                 for _ in range(64 * 32)])
-    raw = img.convert("RGB").tobytes()
-    wolno = bytearray()
-    for i in range(0, len(raw), 3):
-        r, g, b = raw[i], raw[i + 1], raw[i + 2]
-        wolno += bytes(((r & 0xF8) | ((g & 0xE0) >> 5),
-                        ((g & 0x1C) << 3) | ((b & 0xF8) >> 3)))
-    assert image_to_rgb565(img) == bytes(wolno)
-
-
-def test_pakowanie_skrajnych_kolorow():
-    assert image_to_rgb565(Image.new("RGB", (1, 1), (255, 255, 255))) == b"\xff\xff"
-    assert image_to_rgb565(Image.new("RGB", (1, 1), (0, 0, 0))) == b"\x00\x00"
+# Pakowanie pikseli ma swoj plik: tests/test_pixels.py.
 
 
 def test_wycofane_kredyty_zostaja_narysowane():
@@ -209,7 +187,7 @@ def test_wycofane_kredyty_zostaja_narysowane():
                                cascade=cascade, series=[])
         band = render.band_state(acc, now_ms=now_ms)
         return render.Renderer().frame(
-            render.ScreenState(clock="21:07", link="live", bands=[band, None])).payload
+            render.ScreenState(clock="21:07", link="live", bands=[band, None])).rgb565("be")
 
     kwoty = dict(usedMinor=30004, limitMinor=30000, currency="EUR", exponent=2)
     wycofane = klatka(state="off", reason="org_level_disabled_until", **kwoty)

@@ -1,12 +1,19 @@
 """Rysowanie klatki 4a.
 
-Panel przyjmuje WYLACZNIE pelne klatki (patrz naglowek ax206.py), wiec nie ma tu
-zadnego sledzenia brudnych obszarow — klatka powstaje w calosci za kazdym razem.
-Oszczednosc jest gdzie indziej: `Frame.payload` porownuje sie z ostatnio wyslana
-i identycznej nie wysylamy. Renderowanie kosztuje ~10 ms, transfer 376 ms.
+Renderer rysuje JEDNO logiczne plotno i nie wie o zadnym wyswietlaczu: ani o
+kolejnosci bajtow, ani o obrocie, ani o tym, czy ekran umie przyjac prostokat.
+Klatka powstaje w calosci za kazdym razem (~10 ms); co z niej trafi na szklo
+i w jakiej postaci, rozstrzyga warstwa panelu (panel/surface.py + sterownik).
 """
+from PIL import Image
+
 from . import draw, layout as L, theme, view as V
-from .ax206 import image_to_rgb565
+from .pixels import pack_rgb565
+
+# Only right angles: a display is either mounted the way the canvas is drawn or
+# turned a quarter. Anything else would resample pixels and this layout is built
+# out of hairlines that do not survive that.
+_ROTATIONS = {90: Image.ROTATE_90, 180: Image.ROTATE_180, 270: Image.ROTATE_270}
 
 LABEL_SESSION = "SESJA 5 H"
 LABEL_WEEK = "TYDZIEŃ"
@@ -104,11 +111,41 @@ def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None):
 
 
 class Frame:
-    __slots__ = ("image", "payload")
+    """One rendered image, plus whatever the drivers ask it to become.
+
+    The renderer draws ONE logical canvas; each display then wants it rotated its
+    own way and packed in its own byte order. Both are memoised here rather than
+    in the drivers, so two screens of the same kind pay for the packing once and a
+    rotation is computed once per frame instead of once per panel. Measured:
+    transpose 0.09 ms, packing 1.4 ms, render 10.6 ms.
+    """
+
+    __slots__ = ("image", "_rot", "_packed")
 
     def __init__(self, image):
         self.image = image
-        self.payload = image_to_rgb565(image)
+        self._rot = {0: image}
+        self._packed = {}
+
+    def device_image(self, rotate=0):
+        """The image in DEVICE space. rotate is degrees counter-clockwise."""
+        img = self._rot.get(rotate)
+        if img is None:
+            if rotate not in _ROTATIONS:
+                raise ValueError("unsupported rotation %r (have %s)"
+                                 % (rotate, sorted(_ROTATIONS)))
+            img = self.image.transpose(_ROTATIONS[rotate])
+            self._rot[rotate] = img
+        return img
+
+    def rgb565(self, order, rotate=0):
+        """Full-frame payload for a display, memoised per (order, rotation)."""
+        key = (order, rotate)
+        payload = self._packed.get(key)
+        if payload is None:
+            payload = pack_rgb565(self.device_image(rotate), order)
+            self._packed[key] = payload
+        return payload
 
 
 class Renderer:

@@ -34,7 +34,14 @@
 [CmdletBinding()]
 param(
     [switch]$Uninstall,
-    [string]$TaskName = "Claude Panel AX206"
+    # Nazwa zostaje z czasow jednego ekranu. Zmiana nazwy NIE przenosi zadania:
+    # stare zostaloby zarejestrowane obok nowego i dwa klienty bilyby sie o ten
+    # sam wyswietlacz.
+    [string]$TaskName = "Claude Panel AX206",
+    # Ile ekranow deklaruje panel.json. Skrypt tego pliku nie czyta (przy
+    # pierwszej instalacji jeszcze go nie ma), a bez tej liczby "OK" po
+    # pierwszej zglaszajacej sie linii znaczyloby "rysuje jeden z dwoch".
+    [int]$Panels = 1
 )
 
 $ErrorActionPreference = "Stop"
@@ -157,28 +164,48 @@ Write-Host ""
 Write-Host "zadanie '$TaskName' zarejestrowane i uruchomione"
 Write-Host -NoNewline "czekam na potwierdzenie z logu "
 
+# Ile ekranow ma sie zglosic. Skrypt NIE czyta panel.json - przy instalacji
+# tego pliku czesto jeszcze nie ma (jest na to osobna galaz nizej), wiec liczbe
+# podaje sie z reki: .\install-task.ps1 -Panels 2
 $deadline = (Get-Date).AddSeconds(30)
-$opened = $null; $busy = $null; $dup = $null; $bad = $null
+$opened = @(); $unacked = @(); $busy = $null; $dup = $null; $bad = $null
 while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 2
     Write-Host -NoNewline "."
     $new = @()
     if (Test-Path $LogPath) { $new = @(Get-Content $LogPath | Select-Object -Skip $before) }
-    # Czekamy na PIERWSZA KLATKE, nie na "panel: otwarty". Uchwyt do urzadzenia
+    # Czekamy na PIERWSZA KLATKE, nie na "otwarty". Uchwyt do urzadzenia
     # jeszcze niczego nie rysuje, a to jego brak byl objawem, ktory kazal
     # instalowac wszystko po raz drugi.
-    $opened = $new | Where-Object { $_ -match "pierwsza klatka po otwarciu" }| Select-Object -Last 1
-    $busy   = $new | Where-Object { $_ -match "zajety przez inny proces" }| Select-Object -Last 1
-    $dup    = $new | Where-Object { $_ -match "panel juz dziala" }        | Select-Object -Last 1
-    $bad    = $new | Where-Object { $_ -match "konfiguracja:" }           | Select-Object -Last 1
-    if ($opened -or $busy -or $dup -or $bad) { break }
+    #
+    # Zbieramy WSZYSTKIE linie, nie ostatnia: przy dwoch ekranach jeden moze
+    # rysowac, a drugi byc zajety - i "OK" po pierwszej pasujacej linii
+    # zamiatalby to pod dywan.
+    $opened  = @($new | Where-Object { $_ -match "pierwsza klatka po otwarciu" })
+    $unacked = @($new | Where-Object { $_ -match "bez potwierdzenia" })
+    $busy    = $new | Where-Object { $_ -match "zajety przez inny proces" } | Select-Object -Last 1
+    $dup     = $new | Where-Object { $_ -match "panel juz dziala" }         | Select-Object -Last 1
+    $bad     = $new | Where-Object { $_ -match "konfiguracja:" }            | Select-Object -Last 1
+    if (($opened.Count + $unacked.Count) -ge $Panels -or $busy -or $dup -or $bad) { break }
 }
 Write-Host ""
 Write-Host ""
 
-if ($opened) {
-    Write-Host "OK - panel rysuje:"
-    Write-Host "  $opened"
+if ($opened.Count + $unacked.Count -gt 0) {
+    $reported = $opened.Count + $unacked.Count
+    if ($reported -lt $Panels) {
+        Write-Host "UWAGA - zglosilo sie $reported z $Panels ekranow:"
+    } else {
+        Write-Host "OK - panel rysuje ($reported z $Panels):"
+    }
+    foreach ($line in $opened) { Write-Host "  $line" }
+    foreach ($line in $unacked) {
+        # Ten sterownik NICZEGO nie potwierdza: linia mowi tylko, ze bajty
+        # wyszly. Ekran niepodlaczony, obrocony albo rozjechany zapisze
+        # dokladnie to samo, wiec tu nie ma czego uznac za "rysuje".
+        Write-Host "  $line"
+        Write-Host "    ^ bez potwierdzenia - sprawdz wzrokiem, czy cos widac"
+    }
 } elseif ($busy) {
     Write-Host "PANEL ZAJETY przez inny proces:"
     Write-Host "  $busy"
