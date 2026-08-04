@@ -9,6 +9,16 @@
 # i jedna operacje OR na duzych liczbach, 1,55 ms na pelna klatke.
 
 Pillow==12.1.0
+# libusb niesie binarke libusb-1.0.dll dla win-amd64 — sama biblioteka, bez
+# sterownika. STEROWNIKIEM urzadzenia pozostaje libusb-win32 (`libusb0.sys`,
+# ten sam, ktorego uzywaja gotowe narzedzia do tych wyswietlaczy); backend windowsowy libusb-1.0 rozmawia z nim
+# bez przepinania czegokolwiek (zmierzone: 1200 klatek, missed_csw=0).
+#
+# Czemu nie zostalismy przy libusb-win32: jego API 0.1 nie podaje topologii
+# (bus-0, devnum=0), wiec modul trzeba bylo szukac w rejestrze Windows i laczyc
+# jedno z drugim po kolejnosci. `libusb_get_port_numbers()` daje lancuch portow
+# prosto z uchwytu, ktory otwieramy. Szczegoly w naglowku panel/device.py.
+libusb==1.0.29.post7
 # certifi to magazyn CA — jego odswiezanie ma byc decyzja, nie skutkiem ubocznym.
 # Podbijaj swiadomie, gdy przestanie ufac lancuchowi usage.example.org.
 certifi==2026.7.22

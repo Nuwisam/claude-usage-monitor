@@ -1,4 +1,4 @@
-"""Nadzor nad panelem: jedyne miejsce w kliencie, ktore dotyka libusb0.dll.
+"""Nadzor nad panelem: jedyne miejsce w kliencie, ktore dotyka libusb-1.0.dll.
 
 Rzeczy, ktore ta warstwa ma zalatwiac same z siebie:
   * wskazany modul jest zajety albo wypiety      -> backoff, log RAZ na zmiane stanu
@@ -21,8 +21,8 @@ BACKOFF = (1.0, 2.0, 5.0, 10.0, 30.0)
 MISSED_CSW_LIMIT = 3
 
 # Bledy, na ktore ta warstwa odpowiada backoffem, a nie smiercia procesu.
-# Ponizej `ensure()` i `blit()` siedzi surowe ctypes do libusb0.dll (find_all,
-# usb_open, usb_claim_interface, bulk read/write). Wypiety modul albo
+# Ponizej `ensure()` i `blit()` siedzi surowe ctypes do libusb-1.0.dll (find_all,
+# libusb_open, libusb_claim_interface, bulk transfer). Wypiety modul albo
 # rozjezdzajacy sie sterownik zglasza sie stamtad OSError-em, nie AX206Error-em
 # — i taki wyjatek szedl przez tick() i run() az do excepthooka, konczac proces.
 # `drop()` i `close()` byly na to odporne od poczatku; sciezka otwarcia nie.

@@ -1,4 +1,16 @@
-"""Sterownik panelu AX206 (VID 1908 / PID 0102) — Windows + libusb-win32.
+"""Sterownik panelu AX206 (VID 1908 / PID 0102) — Windows + libusb-1.0.
+
+Dwie rzeczy, ktore latwo pomylic: STEROWNIK urzadzenia to nadal libusb-win32
+(`libusb0.sys`, ten sam, ktorego uzywaja gotowe narzedzia do tych wyswietlaczy), a BIBLIOTEKA, przez ktora z nim
+rozmawiamy, to libusb-1.0. Backend windowsowy libusb-1.0 obsluguje urzadzenia
+zwiazane z libusb0.sys — zmierzone, patrz nizej. Przepinanie sterownika na
+WinUSB nie jest potrzebne i zerwaloby tamte narzedzia.
+
+Powod zmiany biblioteki jest jeden: `libusb_get_port_numbers()` podaje LANCUCH
+PORTOW z tego samego uchwytu, ktory otwieramy. API legacy 0.1 z libusb-win32 nie
+podawalo zadnej topologii (`bus-0`, `devnum=0`), wiec modul trzeba bylo szukac
+w rejestrze Windows i laczyc jedno z drugim po kolejnosci — czyli zgadywac.
+Szczegoly w naglowku device.py.
 
 Protokol wg dpf-ax (hackfin/dreamlayers): firmowa komenda SCSI 0xCD opakowana
 w pare CBW/CSW transportu USB Bulk-Only Mass Storage, EP 0x01 OUT / 0x81 IN.
@@ -17,7 +29,15 @@ referencyjnym (szczegoly w docs/POC-FINDINGS.md):
   2. Panel BYWA, ze przestaje odsylac CSW, choc kazda ramke przyjmuje i rysuje
      poprawnie. Brak CSW jest tu ostrzezeniem (licznik `missed_csw`), nigdy
      bledem — inaczej klient wywala sie na dzialajacym sprzecie.
-  3. `usb_reset()` niezawodnie przywraca potwierdzenia. Uchwyt po resecie jest
+
+     Jeden przypadek jest POWTARZALNY, nie losowy: PIERWSZA klatka po zimnym
+     otwarciu uchwytu nigdy nie dostaje CSW. Zmierzone po trzy razy na obu
+     bibliotekach — libusb-win32 i libusb-1.0 zachowuja sie identycznie, wiec to
+     wlasciwosc firmware'u, nie warstwy transportu. Powtorka po `clear_halt` tego
+     nie ratuje. Kolejne klatki potwierdzaja sie normalnie: 1200 pod rzad,
+     `missed_csw == 0`. Czyli `missed_csw == 1` zaraz po starcie klienta jest
+     stanem NORMALNYM i nie znaczy bledu w nas.
+  3. Reset urzadzenia niezawodnie przywraca potwierdzenia. Uchwyt po resecie jest
      niewazny, wiec `reset()` MUSI otworzyc urzadzenie ponownie.
   4. FULL_FRAME_ONLY — i to jest najdrozej okupione ustalenie tego pliku.
 
@@ -35,7 +55,7 @@ referencyjnym (szczegoly w docs/POC-FINDINGS.md):
      Nie da sie na tym zaoszczedzic transferu: prostokat 480x160 dostal ladunek
      rowny dokladnie jednemu wypelnieniu okna i tez nie zostal potwierdzony.
      Ilosc bajtow na drucie jest stala, wiec kazda aktualizacja kosztuje 307200 B
-     (~376 ms) niezaleznie od tego, ile pikseli faktycznie sie zmienia. Dlatego
+     niezaleznie od tego, ile pikseli faktycznie sie zmienia. Dlatego
      `blit()` przyjmuje wylacznie pelny ekran. Posrednie potwierdzenie: pyax206,
      zrzucony z tego samego modelu, ma pelnoekranowy prostokat zaszyty na sztywno.
 
@@ -45,7 +65,25 @@ referencyjnym (szczegoly w docs/POC-FINDINGS.md):
      `reset()`. Przy samych poprawnych pelnych klatkach panel potwierdza kazda.
      Licznik `missed_csw` jest wiec sygnalem BLEDU W NAS, nie awarii sprzetu.
 
-  6. Z zestawu komend dpf-ax ten firmware ma TYLKO blit i SETPROPERTY/BRIGHTNESS.
+  6. Czas klatki ZALEZY OD TRESCI, mimo ze liczba bajtow na drucie jest stala.
+     Zmierzone na tym module, ten sam blit 307200 B, po resecie, po pieć powtorzen:
+
+         karta testowa (ciemna, jak uklad docelowy)   354 ms
+         pelna czern                              356 ms
+         pasy nasyconych kolorow                  514 ms
+
+     Rozne ladunki ciemne daja ten sam czas, wiec to nie jest kwestia powtarzania
+     tej samej klatki. Wyglada na koszt po stronie kontrolera LCD, nie transportu.
+     Praktyczny wniosek: liczba, ktora obowiazuje dla tego ekranu, to ~355 ms
+     (~2,8 kl./s) — uklad jest ciemny. Syntetyczne testy nasyconymi pasami mierza
+     najgorszy przypadek i ich wynik (~515 ms) nie opisuje pracy klienta.
+
+     Uwaga na pulapke pomiarowa: pierwsze pomiary migracji na libusb-1.0 dawaly
+     515 ms i wygladaly na regresje wobec udokumentowanych ~376 ms. Regresji nie
+     bylo — zmienil sie ladunek testowy. libusb-win32 na tych samych pasach
+     dawal 503-533 ms (pomiar rownolegly).
+
+  7. Z zestawu komend dpf-ax ten firmware ma TYLKO blit i SETPROPERTY/BRIGHTNESS.
      Sprawdzone po resecie, na czystym potoku: FILLRECT (0x11), COPYRECT (0x13)
      ani SETPROPERTY z tokenem FGCOLOR (0x02) nie sa potwierdzane. Szkoda, bo
      FILLRECT rysowalby paski bez zadnego ladunku — ale go nie ma. To tez tlumaczy,
@@ -56,9 +94,18 @@ import time
 
 VID, PID = 0x1908, 0x0102
 EP_OUT, EP_IN = 0x01, 0x81
-PATH_MAX = 512
 
 DIR_OUT, DIR_IN = 0, 1
+
+# Kody bledow libusb-1.0, ktore obslugujemy z nazwy. Reszta idzie przez
+# libusb_strerror i lezy w komunikacie.
+LIBUSB_ERROR_NOT_FOUND = -5
+LIBUSB_ERROR_TIMEOUT = -7
+LIBUSB_ERROR_PIPE = -9
+
+# Glebokosc drzewa USB: libusb dokumentuje maksimum 7 hubow miedzy hostem
+# a urzadzeniem, wiec 8 bajtow starcza na kazdy realny lancuch.
+MAX_PORT_DEPTH = 8
 
 USBCMD_SETPROPERTY = 0x01
 USBCMD_BLIT = 0x12
@@ -73,10 +120,13 @@ class AX206Error(RuntimeError):
     pass
 
 
-# --- struktury libusb-win32 (API legacy 0.1) --------------------------------
+# --- struktury i wiazania libusb-1.0 ----------------------------------------
 
 
 class DevDesc(C.Structure):
+    """`libusb_device_descriptor`. Uklad jest ten sam co w API 0.1 — to po prostu
+    deskryptor z normy USB, bajt w bajt."""
+
     _fields_ = [
         ("bLength", C.c_ubyte), ("bDescriptorType", C.c_ubyte),
         ("bcdUSB", C.c_ushort), ("bDeviceClass", C.c_ubyte),
@@ -88,106 +138,185 @@ class DevDesc(C.Structure):
     ]
 
 
-class Device(C.Structure):
-    pass
-
-
-class Bus(C.Structure):
-    pass
-
-
-Device._fields_ = [
-    ("next", C.POINTER(Device)), ("prev", C.POINTER(Device)),
-    ("filename", C.c_char * PATH_MAX), ("bus", C.POINTER(Bus)),
-    ("descriptor", DevDesc), ("config", C.c_void_p), ("dev", C.c_void_p),
-    ("devnum", C.c_ubyte), ("num_children", C.c_ubyte),
-    ("children", C.POINTER(C.POINTER(Device))),
-]
-Bus._fields_ = [
-    ("next", C.POINTER(Bus)), ("prev", C.POINTER(Bus)),
-    ("dirname", C.c_char * PATH_MAX), ("devices", C.POINTER(Device)),
-    ("location", C.c_uint), ("root_dev", C.POINTER(Device)),
-]
-
 _dll = None
+_ctx = None
+
+
+def _dll_candidates(dll_path):
+    """Skad brac libusb-1.0.dll, w kolejnosci prob.
+
+    Pakiet `libusb` z PyPI niesie binarke dla win-amd64 i to on jest droga
+    domyslna — dzieki temu instalacja panelu jest jednym `pip install -r`,
+    bez krokow recznych na nowej maszynie. Jawna sciezka bije wszystko, bo
+    zadanie harmonogramu startuje z innym PATH niz powloka.
+    """
+    if dll_path:
+        yield dll_path
+    try:
+        from libusb._platform import DLL_PATH
+    except Exception:
+        pass
+    else:
+        yield DLL_PATH
+    yield "libusb-1.0.dll"
 
 
 def load(dll_path=None):
-    """libusb0.dll, raz na proces.
-
-    `dll_path` istnieje, bo zadanie harmonogramu startuje z innym PATH niz
-    powloka i biblioteka bywa wtedy nieodnajdywalna po samej nazwie.
-    """
+    """libusb-1.0.dll, raz na proces."""
     global _dll
     if _dll is not None:
         return _dll
-    try:
-        dll = C.CDLL(dll_path or "libusb0.dll")
-    except OSError as e:
+    tried = []
+    dll = None
+    for candidate in _dll_candidates(dll_path):
+        try:
+            dll = C.CDLL(candidate)
+            break
+        except OSError as e:
+            tried.append("%s (%s)" % (candidate, e))
+    if dll is None:
         raise AX206Error(
-            "nie moge zaladowac libusb0.dll (%s) — czy sterownik libusb-win32 "
-            "jest zainstalowany dla tego urzadzenia?" % e
-        ) from e
-    dll.usb_get_busses.restype = C.POINTER(Bus)
-    dll.usb_open.restype = C.c_void_p
-    dll.usb_open.argtypes = [C.POINTER(Device)]
-    dll.usb_close.argtypes = [C.c_void_p]
-    dll.usb_reset.argtypes = [C.c_void_p]
-    dll.usb_strerror.restype = C.c_char_p
-    dll.usb_claim_interface.argtypes = [C.c_void_p, C.c_int]
-    dll.usb_release_interface.argtypes = [C.c_void_p, C.c_int]
-    dll.usb_clear_halt.argtypes = [C.c_void_p, C.c_uint]
-    dll.usb_get_string_simple.argtypes = [C.c_void_p, C.c_int, C.c_char_p, C.c_size_t]
-    for fn in ("usb_bulk_write", "usb_bulk_read"):
-        getattr(dll, fn).argtypes = [C.c_void_p, C.c_int, C.c_char_p, C.c_int, C.c_int]
+            "nie moge zaladowac libusb-1.0.dll. Proby: %s. Biblioteke daje "
+            "pakiet `libusb` z requirements.txt; sterownikiem urzadzenia "
+            "pozostaje libusb-win32." % "; ".join(tried))
+
+    dll.libusb_init.argtypes = [C.POINTER(C.c_void_p)]
+    dll.libusb_exit.argtypes = [C.c_void_p]
+    dll.libusb_get_device_list.argtypes = [C.c_void_p,
+                                           C.POINTER(C.POINTER(C.c_void_p))]
+    dll.libusb_get_device_list.restype = C.c_ssize_t
+    dll.libusb_free_device_list.argtypes = [C.POINTER(C.c_void_p), C.c_int]
+    dll.libusb_get_device_descriptor.argtypes = [C.c_void_p, C.POINTER(DevDesc)]
+    dll.libusb_get_bus_number.argtypes = [C.c_void_p]
+    dll.libusb_get_bus_number.restype = C.c_ubyte
+    dll.libusb_get_device_address.argtypes = [C.c_void_p]
+    dll.libusb_get_device_address.restype = C.c_ubyte
+    dll.libusb_get_port_numbers.argtypes = [C.c_void_p, C.POINTER(C.c_ubyte), C.c_int]
+    dll.libusb_ref_device.argtypes = [C.c_void_p]
+    dll.libusb_ref_device.restype = C.c_void_p
+    dll.libusb_unref_device.argtypes = [C.c_void_p]
+    dll.libusb_open.argtypes = [C.c_void_p, C.POINTER(C.c_void_p)]
+    dll.libusb_close.argtypes = [C.c_void_p]
+    dll.libusb_claim_interface.argtypes = [C.c_void_p, C.c_int]
+    dll.libusb_release_interface.argtypes = [C.c_void_p, C.c_int]
+    dll.libusb_clear_halt.argtypes = [C.c_void_p, C.c_ubyte]
+    dll.libusb_reset_device.argtypes = [C.c_void_p]
+    dll.libusb_bulk_transfer.argtypes = [C.c_void_p, C.c_ubyte, C.c_char_p, C.c_int,
+                                         C.POINTER(C.c_int), C.c_uint]
+    dll.libusb_get_string_descriptor_ascii.argtypes = [C.c_void_p, C.c_ubyte,
+                                                       C.c_char_p, C.c_int]
+    dll.libusb_strerror.argtypes = [C.c_int]
+    dll.libusb_strerror.restype = C.c_char_p
     _dll = dll
     return dll
 
 
+def context(dll_path=None):
+    """Kontekst libusb, raz na proces. `libusb_exit` nie jest wolane celowo:
+    kontekst zyje tyle, co proces, a zamykanie go w trakcie unieważniloby
+    wskazniki urzadzen trzymane przez otwarte uchwyty."""
+    global _ctx
+    dll = load(dll_path)
+    if _ctx is None:
+        ctx = C.c_void_p()
+        rc = dll.libusb_init(C.byref(ctx))
+        if rc != 0:
+            raise AX206Error("libusb_init: %s" % strerror(dll, rc))
+        _ctx = ctx
+    return _ctx
+
+
+def strerror(dll, code):
+    return "%d (%s)" % (code, dll.libusb_strerror(code).decode(errors="replace"))
+
+
+def format_port_path(ports):
+    """Lancuch portow w postaci, ktora idzie do panel.json: "3.4".
+
+    Numer magistrali celowo NIE wchodzi do klucza. Jest syntetycznym indeksem
+    kontrolera nadawanym przy enumeracji — czyli tej samej natury, co `Hub_#`
+    z rejestru, ktory wywalil poprzednia wersje selektora. Lancuch portow opisuje
+    fizyczne gniazda i tego problemu nie ma.
+    """
+    return ".".join(str(p) for p in ports)
+
+
 class Found:
-    """Znaleziony modul. `ptr` traci waznosc po kazdej re-enumeracji."""
+    """Znaleziony modul: TRZYMA referencje do urzadzenia libusb.
 
-    __slots__ = ("ptr", "filename", "bus", "devnum", "index")
+    Referencja jest wlasnoscia tego obiektu i musi zostac oddana przez
+    `release()` — inaczej kazda enumeracja (a jest ich tyle, co otwarc panelu)
+    zostawia po sobie urzadzenie, ktorego libusb nie zwolni. W API 0.1 problemu
+    nie bylo, bo lista urzadzen zyla w bibliotece; tutaj zyje u nas.
+    """
 
-    def __init__(self, ptr, filename, bus, devnum, index):
+    __slots__ = ("ptr", "bus", "ports", "address", "iserial", "index", "_dll")
+
+    def __init__(self, dll, ptr, bus, ports, address, iserial, index):
+        self._dll = dll
         self.ptr = ptr
-        self.filename = filename
         self.bus = bus
-        self.devnum = devnum
+        self.ports = ports
+        self.address = address
+        self.iserial = iserial
         self.index = index
 
+    @property
+    def port_path(self):
+        return format_port_path(self.ports)
+
+    def release(self):
+        """Oddaje referencje. Idempotentne — wolane i po udanym otwarciu,
+        i przy odrzuceniu modulu, wiec nie moze bolec przy powtorce."""
+        if self.ptr is not None:
+            self._dll.libusb_unref_device(self.ptr)
+            self.ptr = None
+
     def __repr__(self):
-        return "<AX206 #%d %s bus=%s dev=%d>" % (
-            self.index, self.filename, self.bus, self.devnum)
+        return "<AX206 #%d bus=%s ports=%s addr=%s>" % (
+            self.index, self.bus, self.port_path, self.address)
 
 
 def find_all(dll_path=None):
     """Wszystkie pasujace moduly, w kolejnosci enumeracji libusb.
 
-    Za kazdym wywolaniem odswieza liste — po `usb_reset` stare wskazniki sa
-    niewazne i trzeba szukac od nowa.
+    Za kazdym wywolaniem odswieza liste — po resecie stare wskazniki sa niewazne
+    i trzeba szukac od nowa. KAZDY zwrocony `Found` niesie referencje; ten, kto
+    ich nie uzyje, ma obowiazek wolac `release()` (robi to `release_all`).
     """
     dll = load(dll_path)
-    dll.usb_init()
-    dll.usb_find_busses()
-    dll.usb_find_devices()
+    ctx = context(dll_path)
+    lst = C.POINTER(C.c_void_p)()
+    count = dll.libusb_get_device_list(ctx, C.byref(lst))
+    if count < 0:
+        raise AX206Error("libusb_get_device_list: %s" % strerror(dll, count))
     out = []
-    bus = dll.usb_get_busses()
-    while bus:
-        dev = bus.contents.devices
-        while dev:
-            d = dev.contents.descriptor
-            if (d.idVendor, d.idProduct) == (VID, PID):
-                out.append(Found(
-                    dev,
-                    dev.contents.filename.decode(errors="replace"),
-                    bus.contents.dirname.decode(errors="replace"),
-                    dev.contents.devnum,
-                    len(out),
-                ))
-            dev = dev.contents.next
-        bus = bus.contents.next
+    try:
+        for i in range(count):
+            dev = lst[i]
+            desc = DevDesc()
+            if dll.libusb_get_device_descriptor(dev, C.byref(desc)) != 0:
+                continue
+            if (desc.idVendor, desc.idProduct) != (VID, PID):
+                continue
+            buf = (C.c_ubyte * MAX_PORT_DEPTH)()
+            n = dll.libusb_get_port_numbers(dev, buf, MAX_PORT_DEPTH)
+            ports = tuple(buf[j] for j in range(n)) if n > 0 else ()
+            out.append(Found(dll, dll.libusb_ref_device(dev),
+                             dll.libusb_get_bus_number(dev), ports,
+                             dll.libusb_get_device_address(dev),
+                             desc.iSerialNumber, len(out)))
+    finally:
+        # Lista znika, ale zatrzymane urzadzenia zyja dzieki wlasnym referencjom.
+        dll.libusb_free_device_list(lst, 1)
     return out
+
+
+def release_all(found, keep=None):
+    """Oddaje referencje wszystkich modulow poza `keep`."""
+    for f in found:
+        if f is not keep:
+            f.release()
 
 
 def first_finder(dll_path=None):
@@ -199,7 +328,9 @@ def first_finder(dll_path=None):
     """
     def finder():
         found = find_all(dll_path)
-        return found[0] if found else None
+        picked = found[0] if found else None
+        release_all(found, keep=picked)
+        return picked
     return finder
 
 
@@ -251,6 +382,7 @@ class AX206:
         self.height = height
         self.missed_csw = 0
         self.serial = None
+        self.port_path = None
 
     # -- cykl zycia --------------------------------------------------------
 
@@ -258,31 +390,48 @@ class AX206:
         found = self.finder()
         if found is None:
             raise AX206Error("nie znalazlem wskazanego modulu %04x:%04x" % (VID, PID))
-        self.h = self.dll.usb_open(found.ptr)
-        if not self.h:
-            raise AX206Error("usb_open: %s" % self._strerror())
-        # Bez usb_set_configuration(): zeruje bity toggle i kosztuje pierwsze
-        # CSW. dpf-ax tez tylko przejmuje interfejs.
-        if self.dll.usb_claim_interface(self.h, 0) < 0:
-            err = self._strerror()
-            self.dll.usb_close(self.h)
-            self.h = None
-            raise AX206Error("usb_claim_interface: %s (panel zajety przez inny "
-                             "proces?)" % err)
-        self.serial = self._string(found)
+        # Referencja `found` jest nasza i musi wrocic do libusb w KAZDYM
+        # zakonczeniu tej funkcji. Udane `libusb_open` bierze wlasna referencje,
+        # wiec uchwyt zyje dalej bez naszej — a przy bledzie tym bardziej nie ma
+        # czego trzymac.
+        try:
+            handle = C.c_void_p()
+            rc = self.dll.libusb_open(found.ptr, C.byref(handle))
+            if rc != 0:
+                raise AX206Error("libusb_open: %s" % self._err(rc))
+            self.h = handle
+            # Bez libusb_set_configuration(): zeruje bity toggle i kosztuje
+            # pierwsze CSW. dpf-ax tez tylko przejmuje interfejs.
+            rc = self.dll.libusb_claim_interface(self.h, 0)
+            if rc != 0:
+                err = self._err(rc)
+                self.dll.libusb_close(self.h)
+                self.h = None
+                raise AX206Error("libusb_claim_interface: %s (panel zajety przez "
+                                 "inny proces?)" % err)
+            self.port_path = found.port_path
+            self.serial = self._string(found.iserial)
+        finally:
+            found.release()
         self.resync()
         return self
 
     def reset(self, settle=1.5):
-        """usb_reset + ponowne otwarcie. Lekarstwo na panel, ktory przestal
-        odsylac CSW. Uchwyt po resecie jest niewazny — stad ponowne szukanie."""
+        """libusb_reset_device + ponowne otwarcie. Lekarstwo na panel, ktory
+        przestal odsylac CSW. Uchwyt po resecie moze byc niewazny — stad ponowne
+        szukanie za kazdym razem.
+
+        `LIBUSB_ERROR_NOT_FOUND` nie jest tu awaria: znaczy, ze urzadzenie zostalo
+        re-enumerowane i trzeba je otworzyc na nowo. Dokladnie to robimy nizej.
+        """
         if self.h:
-            try:
-                self.dll.usb_reset(self.h)
-            except OSError:
+            rc = self.dll.libusb_reset_device(self.h)
+            if rc not in (0, LIBUSB_ERROR_NOT_FOUND):
+                # Nie przerywamy: ponowne otwarcie i tak jest nasza jedyna
+                # sciezka wyjscia, a komunikat przyda sie w logu.
                 pass
             try:
-                self.dll.usb_close(self.h)
+                self.dll.libusb_close(self.h)
             except OSError:
                 pass
             self.h = None
@@ -299,13 +448,12 @@ class AX206:
 
     def resync(self):
         """Czysci zatory i wypija odpowiedzi zostawione przez poprzedni proces."""
-        self.dll.usb_clear_halt(self.h, EP_IN)
-        self.dll.usb_clear_halt(self.h, EP_OUT)
-        buf = C.create_string_buffer(4096)
+        self.dll.libusb_clear_halt(self.h, EP_IN)
+        self.dll.libusb_clear_halt(self.h, EP_OUT)
         drained = 0
         while True:
-            n = self.dll.usb_bulk_read(self.h, EP_IN, buf, 4096, 200)
-            if n <= 0:
+            rc, n, _ = self._bulk(EP_IN, None, 4096, 200)
+            if rc != 0 or n <= 0:
                 break
             drained += n
         return drained
@@ -313,8 +461,8 @@ class AX206:
     def close(self):
         if self.h:
             try:
-                self.dll.usb_release_interface(self.h, 0)
-                self.dll.usb_close(self.h)
+                self.dll.libusb_release_interface(self.h, 0)
+                self.dll.libusb_close(self.h)
             except OSError:
                 pass
             self.h = None
@@ -325,16 +473,29 @@ class AX206:
     def __exit__(self, *exc):
         self.close()
 
-    def _strerror(self):
-        return self.dll.usb_strerror().decode(errors="replace")
+    def _err(self, code):
+        return strerror(self.dll, code)
 
-    def _string(self, found):
-        idx = found.ptr.contents.descriptor.iSerialNumber
-        if not idx:
+    def _string(self, index):
+        if not index:
             return None
         buf = C.create_string_buffer(256)
-        n = self.dll.usb_get_string_simple(self.h, idx, buf, 256)
+        n = self.dll.libusb_get_string_descriptor_ascii(self.h, index, buf, 256)
         return buf.value.decode(errors="replace") if n > 0 else None
+
+    def _bulk(self, endpoint, data, length, timeout):
+        """Jeden transfer. Zwraca (rc, liczba_bajtow, bufor).
+
+        To jest miejsce, w ktorym libusb-1.0 rozni sie od API 0.1 najbardziej:
+        kod bledu i liczba przeslanych bajtow to DWIE osobne wartosci, a nie
+        jedna liczba ze znakiem. Kazde wywolanie musi patrzec na obie — samo
+        `n == length` nie wystarczy, a samo `rc == 0` tym bardziej.
+        """
+        n = C.c_int(0)
+        buf = data if data is not None else C.create_string_buffer(length)
+        rc = self.dll.libusb_bulk_transfer(self.h, endpoint, buf, length,
+                                           C.byref(n), timeout)
+        return rc, n.value, buf
 
     # -- transport ---------------------------------------------------------
 
@@ -354,33 +515,36 @@ class AX206:
         cbw[14] = len(cmd)
         cbw[15:15 + len(cmd)] = bytes(cmd)
 
-        n = self.dll.usb_bulk_write(self.h, EP_OUT, bytes(cbw), len(cbw), 1000)
-        if n != len(cbw):
-            raise AX206Error("zapis CBW nieudany (%d): %s" % (n, self._strerror()))
+        rc, n, _ = self._bulk(EP_OUT, bytes(cbw), len(cbw), 1000)
+        if rc != 0 or n != len(cbw):
+            raise AX206Error("zapis CBW nieudany (%d/%d): %s"
+                             % (n, len(cbw), self._err(rc)))
 
         out = None
         if length:
             if direction == DIR_OUT:
-                n = self.dll.usb_bulk_write(self.h, EP_OUT, bytes(data), length, timeout)
-                if n != length:
-                    raise AX206Error("zapis danych urwany (%d/%d)" % (n, length))
+                rc, n, _ = self._bulk(EP_OUT, bytes(data), length, timeout)
+                if rc != 0 or n != length:
+                    raise AX206Error("zapis danych urwany (%d/%d): %s"
+                                     % (n, length, self._err(rc)))
             else:
-                buf = C.create_string_buffer(length)
-                n = self.dll.usb_bulk_read(self.h, EP_IN, buf, length, timeout)
-                if n < 0:
-                    raise AX206Error("odczyt danych nieudany (%d)" % n)
+                rc, n, buf = self._bulk(EP_IN, None, length, timeout)
+                if rc != 0:
+                    raise AX206Error("odczyt danych nieudany: %s" % self._err(rc))
                 out = buf.raw[:n]
 
-        # Pelna klatka idzie ~0,4 s, wiec zdrowe CSW miesci sie w 1,5 s. Ciasny
+        # Pelna klatka idzie ~0,5 s, wiec zdrowe CSW miesci sie w 1,5 s. Ciasny
         # limit ma znaczenie: uchwyt przejety w zabrudzonym stanie gubi pierwsze
         # jedno-dwa CSW, a dlugi timeout zamienia to w kilkusekundowy przestoj.
-        csw = C.create_string_buffer(13)
-        n = self.dll.usb_bulk_read(self.h, EP_IN, csw, 13, 1500)
-        if n < 0:
+        rc, n, csw = self._bulk(EP_IN, None, 13, 1500)
+        if rc != 0:
             # Zator trzeba wyczyscic, zanim CSW da sie odczytac (procedura BOT).
-            self.dll.usb_clear_halt(self.h, EP_IN)
-            n = self.dll.usb_bulk_read(self.h, EP_IN, csw, 13, 500)
-        if n != 13 or csw.raw[:4] != b"USBS":
+            # Powtorka idzie po KAZDYM bledzie, nie tylko po LIBUSB_ERROR_PIPE:
+            # zmierzone, ze zawieszone CSW wraca po clear_halt takze wtedy, gdy
+            # pierwsza proba skonczyla sie zwyklym przeterminowaniem.
+            self.dll.libusb_clear_halt(self.h, EP_IN)
+            rc, n, csw = self._bulk(EP_IN, None, 13, 500)
+        if rc != 0 or n != 13 or csw.raw[:4] != b"USBS":
             # Ten firmware bywa, ze pomija CSW, mimo ze dane przyjal i narysowal.
             # Odnotuj, ale NIE przerywaj klatki — patrz naglowek modulu.
             self.missed_csw += 1

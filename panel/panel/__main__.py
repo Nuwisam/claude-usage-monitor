@@ -16,28 +16,33 @@ from .app import AlreadyRunning
 
 def cmd_list(args):
     panels = device.list_panels(args.dll)
-    print("moduly %04x:%04x widziane przez libusb: %d"
-          % (ax206.VID, ax206.PID, len(panels)))
-    for p in panels:
-        print("  %s" % p.describe())
-        print("      instancja=%s  address=%s  bus=%s devnum=%s"
-              % (p.instance, p.address, p.bus, p.devnum))
-    if not panels:
-        print("  (nic — czy modul jest wpiety i ma sterownik libusb-win32?)")
-        return 1
-    if len(panels) > 1 and not all(p.paired for p in panels):
-        print("\nUWAGA: przy wiecej niz jednym module powiazanie z portem jest")
-        print("ZGADNIETE (libusb nie podaje sciezki portu). Potwierdz je:")
+    try:
+        print("moduly %04x:%04x widziane przez libusb: %d"
+              % (ax206.VID, ax206.PID, len(panels)))
         for p in panels:
-            print("  python -m panel --identify %d" % p.index)
-    print("\nDo panel.json:")
-    print('  "device": {"location": "%s"}' % (panels[0].location or "?"))
-    return 0
+            print("  %s" % p.describe())
+        if not panels:
+            print("  (nic — czy modul jest wpiety i ma sterownik libusb-win32?)")
+            return 1
+        if len(panels) > 1:
+            # Lancuch portow przychodzi z tej samej enumeracji, co uchwyt, wiec
+            # nie ma tu nic zgadnietego. `--identify` sluzy juz tylko temu, zeby
+            # zobaczyc na wlasne oczy, ktory modul jest ktory — a tego zaden
+            # odczyt nie zalatwi.
+            print("\nDwa identyczne moduly rozrozni tylko wzrok:")
+            for p in panels:
+                print("  python -m panel --identify %d" % p.index)
+        print("\nDo panel.json:")
+        print('  "device": {"port_path": "%s"}' % (panels[0].port_path or "?"))
+        return 0
+    finally:
+        device.release(panels)
 
 
 def cmd_identify(args):
     panels = device.list_panels(args.dll)
     picked = device.select(panels, {"index": args.identify})
+    device.release(panels, keep=picked)
     dev = ax206.AX206(finder=lambda: picked.found, dll_path=args.dll).open()
     try:
         dev.set_brightness(7)
@@ -47,11 +52,11 @@ def cmd_identify(args):
         d.text((dev.width // 2, dev.height // 2 - 10), str(picked.index),
                font=f_big, fill=theme.ACCENT, anchor="mm")
         d.text((dev.width // 2, dev.height - 40),
-               picked.location or picked.filename, font=f_small,
+               picked.port_path, font=f_small,
                fill=theme.TEXT_60, anchor="mm")
         dev.blit(ax206.image_to_rgb565(img))
-        print("na module #%d powinna byc wielka %d (%s)"
-              % (picked.index, picked.index, picked.location))
+        print("na module #%d powinna byc wielka %d (port_path=%s)"
+              % (picked.index, picked.index, picked.port_path))
     finally:
         dev.close()
     return 0
@@ -67,6 +72,8 @@ def cmd_probe(args):
     print("moduly: %d" % len(panels))
     for p in panels:
         print("  %s" % p.describe())
+    # Ta enumeracja sluzyla tylko wypisaniu listy; `finder_for` robi wlasna.
+    device.release(panels)
     finder = device.finder_for(args.device_selector(), args.dll)
     dev = ax206.AX206(finder=finder, dll_path=args.dll).open()
     try:
@@ -148,9 +155,10 @@ def build_parser():
     ap.add_argument("--once", action="store_true",
                     help="jedna klatka z prawdziwych danych i wyjscie")
     ap.add_argument("--out", help="dodatkowo zapisz klatke do PNG (z --once)")
-    ap.add_argument("--dll", help="sciezka do libusb0.dll")
+    ap.add_argument("--dll", help="sciezka do libusb-1.0.dll")
     ap.add_argument("--index", type=int, help="wymus modul o tym indeksie")
-    ap.add_argument("--location", help="wymus modul na tym porcie")
+    ap.add_argument("--port-path", dest="port_path",
+                    help="wymus modul o tym lancuchu portow, np. 3.4")
     return ap
 
 
@@ -158,8 +166,8 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
 
     def device_selector():
-        if args.location:
-            return {"location": args.location}
+        if args.port_path:
+            return {"port_path": args.port_path}
         if args.index is not None:
             return {"index": args.index}
         try:

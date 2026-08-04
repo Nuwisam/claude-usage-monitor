@@ -23,7 +23,7 @@ python -m pytest tests -q
 ## Sprzęt — co trzeba wiedzieć, zanim się coś zepsuje
 
 Moduł: `USB\VID_1908&PID_0102`, GEMBIRD/QDtech „USB-Display", układ **Appotech
-AX206**, sterownik libusb-win32. Protokół to firmowa komenda SCSI `0xCD`
+AX206**. Protokół to firmowa komenda SCSI `0xCD`
 opakowana w parę CBW/CSW transportu USB Bulk-Only Mass Storage; punkt wyjścia to
 [`dpf-ax`](https://github.com/dreamlayers/dpf-ax), ale **ten firmware różni się
 od opisanego tam** i różnice są tu największym źródłem niespodzianek.
@@ -31,10 +31,30 @@ od opisanego tam** i różnice są tu największym źródłem niespodzianek.
 | | |
 |---|---|
 | rozdzielczość | 480 × 320, RGB565 **starszy bajt pierwszy**, bez obrotu |
-| pełna klatka | 307 200 B → **~376 ms** (≈2,6 kl./s to sufit sprzętowy) |
+| pełna klatka | 307 200 B → **~355 ms** dla ciemnego układu (≈2,8 kl./s) |
 | pakowanie pikseli | 1,55 ms (`bytes.translate` + jedno OR na dużych liczbach; numpy zbędne) |
 | jasność | `SETPROPERTY`/`BRIGHTNESS`, 0–7 |
 | uchwyt | **wyłączny** — albo AIDA64, albo my |
+| sterownik urządzenia | libusb-win32 (`libusb0.sys`) — ten sam, którego używa AIDA64 |
+| biblioteka klienta | **libusb-1.0** (pakiet `libusb` z `requirements.txt`) |
+
+**Sterownik i biblioteka to dwie różne rzeczy** i mylenie ich jest tu gotową
+pułapką. Urządzenie zostaje pod libusb-win32; zmieniła się tylko biblioteka, przez
+którą z nim rozmawiamy. Backend windowsowy libusb-1.0 obsługuje urządzenia
+związane z `libusb0.sys` (zmierzone: 1200 klatek, `missed_csw = 0`), więc
+przepinanie sterownika na WinUSB jest niepotrzebne i zerwałoby AIDA64.
+
+Powód zmiany biblioteki jest jeden: `libusb_get_port_numbers()` podaje **łańcuch
+portów** z tego samego uchwytu, który otwieramy. API 0.1 z libusb-win32 nie
+podawało żadnej topologii (`bus-0`, `devnum=0`) — moduł trzeba było szukać
+w rejestrze Windows i łączyć jedno z drugim po kolejności.
+
+**Czas klatki zależy od treści**, mimo stałej liczby bajtów na drucie. Zmierzone
+na tym module, ten sam blit 307 200 B: karta testowa (ciemna) 354 ms, pełna czerń
+356 ms, pasy nasyconych kolorów 514 ms. Układ docelowy jest ciemny, więc obowiązuje
+~355 ms. Syntetyczne testy nasyconymi pasami mierzą najgorszy przypadek —
+i właśnie one kazały przez chwilę uwierzyć w nieistniejącą regresję po
+migracji (libusb-win32 dawał na tych samych pasach 503–533 ms).
 
 **Rysuje wyłącznie pełne klatki.** Prostokąt w komendzie blit nie jest obszarem
 do przerysowania — ustawia *okno rysowania*, w które firmware wlewa cały strumień,
@@ -131,7 +151,7 @@ token ingestu, a `/usage-monitor-enrollment` przepisuje plik sondy.
   "stream_token": "<wpis z STREAM_TOKENS o etykiecie panel>",
   "account_1": {"uuid": "...", "name": "you@example.org"},
   "account_2": {"uuid": "...", "name": "billing@example.org"},
-  "device": {"location": "Port_#0004.Hub_#0006"},
+  "device": {"port_path": "3.4"},
   "brightness": 5
 }
 ```
@@ -143,10 +163,35 @@ przy nawiązaniu połączenia, a SSE nie ma kanału zwrotnego.
 
 **Panel wskazuje się w konfiguracji i klient nigdy nie sięga po inny.** Docelowo
 na magistrali będą dwa takie same moduły (jeden pod innym programem) i oba mają ten sam
-numer seryjny `WCH32` — to stała firmware'u, nie numer egzemplarza. Rozróżnia je
-fizyczny port z rejestru Windows. Powiązanie wpisu z rejestru z urządzeniem
-libusb jest **sprawdzone tylko dla jednego modułu**; przy dwóch `--list` paruje
-je po kolejności i mówi o tym wprost — potwierdź `--identify`.
+numer seryjny `WCH32` — to stała firmware'u, nie numer egzemplarza. Windows
+wyprowadza z tego seryjnego zarówno ID instancji (`USB\VID_1908&PID_0102\WCH32`),
+jak i `ContainerID`, więc **obie te wartości będą dla dwóch modułów identyczne**
+i jako selektory nie odróżniają niczego.
+
+Kluczem jest więc `port_path` — łańcuch portów, np. `"3.4"`: port 3 kontrolera,
+port 4 huba na tym porcie. Trzy rzeczy, które o nim wiedzieć:
+
+- **Nie zawiera licznika enumeracji.** Poprzednia wersja brała
+  `LocationInformation` z rejestru (`"Port_#0004.Hub_#0005"`), gdzie `Hub_#NNNN`
+  jest indeksem instancji huba nadawanym przy wykrywaniu. Ten indeks przeskoczył
+  przy nieruszonej wtyczce i klient przestał widzieć swój moduł. Stary
+  `"location"` w `panel.json` kończy się teraz **czytelnym błędem konfiguracji**
+  z instrukcją, nie cichą migracją.
+- **Numer magistrali do klucza nie wchodzi** — jest syntetycznym indeksem
+  kontrolera, czyli tej samej natury co `Hub_#`. `--list` go pokazuje jako
+  diagnostykę. Gdyby dwa moduły dały ten sam łańcuch (możliwe tylko przy dwóch
+  kontrolerach USB o tym samym numerze portu), wybór kończy się błędem —
+  nigdy strzałem na chybił trafił.
+- **Przełożenie wtyczki zmienia klucz.** To nieuniknione przy identyfikacji po
+  topologii, dlatego `--list` wypisuje gotową linię do wklejenia.
+
+Zmierzone: `ports=(3,4)` zgadza się co do liczby z `DEVPKEY_Device_LocationPaths`
+(`...#USB(3)#USB(4)`) i przeżywa reset urządzenia mimo skaczącego adresu USB.
+Sprawdzone dla **jednego** modułu naraz. Różnica
+wobec poprzedniej wersji jest jednak jakościowa: nie ma już czego z czym parować,
+bo łańcuch przychodzi z tej samej enumeracji co otwierany uchwyt. Który moduł na
+biurku jest który, i tak rozstrzyga wyłącznie `--identify` — tego żaden odczyt
+nie załatwi.
 
 Zadanie harmonogramu musi mieć „uruchom **tylko gdy użytkownik jest zalogowany**"
 (dysk sieciowy jest mapowany per sesja, a USB wymaga sesji interaktywnej) i wyłączone

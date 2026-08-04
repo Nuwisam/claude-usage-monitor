@@ -25,7 +25,7 @@ DEFAULTS = {
     "stream_token": None,
     "account_1": None,
     "account_2": None,
-    "device": None,          # {"location": "Port_#0004.Hub_#0006"} albo {"index": 0}
+    "device": None,          # {"port_path": "3.4"} albo {"index": 0}
     "width": 480,
     "height": 320,
     "brightness": 5,
@@ -117,7 +117,18 @@ class Config:
         dev = self._d.get("device")
         if dev is not None and not isinstance(dev, dict):
             problems.append("device musi byc obiektem, np. "
-                            "{\"location\": \"Port_#0004.Hub_#0006\"}")
+                            "{\"port_path\": \"3.4\"}")
+        elif isinstance(dev, dict) and "location" in dev:
+            # Selektor `location` bral z rejestru "Port_#0004.Hub_#0005", gdzie
+            # `Hub_#NNNN` jest licznikiem enumeracji, nie sprzetem. Przeskoczyl
+            # przy nieruszonej wtyczce i panel przestal sie odnajdywac. Cicha
+            # migracja odpada: wymagalaby zgadywania, ktore modul ma na mysli,
+            # a to jest dokladnie to, czego sie tu pozbywamy.
+            problems.append(
+                "device.location (\"%s\") nie jest juz obslugiwane — czlon "
+                "Hub_# to licznik enumeracji, ktory przeskakuje bez ruszania "
+                "wtyczki. Uruchom `python -m panel --list` i wpisz podany "
+                "port_path" % dev.get("location"))
         # Gorna granica TYLKO tam, gdzie ja cos podaje: 0..7 to zakres wlasciwosci
         # PROPERTY_BRIGHTNESS z firmware'u AX206. Reszta dostaje sama podloge,
         # bo sufit musialbym wymyslic — a wymyslony prog, ktory odrzuca poprawna
@@ -190,6 +201,6 @@ def example():
         "stream_token": "<wpis z STREAM_TOKENS o etykiecie panel>",
         "account_1": {"uuid": "<uuid konta>", "name": "you@example.org"},
         "account_2": {"uuid": "<uuid konta>", "name": "billing@example.org"},
-        "device": {"location": "Port_#0004.Hub_#0006"},
+        "device": {"port_path": "3.4"},
         "brightness": 5,
     }, indent=2, ensure_ascii=False)

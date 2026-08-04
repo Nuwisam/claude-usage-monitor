@@ -205,8 +205,12 @@ Konfiguracja: `%LOCALAPPDATA%\claude-usage-monitor\panel.json` — **osobny plik
 **Uchwyt do modułu jest wyłączny: albo panel, albo inny program.** Dopóki jest jeden
 wyświetlacz, ten drugi program musi stać. Po dołożeniu drugiego oba programy chodzą równolegle, ale
 wtedy **każdy trzeba przypiąć do konkretnego egzemplarza** — oba mają ten sam numer
-seryjny `WCH32` (stała firmware'u), więc rozróżnia je tylko fizyczny port
-(`"device": {"location": "Port_#0004.Hub_#0006"}`). Powiązanie sprawdzaj `--identify`.
+seryjny `WCH32` (stała firmware'u), a Windows wyprowadza z niego zarówno ID instancji,
+jak i `ContainerID`, więc te wartości też będą identyczne. Rozróżnia je wyłącznie łańcuch
+portów z libusb-1.0 (`"device": {"port_path": "3.4"}`), wypisywany przez `python -m panel
+--list`. Stare `"location": "Port_#0004.Hub_#0005"` daje teraz błąd konfiguracji:
+człon `Hub_#` był licznikiem enumeracji i potrafił przeskoczyć bez ruszania wtyczki.
+Który moduł jest który, potwierdzaj `--identify`.
 
 ### Dług: napisy panelu rozjechały się z WWW
 
