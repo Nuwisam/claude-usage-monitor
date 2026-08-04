@@ -1,7 +1,7 @@
 /** SSE subscription to the accounts currently on screen.
  *
  *  A frame carries the FULL `AccountStatus`, so applying it is a cache splice — no refetch,
- *  no extra round-trip to oauth2-proxy. The poll stays alive as a much slower safety net
+ *  no extra round-trip through the auth gate. The poll stays alive as a much slower safety net
  *  (see `STATUS_REFETCH_LIVE_MS`): it owns `warnings[]`, it is what recomputes freshness
  *  while the client is silent, and it is the only thing that discovers accounts that did
  *  not exist when the stream was opened.

@@ -2,7 +2,7 @@
 
 Ten sam katalog co config.json sondy, ale OSOBNY plik. Token strumienia ma inny
 zakres niz token ingestu (backend/app/auth.py:62-67 odrzuca ingestowy na /stream),
-a `/usage-monitor-enrollment` przepisuje plik sondy — nie chcemy, zeby przy okazji
+a plik sondy bywa nadpisywany przy jej aktualizacji — nie chcemy, zeby przy okazji
 gubil ustawienia panelu.
 
 Konta sa dwoma NAZWANYMI polami, nie lista. Uklad 4a ma dokladnie dwa pasy, wiec

@@ -12,25 +12,27 @@ po naszej stronie: żądanie wykonuje pierwszorzędny klient własnym, samodziel
 tokenem. Endpoint tokenowy nie jest wołany nigdy, więc nie ma tu głównego wektora utraty
 konta — rotacji jednorazowego refresh tokenu.
 
-## Stan: wdrożone
-
-**<https://usage.example.org/claude-usage/>** — za SSO.
+## Stan
 
 | Element | Stan |
 |---|---|
 | Sonda + hooki (`PostToolUse` async, `Stop`) | działa |
-| Backend + MariaDB na `192.0.2.10` | działa |
-| Apache `/claude-usage` + filtr brzegowy | działa |
-| API odczytu za SSO, kontrakt v3 | działa |
+| Backend + MariaDB w Compose | działa |
+| Brama autoryzacji: `none` / `header` / `verify` | działa |
+| API odczytu, kontrakt v3 | działa |
 | UI — **Live** i **Historia** | działa |
+| Panel biurkowy AX206 (SSE) | działa |
 
-UI pokrywa dwa widoki z makiet. Diagnostyka (zdarzenia, batche, maszyny, surowe payloady)
-została świadomie przy `curl` — patrz `docs/UI-HANDOUT.md` § 10.
+Diagnostyka (zdarzenia, batche, maszyny, surowe payloady) została świadomie przy `curl` —
+patrz [docs/API.md](docs/API.md) § 10.
+
+Typowe wdrożenie stawia to za reverse proxy z SSO, ale to jedna z trzech możliwości, nie założenie
+projektu. Instalacja na własnej maszynie nie wymaga niczego przed backendem.
 
 ## Architektura
 
 ```
-maszyna z Claude Code                              192.0.2.10
+maszyna z Claude Code                              serwer
 ┌──────────────────────────────┐
 │ hook PostToolUse (async)     │
 │ hook Stop                    │
@@ -38,7 +40,7 @@ maszyna z Claude Code                              192.0.2.10
 │ client/usage-probe.py        │ ───────────────────────────────────►  Apache
 │  · zleca `claude -p /usage`  │                                         │
 │  · czyta cache + stdout      │              /claude-usage/api/ingest ──► backend
-│  · throttle 60 s             │              /claude-usage/api/*     ──► backend (SSO)
+│  · throttle 60 s             │              /claude-usage/api/*     ──► backend (brama)
 │  · spool przy awarii         │              /claude-usage/          ──► backend (statyki)
 └──────────────────────────────┘                          ┌──────────────┴──────────────┐
                                                           │ backend  FastAPI :8000       │
@@ -48,14 +50,14 @@ maszyna z Claude Code                              192.0.2.10
 ```
 
 **Dwa kontenery, nie trzy.** Statyki UI serwuje backend (etap `node` w jego Dockerfile).
-Host moze miec wyczerpane pule adresowe Dockera, a wariant z osobnym nginx-em i `auth_request` niesie
-pułapkę, w której `$scheme` w kontenerze to `http`, a `$request_uri` nie zawiera prefiksu —
-przez co powrót po zalogowaniu wyrzuca na korzeń serwisu. Tu bramą SSO zostaje backend,
-budujący `redirect_url` z jawnych `PUBLIC_ORIGIN` + `APP_BASE_PATH`.
+Osobny nginx z `auth_request` niesie pułapkę, w której `$scheme` w kontenerze to `http`,
+a `$request_uri` nie zawiera prefiksu — przez co powrót po zalogowaniu wyrzuca na korzeń
+serwisu. Tu bramą zostaje backend, budujący `redirect_url` z jawnych `PUBLIC_ORIGIN`
++ `APP_BASE_PATH`.
 
 ## Dlaczego tak, a nie inaczej
 
-Podejścia sprawdzone i odrzucone (`docs/POC-FINDINGS.md`):
+Podejścia sprawdzone i odrzucone:
 
 - **Statusline hook** — byłby darmowy (zero wywołań API), ale **nie działa w rozszerzeniu
   VS Code**; to funkcja wyłącznie CLI/TUI ([#55643](https://github.com/anthropics/claude-code/issues/55643),
@@ -86,7 +88,7 @@ Sonda czyta wynik z dwóch miejsc, bo świeżość i kompletność leżą gdzie 
 | stdout `/usage` | świeże przy każdym wywołaniu | procenty głównych okien |
 | `~/.claude.json` → `cachedUsageUtilization` | ≤ 5 min | pełne surowe ciało odpowiedzi |
 
-Throttle 300000 ms w Claude Code dotyczy **zapisu na dysk**, nie pobrania — stąd ten
+Pięciominutowy throttle w Claude Code dotyczy **zapisu na dysk**, nie pobrania — stąd ten
 rozdział. Sonda scala jedno z drugim, a wynik ma dokładnie ten sam kształt co dawna odpowiedź
 HTTP, więc parser backendu nie wymagał zmian.
 
@@ -111,13 +113,10 @@ połowę próbek do złego konta i cicho zatruwał historię obu.
 
 ## Instalacja klienta na nowej maszynie
 
-Robi to skill **`/usage-monitor-enrollment`** z repo `repozytorium skilli` — sonda jedzie razem z nim,
-więc maszyna zdalna nie potrzebuje ani tego repo, ani dostępu do hosta. Poniżej to samo ręcznie.
-
 1. Pod ścieżką z hooków połóż **przekierowanie**, nie kopię sondy — wtedy zmiana u źródła
    działa od razu, bez kopiowania:
    ```python
-   SRC = r"<pełna ścieżka do usage-probe.py>"    # tutaj: repo; zdalnie: katalog skilla
+   SRC = r"<pełna ścieżka do usage-probe.py>"
    if not os.path.isfile(SRC):
        sys.exit(0)
    runpy.run_path(SRC, run_name="__main__")
@@ -148,29 +147,49 @@ Analiza lokalna: `python client/analyze-samples.py`.
 ## Wdrożenie serwera
 
 ```bash
-cd /var/lib/claude-usage-monitor
-cp .env.example .env      # MARIADB_*, INGEST_TOKENS, INGEST_EDGE_KEY, ALLOWED_EMAILS
+cp .env.example .env      # MARIADB_*, AUTH_MODE, INGEST_TOKENS
 docker compose up -d --build
-
-EDGE=$(grep -oP 'INGEST_EDGE_KEY=\K.*' .env)
-sed "s|__INGEST_EDGE_KEY__|$EDGE|" deploy/apache/claude-usage-monitor-include.conf.example \
-    > /etc/apache2/sites-available/claude-usage-monitor-include.conf
-# dopisz Include do sites-available/example_org-ssl.conf
-apachectl configtest && systemctl reload apache2
 ```
+
+`AUTH_MODE` jest **wymagane i nie ma wartości domyślnej**. Bez niego kontener nie wstanie —
+tak ma być, bo tylko Ty wiesz, czy przed backendem cokolwiek stoi.
+
+**Lokalnie, bez niczego przed backendem.** `AUTH_MODE=none`. Port ląduje na
+`127.0.0.1:8080`, więc UI działa pod <http://127.0.0.1:8080/claude-usage/> i nie jest
+osiągalne z sieci. Nie zmieniaj `BACKEND_BIND` na `0.0.0.0`, dopóki trybem jest `none`.
+
+**Za reverse proxy.** `AUTH_MODE=header` (proxy podaje adres w nagłówku — musi go *usuwać*
+z żądań przychodzących) albo `AUTH_MODE=verify` (backend pyta usługę tożsamości).
+W obu razach zdejmij publikowany port, bo proxy sięga kontenera po sieci dockerowej —
+`BACKEND_BIND=` **nie wystarczy**, `:-` odpala się także na pustej wartości:
+
+```yaml
+# docker-compose.override.yml (nieśledzony)
+services:
+  claude_usage_monitor_backend:
+    ports: !reset []
+```
+
+Przykładowy `Include` dla Apache leży w
+[deploy/apache/](deploy/apache/claude-usage-monitor-include.conf.example);
+`__INGEST_EDGE_KEY__` podstawiasz przy deployu. Krok po kroku:
+[docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 ## Testy
 
 ```bash
 cd backend
 pip install -e ".[dev]"
-DATABASE_URL="sqlite+aiosqlite:///:memory:" INGEST_TOKENS="t:m" ALLOWED_EMAILS="a@b.pl" pytest
+pytest                    # zmienne środowiskowe ustawia tests/conftest.py
 
 cd ../frontend && npm run typecheck
+cd ../panel && pytest
 ```
 
-137 testów, w tym normalizator i ścieżka zapisu uruchamiane na **realnym payloadzie** z konta
-Max (`backend/tests/fixtures/usage_max.json`), nie na wymyślonym.
+271 testów backendu i 152 panelu, w tym normalizator i ścieżka zapisu uruchamiane na
+**realnym payloadzie** z konta Max (`backend/tests/fixtures/usage_max.json`), nie na
+wymyślonym. Kwoty rozliczeniowe w fixture'ach są przeskalowane; procenty zostały
+oryginalne, więc `spend.percent` dalej zgadza się z `used/limit` obok.
 
 Kilka z nich pilnuje błędów, które raz już przeszły niezauważone na produkcję — dedup i guard
 monotoniczności przy kołyszącym się `resets_at`, fallback SPA zjadający błędy API, czas ze

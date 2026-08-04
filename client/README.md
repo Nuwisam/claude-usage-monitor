@@ -23,7 +23,7 @@ Zmierzone, nie wydedukowane:
 | stdout `claude -p "/usage"` | **świeże przy każdym wywołaniu** | procenty głównych okien, jako tekst |
 | `~/.claude.json` → `cachedUsageUtilization` | ≤ 5 min | **pełne surowe ciało odpowiedzi** — `spend`, `extra_usage`, `limits[]`, wszystkie 17 bucketów |
 
-Rozdział bierze się stąd, że throttle 300000 ms w Claude Code dotyczy **zapisu na
+Rozdział bierze się stąd, że pięciominutowy throttle w Claude Code dotyczy **zapisu na
 dysk**, a nie pobrania — dlatego interaktywne `/usage` zawsze pokazuje aktualne dane, a plik
 bywa o kilka minut starszy.
 
@@ -52,12 +52,14 @@ normalny, płatny turn modelu. Sonda wykrywa to po `num_turns>0` i taki zrzut od
 | `usage-probe.py` | **Źródło prawdy.** Sonda wpinana w hooki — tu się ją edytuje |
 | `analyze-samples.py` | Analiza lokalnego logu — tempo zmian, błędy, konta |
 
-Sonda ma **dwa adresy i dwie role**. Tutaj jest źródłem: ładuje ją `backend/tests/test_probe_parsing.py`
-po sztywnej ścieżce i tutaj trafiają zmiany. Kopia w `kopia wydania usage-probe.py`
-(repo `repozytorium skilli`) jest **wydaniem** — jedynym, co widzi maszyna zdalna. Wydanie **może być
-starsze** od HEAD i to jest poprawne; różnicę widać w `/api/machines` po `scriptVersion`, bo każdy
-batch niesie `SCRIPT_VERSION`. Publikuje wyłącznie `polecenie publikujace wydanie`, świadomie —
+Tutaj jest **źródło**: ładuje je `backend/tests/test_probe_parsing.py` po sztywnej ścieżce
+i tutaj trafiają zmiany. Każda kopia rozdana na maszyny jest **wydaniem** i **może być
+starsza** od HEAD — to poprawne, bo publikacja ma być decyzją, nie skutkiem ubocznym pushu;
 automat wypchnąłby na maszyny zdalne wersję roboczą.
+
+Dlatego **każda zmiana zachowania wymaga podbicia `SCRIPT_VERSION`**: wersja jedzie w każdym
+batchu, więc różnicę widać w `/api/machines` po `scriptVersion`. Bez podbicia dwie różne
+sondy są nierozróżnialne.
 
 ## Instalacja
 
@@ -67,7 +69,7 @@ wpis w `settings.json`. Leży tam kilkanaście linijek Pythona, które wykonują
 spod `SRC`:
 
 ```python
-SRC = r"Z:\projects\claude-usage-monitor\client\usage-probe.py"   # tutaj: repo projektu
+SRC = r"C:\sciezka\do\repo\client\usage-probe.py"   # pelna sciezka do pliku w repo
 if not os.path.isfile(SRC):        # zasada 5: brak źródła to cisza, nie traceback
     sys.exit(0)
 runpy.run_path(SRC, run_name="__main__")
@@ -77,8 +79,8 @@ Dzięki temu **edycja w repo działa natychmiast**, bez kopiowania po każdej zm
 miało tam stać dowiązanie symboliczne, ale Windows odmawia jego utworzenia bez trybu dewelopera
 albo praw administratora (`Administrator privilege required`) — przekierowanie robi to samo bez
 żadnych uprawnień i tak samo na maszynie zdalnej. Różni je **wyłącznie `SRC`**: tutaj repo
-projektu, na maszynie zdalnej wydanie w repo skilli. Sondę odnajduje po `%LOCALAPPDATA%`, nie po
-`__file__`, więc przekierowanie niczego jej nie przesuwa.
+projektu, na maszynie zdalnej katalog, do którego rozdano kopię. Sondę odnajduje po
+`%LOCALAPPDATA%`, nie po `__file__`, więc przekierowanie niczego jej nie przesuwa.
 
 Koszt: jeden odczyt pliku więcej, a przy `SRC` na dysku sieciowym +19 ms na wywołanie (zmierzone:
 27 ms lokalnie vs 46 ms z dysku sieciowego). W wersji 3 to margines — dominującym kosztem jest odpalenie

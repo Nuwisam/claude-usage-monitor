@@ -1,11 +1,10 @@
 # Runbook
 
-Host: `192.0.2.10` (`usage.example.org`). Katalog: `/var/lib/claude-usage-monitor`
-== `Z:/projects/claude-usage-monitor`. **Kopia robocza jest wdrożeniem.**
+Katalog wdrożenia w przykładach: `/var/lib/claude-usage-monitor`. Adresy i ścieżki podstaw
+własne — `usage.example.org` i `192.0.2.10` są tu wyłącznie zaślepkami.
 
-UI: <https://usage.example.org/claude-usage/> — serwowane przez **ten sam kontener
-backendu** (statyki z etapu `node` w `backend/Dockerfile`), więc nie ma osobnego kontenera
-frontendu i nie ma nic do restartowania osobno.
+UI serwuje **ten sam kontener backendu** (statyki z etapu `node` w `backend/Dockerfile`),
+więc nie ma osobnego kontenera frontendu i nie ma nic do restartowania osobno.
 
 ## Codzienna obsługa
 
@@ -61,8 +60,11 @@ nieudanych POST-ach) i sekcję o certyfikatach w `client/README.md`.
 
 | Objaw | Przyczyna i co zrobić |
 |---|---|
-| `/api/status` daje **503** `sso-unreachable` | Backend nie dosięga oauth2-proxy. Sprawdź, czy jest w sieci `identity-proxy_default` i czy `identity_proxy` żyje |
-| `/api/status` daje **403** `email-not-allowed` | `ALLOWED_EMAILS` w `.env` nie zawiera Twojego adresu SSO |
+| Kontener nie wstaje, w logu błąd walidacji `AUTH_MODE` | Zmienna nieustawiona albo pusta. Compose podstawia za nieustawioną **pusty ciąg**, a tryb jest dopasowaniem dosłownym — wpisz `none`, `header` albo `verify` małymi literami |
+| `/api/status` daje **503** `sso-unreachable` | Tylko `AUTH_MODE=verify`. Backend nie dosięga adresu z `AUTH_VERIFY_URL` — sprawdź adres i czy backend ma do niego drogę siecią (`internal: true` odcina także ruch wychodzący) |
+| `/api/status` daje **503** `sso-unavailable` | `AUTH_MODE=verify` przy pustym `AUTH_VERIFY_URL`, albo usługa tożsamości odpowiedziała statusem innym niż 200/401/403 |
+| `/api/status` daje **401** `not-authenticated`, UI mówi „nie jesteś zalogowany" | Przy `header` proxy nie podało nagłówka z `AUTH_EMAIL_HEADER`; przy `verify` sesji nie ma. Brak `redirect_url` w odpowiedzi znaczy, że `AUTH_LOGIN_URL` jest pusty — UI nie zgaduje adresu logowania |
+| `/api/status` daje **403** `email-not-allowed` | `ALLOWED_EMAILS` w `.env` nie zawiera Twojego adresu |
 | Ingest daje **403**, a token jest dobry | Brak nagłówka `X-Ingest-Key` albo rozjazd z `INGEST_EDGE_KEY` w vhoście Apache |
 | Ingest daje **401** | Zły token maszyny. Porównaj `config.json` klienta z `INGEST_TOKENS` |
 | `samplesWritten: 0`, ale `ok: true` | **Poprawne.** Dedup — wartości się nie zmieniły i nie minął heartbeat (5 min). Pomiar mimo to podbija `last_confirmed_at`, więc UI pokazuje go jako świeży |
@@ -83,9 +85,9 @@ nieudanych POST-ach) i sekcję o certyfikatach w `client/README.md`.
 
 ## Backup
 
-**Weekly `data-backup` NIE obejmuje tej bazy.** Jego `mysqldump --all-databases` łączy się
-do natywnej MariaDB hosta (`127.0.0.1:3306`), a nasza działa w kontenerze. Żadna linia
-`dir-backuper.py` nie dotyczy tego katalogu.
+**Backup hosta prawdopodobnie NIE obejmuje tej bazy.** Typowy `mysqldump --all-databases`
+łączy się do natywnej MariaDB hosta (`127.0.0.1:3306`), a ta działa w kontenerze i na
+zewnątrz nie wystawia portu. Sprawdź to, zanim uznasz, że masz kopię.
 
 Do stracenia jest **historia zużycia** — nieodtwarzalna, bo Anthropic nie udostępnia przeszłości.
 Stan bieżący odbuduje się przy pierwszym pomiarze.
@@ -100,37 +102,22 @@ TARGET=prod ./scripts/restore.sh <plik>          # nadpisanie produkcji, pyta o 
 nie jest backupem — a odtwarzanie „na próbę" wprost na produkcję to najlepszy sposób, żeby ją
 stracić.
 
-Żeby włączyć automat, dopisz jedną linię do `/etc/cron.weekly/data-backup`:
+Żeby włączyć automat, dopisz jedną linię do cotygodniowego crona:
 ```
 /var/lib/claude-usage-monitor/scripts/backup.sh
 ```
 
 ## Zmiana klienta na maszynie
 
-**Nic nie kopiujesz.** Pod ścieżką z hooków leży przekierowanie, które wykonuje
-`client/usage-probe.py` prosto z repo, więc edycja działa od następnego przebiegu. Nie trzeba
-nic restartować — hook czyta skrypt i `config.json` przy każdym uruchomieniu. Pamiętaj tylko,
-że **pierwszy przebieg nie mierzy**: sonda nie czeka na `claude -p "/usage"`, wynik konsumuje
-następny cykl.
+**Nic nie kopiujesz**, jeśli pod ścieżką z hooków leży przekierowanie wykonujące
+`client/usage-probe.py` prosto z repo — wtedy edycja działa od następnego przebiegu i nie
+trzeba nic restartować, bo hook czyta skrypt i `config.json` przy każdym uruchomieniu.
+Pamiętaj tylko, że **pierwszy przebieg nie mierzy**: sonda nie czeka na
+`claude -p "/usage"`, wynik konsumuje następny cykl.
 
-## Wydanie sondy dla maszyn zdalnych
-
-Maszyna zdalna nie widzi tego repo — bierze sondę z `repozytorium skilli`
-(`kopia wydania usage-probe.py`) razem ze skillem. To jest **wydanie** i ma prawo
-być starsze od HEAD; publikacja jest decyzją, nie skutkiem ubocznym pushu.
-
-```
-polecenie publikujace wydanie      # pokazuje diff, kopiuje, commituje w repo skilli
-```
-
-Przypomina o tym `pre-push`: **odmawia**, gdy sonda się zmieniła bez podbicia `SCRIPT_VERSION`,
-i **ostrzega**, gdy wydanie zostało w tyle. Która maszyna chodzi na której wersji — widać
-w `/api/machines` po `scriptVersion`.
-
-Gdy hook nie odzywa się mimo zmiany sondy, sprawdź w tej kolejności:
-`git config core.hooksPath` (ma być `scripts/git-hooks`) oraz `ls -l scripts/git-hooks/pre-push`
-po stronie hosta — **bez bitu `+x` git na Linuksie pomija hook bez słowa**, a bit z indeksu
-gita nie przechodzi przez Sambę do katalogu roboczego.
+Gdy na maszynie zdalnej leży KOPIA sondy, a nie przekierowanie, pilnuj `SCRIPT_VERSION`.
+Wersja jedzie w każdym batchu i jest jedynym sposobem, żeby z `/api/machines` odczytać,
+która maszyna chodzi na którym kodzie — bez podbicia dwie różne sondy są nierozróżnialne.
 
 ## Wyłączenie zbierania
 
@@ -145,16 +132,19 @@ w `.env` + `docker compose up -d`.
 
 ## Klient strumienia SSE (panel AX206, skrypty)
 
-Przeglądarka nie potrzebuje niczego — `EventSource` idzie na ciasteczku SSO. Klient bez
-sesji SSO potrzebuje własnego tokenu i **UUID-ów kont**, bo subskrypcja jest po UUID, nie
+Przeglądarka nie potrzebuje niczego — `EventSource` idzie na ciasteczku sesji. Klient bez
+sesji potrzebuje własnego tokenu i **UUID-ów kont**, bo subskrypcja jest po UUID, nie
 po adresie e-mail (jeden adres wskazuje kilka kont, a e-mail bywa nadpisywany).
+
+Uwaga: panel **zawsze** wysyła nagłówek `Authorization`, więc przy pustym `STREAM_TOKENS`
+dostanie 401 niezależnie od `AUTH_MODE` — także przy `none`.
 
 ```bash
 # 1) token — OSOBNY od INGEST_TOKENS, ten drugi jest wyłącznie do zapisu
 openssl rand -hex 32
 # dopisz do .env:  STREAM_TOKENS=<hex>:panel      (potem: docker compose up -d)
 
-# 2) UUID kont, na które panel ma być zapisany (z przeglądarki zalogowanej do SSO)
+# 2) UUID kont, na które panel ma być zapisany (z przeglądarki z ważną sesją)
 curl -s $B/api/accounts | jq -r '.[] | "\(.uuid)  \(.email)"'
 
 # 3) próba na żywo — hello + snapshot natychmiast, potem ping co 15 s
@@ -182,7 +172,7 @@ pułapka złapała panel i kosztuje długie szukanie „gdzie ginie druga ramka"
 Klient: `panel/` w tym repo, szczegóły sprzętowe i diagnostyka w `panel/README.md`.
 
 ```powershell
-cd Z:\projects\claude-usage-monitor\panel
+cd <repo>\panel
 python -m panel --list                 # który moduł na którym porcie USB
 python -m panel --probe                # karta testowa: kolory, paski, ogonki
 python -m panel --once                 # jedna klatka z prawdziwych danych
@@ -198,9 +188,8 @@ potwierdzenia zobaczysz `PANEL ZAJETY`, moduł trzyma inny program — zatrzymaj
 rysowanie sam w ciągu ~30 s, bez ponownej instalacji.
 
 Konfiguracja: `%LOCALAPPDATA%\claude-usage-monitor\panel.json` — **osobny plik** od
-`config.json` sondy, bo token strumienia ma inny zakres niż token ingestu, a
-`/usage-monitor-enrollment` przepisuje plik sondy. Konta to dwa nazwane pola
-(`account_1`, `account_2`), nie lista — układ ekranu ma dokładnie dwa pasy.
+`config.json` sondy, bo token strumienia ma inny zakres niż token ingestu. Konta to dwa
+nazwane pola (`account_1`, `account_2`), nie lista — układ ekranu ma dokładnie dwa pasy.
 
 **Uchwyt do modułu jest wyłączny: albo panel, albo inny program.** Dopóki jest jeden
 wyświetlacz, ten drugi program musi stać. Po dołożeniu drugiego oba programy chodzą równolegle, ale
@@ -230,10 +219,21 @@ port trzeba przenieść ręcznie, a `test_fmt_port.py` łapie tylko to, co ma wp
 
 ## Pierwsze wdrożenie od zera
 
+Za reverse proxy. Instalacja lokalna to samo `AUTH_MODE=none` i `docker compose up -d
+--build` — reszta tej sekcji jej nie dotyczy.
+
 ```bash
 cd /var/lib/claude-usage-monitor
-cp .env.example .env            # MARIADB_*, INGEST_TOKENS, INGEST_EDGE_KEY, ALLOWED_EMAILS
-                                # STREAM_TOKENS tylko jeśli ma być klient bez SSO
+cp .env.example .env            # MARIADB_*, AUTH_MODE, INGEST_TOKENS, INGEST_EDGE_KEY
+                                # ALLOWED_EMAILS; STREAM_TOKENS tylko dla klienta bez sesji
+
+# proxy sięga kontenera po sieci dockerowej, więc port ma NIE być publikowany
+cat > docker-compose.override.yml <<'EOF'
+services:
+  claude_usage_monitor_backend:
+    ports: !reset []
+EOF
+
 docker compose up -d --build
 
 EDGE=$(grep -oP '^INGEST_EDGE_KEY=\K.*' .env)
@@ -245,10 +245,13 @@ chmod 600 /etc/apache2/sites-available/claude-usage-monitor-include.conf
 apachectl configtest && systemctl reload apache2
 ```
 
-Weryfikacja API: 401 z `redirect_url` na `/api/status`, 403 na `/api/ingest` bez `X-Ingest-Key`,
-401 z kluczem brzegowym ale bez tokenu, 200 z kompletem.
+Weryfikacja API: 401 na `/api/status` bez sesji (z `redirect_url`, jeśli ustawiłeś
+`AUTH_LOGIN_URL`), 403 na `/api/ingest` bez `X-Ingest-Key`, 401 z kluczem brzegowym ale bez
+tokenu, 200 z kompletem. Sprawdź też, że `/openapi.json` i `/docs` **nie** oddają schematu —
+patrz na treść, nie na kod odpowiedzi, bo fallback SPA odpowiada na te ścieżki `index.html`
+z kodem 200.
 
-Weryfikacja UI (żadna nie wymaga sesji SSO):
+Weryfikacja UI (żadna nie wymaga sesji):
 ```bash
 B=https://usage.example.org/claude-usage
 curl -s -o /dev/null -w '%{http_code} %{content_type}\n' $B/          # 200 text/html

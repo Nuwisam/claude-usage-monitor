@@ -34,12 +34,16 @@ function leaveTo(url: string): Promise<never> {
   return new Promise<never>(() => {});
 }
 
+/** 401 z adresem logowania = przekierowanie. 401 bez niego = blad na miejscu.
+ *
+ *  Zadnego adresu zapasowego nie zgadujemy. Backend wie, czy stoi za czymkolwiek
+ *  logujacym, a UI nie — wysylanie uzytkownika w domysle pod jakas typowa sciezke
+ *  konczy sie 404 albo cudza strona logowania i wyglada jak awaria aplikacji. */
 async function handle401(body: unknown): Promise<never> {
   const b = body as ApiErrorBody | null;
   const redirect = typeof b?.detail === "object" ? b.detail?.redirect_url : null;
   if (redirect) return leaveTo(redirect);
-  // `location.href` niesie prefiks, wiec powrot trafia w aplikacje, nie w korzen serwisu.
-  return leaveTo(`/oauth2/start?rd=${encodeURIComponent(window.location.href)}`);
+  throw new ApiError(401, reasonOf(body));
 }
 
 async function getJson<T>(path: string): Promise<T> {

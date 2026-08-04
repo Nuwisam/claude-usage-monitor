@@ -25,7 +25,7 @@ from app.services.ingest import utcnow
 # przy koncie, gaps[] w dwoch rodzajach.
 # v3: confirmedAt + valueSince w seriach — swiezosc liczy sie od POTWIERDZENIA, nie od
 #     zapisu probki. Bez tego dedup sprawia, ze niezmienna wartosc udaje utracona lacznosc.
-# Podbicie = aktualizacja docs/UI-HANDOUT.md.
+# Podbicie = aktualizacja docs/API.md.
 # deltaFrom doszlo PO v3 i wersji NIE podbija — dodanie pola nie lamie zgodnosci.
 CONTRACT_VERSION = 3
 

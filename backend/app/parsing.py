@@ -1,7 +1,7 @@
 """Normalizacja odpowiedzi /api/oauth/usage do plaskiej listy obserwacji.
 
 CZYSTE FUNKCJE — zero I/O, zero zaleznosci od bazy. Cala logika, ktora moze sie mylic,
-jest tutaj i jest testowalna na realnych payloadach z docs/POC-FINDINGS.md.
+jest tutaj i jest testowalna na realnych payloadach z backend/tests/fixtures/.
 
 Zasady wyniesione z kroku 0:
   * Odpowiedz ma 17 kluczy najwyzszego poziomu, z czego 5 bylo dla nas nowych. Nie wolno

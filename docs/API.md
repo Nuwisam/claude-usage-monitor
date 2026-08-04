@@ -1,11 +1,15 @@
-# UI — kontrakt API (v2)
+# Kontrakt API
 
-Dokument powstał jako **brief dla makiet**; makiety przyszły i UI jest zbudowane, więc dziś
-jest to przede wszystkim **kontrakt**. Wszystkie przykłady są **wygenerowane z działającego
-systemu**, nie wymyślone.
+Wszystkie przykłady są **wygenerowane z działającego systemu**, nie wymyślone. Tożsamości
+i kwoty są podstawione; kształt odpowiedzi, procenty i zależności między polami — nie.
 
-Stan na 2026-07-27: backend i frontend wdrożone pod `https://usage.example.org/claude-usage/`.
-Base URL API: `https://usage.example.org/claude-usage/api`
+Base URL API to `<origin><APP_BASE_PATH>/api`, czyli przy domyślnej instalacji lokalnej
+`http://127.0.0.1:8080/claude-usage/api`. W przykładach niżej: `https://usage.example.org/claude-usage/api`.
+
+**Schemat OpenAPI jest wyłączony** (`/openapi.json`, `/docs`, `/redoc`). Reverse proxy
+przepuszcza cały korzeń kontenera, a brama autoryzacji siedzi na zależnościach endpointów,
+nie na tych trasach — wystawiony schemat oddawałby komplet ścieżek i nazw pól każdemu bez
+sesji. Ten plik jest jedynym opisem kontraktu.
 
 **`contractVersion` = 3.** Co doszło w v3:
 
@@ -59,22 +63,41 @@ musi uczciwie komunikować (patrz § 4).
 
 ## 2. Uwierzytelnienie
 
-Backend sam jest bramą SSO — nie ma przed nim nginx-a z `auth_request`, więc **nikt nie
-zwróci przeglądarce 302**. Zamiast tego:
+Backend sam jest bramą — nie ma przed nim nginx-a z `auth_request`, więc **nikt nie zwróci
+przeglądarce 302**. Kto jest wołającym, rozstrzyga `AUTH_MODE`:
+
+| `AUTH_MODE` | Skąd tożsamość |
+|---|---|
+| `none` | znikąd — każde żądanie przechodzi. Tylko gdy port nie jest osiągalny z sieci |
+| `header` | z nagłówka `AUTH_EMAIL_HEADER`, który ustawia proxy (i musi go **usuwać** z żądań przychodzących) |
+| `verify` | z odpowiedzi JSON usługi tożsamości pod `AUTH_VERIFY_URL`; nazwy pól to konfiguracja |
+
+Niezależnie od trybu (poza `none`) na wierzchu stoi allowlista `ALLOWED_EMAILS`:
+uwierzytelnienie mówi KTO, allowlista mówi KOMU wolno.
 
 | Sytuacja | Odpowiedź |
 |---|---|
-| Brak sesji | `401 {"detail": {"reason": "not-authenticated", "redirect_url": "…"}}` |
-| Zalogowany, ale spoza allowlisty | `403 {"detail": {"reason": "email-not-allowed"}}` |
-| SSO niedostępne | `503 {"detail": {"reason": "sso-unreachable"}}` |
+| Brak sesji | `401 {"detail": {"reason": "not-authenticated"}}`, z `redirect_url` gdy jest dokąd odesłać |
+| Uwierzytelniony, ale spoza allowlisty | `403 {"detail": {"reason": "email-not-allowed"}}` |
+| Usługa tożsamości nieosiągalna | `503 {"detail": {"reason": "sso-unreachable"}}` |
+| `verify` bez `AUTH_VERIFY_URL`, albo nieoczekiwany status | `503 {"detail": {"reason": "sso-unavailable"}}` |
 
-**UI musi obsłużyć 401 przekierowaniem** na `detail.redirect_url`. To jest część kontraktu,
-nie szczegół implementacji.
+**Przy 401 z `redirect_url` UI przekierowuje; przy 401 bez niego pokazuje błąd w miejscu.**
+To jest część kontraktu, nie szczegół implementacji. Adresu logowania UI **nie zgaduje** —
+backend wie, czy stoi za czymkolwiek logującym, a UI nie; wysłanie użytkownika w domyśle pod
+typową ścieżkę kończy się 404 i wygląda jak awaria aplikacji.
+
+`redirect_url` pojawia się, gdy poda go usługa tożsamości (pole z `AUTH_REDIRECT_FIELD`) albo
+gdy ustawiono `AUTH_LOGIN_URL`. `{rd}` w tym adresie zostaje zastąpione zakodowanym adresem
+powrotu, składanym z `PUBLIC_ORIGIN` + `APP_BASE_PATH`:
 
 ```json
 {"detail": {"reason": "not-authenticated",
   "redirect_url": "https://usage.example.org/oauth2/start?rd=https%3A%2F%2Fusage.example.org%2Fclaude-usage%2F"}}
 ```
+
+403 i 503 **nie** kierują na logowanie: zalogowany użytkownik odesłany na logowanie wraca
+i dostaje tę samą odmowę, czyli pętlę.
 
 Wszystkie odpowiedzi mają `Cache-Control: no-store`. Nieaktualny procent limitu jest gorszy
 niż brak odpowiedzi.
@@ -129,10 +152,15 @@ pomiarze; adresowanie po nim znaczyłoby, że zbiór kont pod subskrypcją zmien
 wiedzy subskrybenta — po cichu. Co najmniej jeden `account` jest **wymagany**: brak
 parametru to `400 {"reason": "no-subscription"}`, nigdy niejawne „wszystko".
 
-**Autoryzacja: Bearer albo ciasteczko SSO.** Obecność nagłówka `Authorization` wybiera
-ścieżkę tokenową (`STREAM_TOKENS`); bez niego działa zwykła sesja SSO, więc `EventSource`
-z przeglądarki nie wymaga niczego dodatkowego. `STREAM_TOKENS` to **osobny sekret** od
-`INGEST_TOKENS` — token sondy jest poświadczeniem wyłącznie do zapisu i nie otwiera odczytu.
+**Autoryzacja: Bearer albo zwykła brama.** Obecność nagłówka `Authorization` wybiera
+ścieżkę tokenową (`STREAM_TOKENS`); bez niego stosuje się `AUTH_MODE` jak wszędzie indziej,
+więc `EventSource` z przeglądarki nie wymaga niczego dodatkowego. `STREAM_TOKENS` to
+**osobny sekret** od `INGEST_TOKENS` — token sondy jest poświadczeniem wyłącznie do zapisu
+i nie otwiera odczytu.
+
+Konsekwencja dla klientów bezgłowych: skoro ścieżkę wybiera sama OBECNOŚĆ nagłówka, klient,
+który zawsze go wysyła (jak panel AX206), przy pustym `STREAM_TOKENS` dostanie 401 nawet
+przy `AUTH_MODE=none`.
 
 | event | kiedy | treść |
 |---|---|---|
@@ -566,10 +594,10 @@ usterka — dane przyrastają tylko wtedy, gdy pracujesz, i wykres ma to pokazyw
 
 ---
 
-## 9. Co makiety rozstrzygnęły
+## 9. Rozstrzygnięcia projektowe UI
 
-Ta sekcja była listą pytań do projektanta. Makiety (runda 2, `Claude Usage Monitor v2.dc.html`)
-odpowiedziały na nie tak:
+Lista pytań, które musiały zapaść, zanim powstał widok — i odpowiedzi, na których stoi
+obecny interfejs:
 
 | Pytanie | Rozstrzygnięcie |
 |---|---|
@@ -592,10 +620,11 @@ UI pokrywa Live i Historię; reszta danych (zdarzenia, batche, maszyny, surowe p
 jest dostępna wyłącznie tędy:
 
 ```bash
-# w przegladarce zalogowanej do SSO — najprostsza droga
+# w przegladarce z wazna sesja — najprostsza droga
 https://usage.example.org/claude-usage/api/status
 
-# z terminala (wymaga ciasteczka sesji SSO)
+# z terminala; przy AUTH_MODE=verify potrzebne ciasteczko sesji, przy `header` naglowek
+# od proxy, przy `none` nic
 curl -s -b "$COOKIE" https://usage.example.org/claude-usage/api/status | jq \
   '.accounts[] | {email, orgType,
     serie: [.series[] | select(.primary) | {label, utilization, freshness, isActive}]}'
@@ -607,7 +636,7 @@ curl -s -b "$COOKIE" .../api/status | jq '.accounts[].series[] | select(.isActiv
 curl -s -b "$COOKIE" .../api/events | jq '.[] | {ts, type, message}'
 ```
 
-Lokalnie, bez SSO i bez serwera:
+Lokalnie, bez bramy i bez serwera:
 `python client/analyze-samples.py`
 
 ---

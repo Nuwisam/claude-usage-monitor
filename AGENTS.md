@@ -1,7 +1,7 @@
 # AGENTS.md — zasady pracy w tym repo
 
 Monitor limitów Claude dla wielu kont. Szczegóły: `README.md`.
-Wyniki rozpoznania, na których stoi cały projekt: `docs/POC-FINDINGS.md`.
+Rozpoznanie, na którym stoi projekt — sekcja „Dlaczego tak, a nie inaczej" w `README.md`.
 
 ## Zasady, których nie wolno złamać
 
@@ -77,7 +77,7 @@ zatruwał historię obu, bez żadnego widocznego objawu.
 
 **8. Kontrakt API jest zamrożony.**
 `/api/status` zwraca `contractVersion` (dziś **3**). Zmiana łamiąca zgodność = podbicie wersji
-**i** aktualizacja `docs/UI-HANDOUT.md` **i** stałej `CONTRACT_VERSION` w
+**i** aktualizacja `docs/API.md` **i** stałej `CONTRACT_VERSION` w
 `frontend/src/api/types.ts` — UI porównuje je i protestuje w nagłówku przy rozjeździe.
 
 Konsumentów tej stałej jest **dwóch**: `/api/status` i ramki `/api/stream`, bo ramka `account`
@@ -115,19 +115,19 @@ HTTP 200 i poprawnie wyglądającej odpowiedzi. Oba typy leżą obok siebie w `a
 
 ```
 client/     sonda (stdlib-only) + narzędzia analizy; zasady 1-3
-              usage-probe.py — ŹRÓDŁO PRAWDY; wydanie żyje w repo repozytorium skilli
-scripts/git-hooks/  pre-push: strażnik SCRIPT_VERSION i rozjazdu z wydaniem
+              usage-probe.py — ŹRÓDŁO PRAWDY, kopie na maszynach są wydaniem
 backend/    FastAPI + SQLAlchemy async + Alembic; MariaDB; serwuje też statyki UI
   app/parsing.py     czyste funkcje, cała logika normalizacji  <- tu zaczynaj przy zmianach API
   app/freshness.py   czyste funkcje, cztery stany świeżości
   app/services/      ingest (zapis), status (odczyt), cascade (szczeble limitu)
   app/services/events.py  broker SSE — W PROCESIE, patrz pulapka o --workers nizej
-  app/main.py        mount /assets + fallback SPA; powłoka HTML celowo BEZ SSO
+  app/sso.py         brama: AUTH_MODE none / header / verify + allowlista adresów
+  app/main.py        mount /assets + fallback SPA; powłoka HTML celowo BEZ bramy
 frontend/   React 18 + Vite + TypeScript, bez Tailwinda i bez biblioteki wykresów
   src/lib/freshness.ts   stan -> wygląd; JEDYNE miejsce tej decyzji (zasada 4 w pikselach)
   src/lib/time.ts        stamp/atStamp — JEDYNE miejsce decyzji „czy dopisać dzień"
   src/mocks/             VITE_MOCKS=1: stany, których w produkcji nie da się wywołać
-docs/       POC-FINDINGS (dlaczego tak), UI-HANDOUT (kontrakt), POLLING-HANDOUT (odrzucone)
+docs/       API.md (kontrakt), RUNBOOK.md (obsługa i diagnostyka)
 deploy/     szablon vhosta Apache; sekret podstawiany przy deployu, NIE w repo
 ```
 
@@ -135,17 +135,21 @@ deploy/     szablon vhosta Apache; sekret podstawiany przy deployu, NIE w repo
 katalog repo, nie `./backend`. Bez `.dockerignore` każdy build wysyłałby do daemona cały
 katalog `data/` z bazą.
 
-Iteracja nad wyglądem: `cd frontend && VITE_MOCKS=1 npm run dev` — backend nie ma CORS ani
-portu na hoście, więc dev przeciw produkcji i tak nie zadziała. Warianty przez `?mock=states`.
+Iteracja nad wyglądem: `cd frontend && VITE_MOCKS=1 npm run dev`. Backend nie ma CORS, więc
+dev przeciw zdalnemu wdrożeniu i tak nie zadziała — mocki dają też stany, których w produkcji
+nie da się wywołać. Warianty przez `?mock=states`.
 
 ## Testy
 
 ```bash
-cd backend
-DATABASE_URL="sqlite+aiosqlite:///:memory:" INGEST_TOKENS="t:m" ALLOWED_EMAILS="a@b.pl" pytest
-
+cd backend && pytest                     # zmienne srodowiskowe ustawia tests/conftest.py
 cd ../frontend && npm run typecheck      # kontrakt jest typowany, korzystaj z tego
+cd ../panel && pytest
 ```
+
+`tests/conftest.py` przypisuje `AUTH_MODE`, `DATABASE_URL`, `INGEST_TOKENS` i `ALLOWED_EMAILS`
+**bezwarunkowo**, nie przez `setdefault` — inaczej przypadkowa zmienna w powłoce decydowałaby
+o tym, co zestaw sprawdza, a wynik rozjeżdżałby się między maszynami bez śladu w repo.
 
 Normalizator i ścieżka zapisu są testowane na **realnym payloadzie** z konta Max
 (`tests/fixtures/usage_max.json`). Przy zmianach w `parsing.py` albo `services/ingest.py`
@@ -153,32 +157,30 @@ zaktualizuj fixture świeżą odpowiedzią, nie wymyślaj danych.
 
 ## Deploy
 
-Kopia robocza **jest** wdrożeniem: `/var/lib/claude-usage-monitor` == `Z:/projects/claude-usage-monitor`.
-
 ```bash
-cd /var/lib/claude-usage-monitor && git pull && docker compose up -d --build
+git pull && docker compose up -d --build
 ```
 
-**Sonda nie jest kopiowana.** Pod ścieżką z hooków
-(`%LOCALAPPDATA%\claude-usage-monitor\usage-probe.py`) leży kilkanaście linijek przekierowania,
-które `runpy` wykonuje prawdziwy plik spod `SRC` — tutaj `client/usage-probe.py`, na maszynie
-zdalnej wydanie w repo skilli. Edycja w repo działa od razu, bez `Copy-Item`. Miało tam stać
+`AUTH_MODE` jest wymagane i nie ma wartości domyślnej — bez niego kontener nie wstanie.
+Konfiguracja jednego wdrożenia (sieci, porty, adres usługi tożsamości) siedzi w nieśledzonym
+`docker-compose.override.yml` i `.env`, nie w repo.
+
+**Sondy nie trzeba kopiować.** Pod ścieżką z hooków
+(`%LOCALAPPDATA%\claude-usage-monitor\usage-probe.py`) wystarczy kilkanaście linijek
+przekierowania, które `runpy` wykonuje prawdziwy plik spod `SRC` — czyli
+`client/usage-probe.py` w repo. Wtedy edycja działa od razu, bez `Copy-Item`. Miało tam stać
 dowiązanie symboliczne; Windows odmawia jego utworzenia bez trybu dewelopera albo praw
 administratora. Szczegóły w `client/README.md`.
 
-**Sonda ma dwa adresy i dwie role.** `client/usage-probe.py` to źródło (ładuje je
-`backend/tests/test_probe_parsing.py` po sztywnej ścieżce), a kopia w
-`skills/usage-monitor-enrollment/` w repo `repozytorium skilli` to **wydanie** — jedyne, co widzi maszyna
-zdalna, bo tam sonda przyjeżdża zwykłym `git pull` razem ze skillem. Wydanie **może być starsze**
-od HEAD i to jest poprawne: publikuje wyłącznie `polecenie publikujace wydanie`, świadomie.
-Różnicę widać w `/api/machines` po `scriptVersion`.
+**Gdzie kopia jednak leży, tam jest wydaniem.** `client/usage-probe.py` to źródło (ładuje je
+`backend/tests/test_probe_parsing.py` po sztywnej ścieżce); kopia na maszynie zdalnej **może
+być starsza** od HEAD i to jest poprawne — publikacja ma być decyzją, nie skutkiem ubocznym
+pushu. Dlatego **każda zmiana zachowania sondy wymaga podbicia `SCRIPT_VERSION`**: wersja
+jedzie w każdym batchu i jest jedynym sposobem, żeby z `/api/machines` odczytać, która
+maszyna chodzi na którym kodzie. Bez podbicia dwie różne sondy są nierozróżnialne, a pytanie
+„czemu tamta maszyna raportuje inaczej" zostaje bez odpowiedzi.
 
-Pilnuje tego `scripts/git-hooks/pre-push` (włączony przez `git config core.hooksPath
-scripts/git-hooks`, jeden `.git` dla obu systemów): **odmawia**, gdy sonda się zmieniła bez
-podbicia `SCRIPT_VERSION`, i **ostrzega**, gdy wydanie zostało w tyle. Z hosta, gdzie repo skilli
-nie jest widoczne, zostaje samo ostrzeżenie. Furtka: `git push --no-verify`.
-
-## Pułapki tego środowiska
+## Pułapki
 
 - **`uvicorn --workers > 1` rozbija strumień SSE.** Broker (`app/services/events.py`) żyje
   w pamięci procesu, więc przy wielu workerach ingest trafia do innego procesu niż
@@ -186,14 +188,14 @@ nie jest widoczne, zostaje samo ostrzeżenie. Furtka: `git push --no-verify`.
   nadal płyną, tylko nie do wszystkich. `entrypoint.sh` startuje jeden proces świadomie.
   Skalowanie w poziom wymaga najpierw brokera poza procesem (Redis pub/sub albo
   `LISTEN/NOTIFY`), nie samej flagi.
-- **`npm` nie działa z dysku sieciowego** — `npm ci` przewraca się na `spawnSync`. Typy
-  sprawdzaj z hosta linuksowego, katalog `/var/lib/claude-usage-monitor/frontend`
-  to ten sam kod. Instalacja TypeScriptu w `frontend/node_modules` na Windows bywa niepełna
-  (brak `lib/tsc.js`) i tej samej przyczyny.
-- **Docker ma wyczerpane pule adresowe** (~31 sieci to limit, host jest przy granicy).
-  Nie dodawaj nowych sieci bez potrzeby.
+- **Backend potrzebuje DWÓCH sieci.** `claude-usage-monitor_internal` ma `internal: true`,
+  a to odcina także ruch **wychodzący** — bez drugiej sieci `AUTH_MODE=verify` nie miałby
+  jak zapytać usługi tożsamości, a publikowany port nie miałby czego publikować. Jeśli
+  `docker compose up` kończy się na *„all predefined address pools have been fully
+  subnetted"*, host wyczerpał pule adresowe Dockera; poszukaj osieroconych sieci albo
+  podłącz backend do sieci, która już istnieje (`networks: !override` w nadpisaniu).
 - **`statusLine` nie działa w rozszerzeniu VS Code** — to funkcja CLI/TUI. Nie próbuj
-  wracać do tego pomysłu, jest zamknięty w `docs/POC-FINDINGS.md`. Zgłoszenie
+  wracać do tego pomysłu. Zgłoszenie
   [#55643](https://github.com/anthropics/claude-code/issues/55643) zamknięto jako
   `not_planned` (bot od nieaktywności), więc to się samo nie naprawi.
 - **`claude -p "/usage"` NIE zużywa limitu, ale `claude -p "cokolwiek innego"` zużywa.**
@@ -210,22 +212,15 @@ nie jest widoczne, zostaje samo ostrzeżenie. Furtka: `git push --no-verify`.
   Parser uznaje go za koniec stringa i przewraca się kilkadziesiąt linii dalej, w miejscu bez
   związku z przyczyną („The string is missing the terminator"). Skrypty `.ps1` trzymamy
   w **czystym ASCII** — to odporniejsze niż liczenie na to, że każda kolejna edycja zachowa BOM.
-- **Magazyn CA Windows** odrzuca łańcuch Let's Encrypt niektorych hostow, choć każde ogniwo jest ważne.
-  Klient używa `certifi`; nie wyłączaj weryfikacji.
-- **Skrypt uruchamiany z dysku sieciowego kosztuje +19 ms** na wywołanie (27 ms lokalnie vs
-  46 ms z dysku sieciowego). W wersji 3 to margines — dominuje odpalenie `claude` (~3,4 s, odłączone),
-  a większość przebiegów kończy się na throttlu po ~30 ms — dlatego przekierowanie na `Z:`
-  jest do przyjęcia. Maszyna zdalna czyta z dysku lokalnego i nie płaci nawet tego.
+- **Klient weryfikuje TLS przez `certifi`, nie przez magazyn systemowy.** Magazyn CA Windows
+  potrafi odrzucić poprawny łańcuch Let's Encrypt, w którym każde ogniwo jest ważne. Nie
+  wyłączaj weryfikacji — podmień magazyn.
 - **Windows odmawia tworzenia dowiązań symbolicznych** bez trybu dewelopera albo praw
-  administratora (`Administrator privilege required`), a `Remote to local symbolic links` bywa **wyłączone** — dowiązanie *wewnątrz* repo na `Z:` nie rozwiązałoby
-  się nawet po utworzeniu. Stąd przekierowanie w Pythonie zamiast symlinka.
-- **Pliki wykonywane po obu stronach muszą mieć LF i bit `+x`.** Bit wykonywalny w indeksie
-  gita (`100755`) nie przekłada się na katalog roboczy widziany przez Sambę — hook trzeba
-  było `chmod +x` z hosta, inaczej git po stronie Linuksa **po cichu go pomija**.
-  Końce linii pilnuje `.gitattributes`.
-- **`core.filemode` musi być `false`.** Git po stronie Windows nie odczytuje trybu z udzialu sieciowego
-  i zgłaszał `mode change 100755 => 100644` dla wszystkich trzech skryptów — `git status`
-  pokazywał je jako zmodyfikowane, choć treść była identyczna. Groźniejsza jest druga strona
-  tego samego: `git add -A` z Windows zdejmowałby bit wykonywalny, a wtedy `pre-push`
-  przestaje działać na hoście **bez jednego słowa ostrzeżenia**. Tryby w indeksie zostają
-  poprawne, bo `filemode=false` każe gitowi ignorować to, co widzi w katalogu roboczym.
+  administratora (`Administrator privilege required`). Stąd pod ścieżką z hooków stoi
+  kilkanaście linijek przekierowania w Pythonie, a nie symlink.
+- **Sonda musi mieć konce linii LF, a skrypty powłoki dodatkowo bit `+x`.** Bit wykonywalny
+  z indeksu gita nie zawsze przekłada się na katalog roboczy — jeśli repo jest widziane
+  przez udział sieciowy, git po stronie Linuksa **po cichu pomija** skrypt bez `+x`. Końce
+  linii pilnuje `.gitattributes`; przy pracy z takiego udziału ustaw też
+  `core.filemode=false`, inaczej `git add -A` z Windows zdejmie bit wykonywalny bez słowa
+  ostrzeżenia.

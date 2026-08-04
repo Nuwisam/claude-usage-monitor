@@ -41,9 +41,17 @@ services:
       DATABASE_URL: mysql+aiomysql://${MARIADB_USER}:${MARIADB_PASSWORD}@claude_usage_monitor_mariadb:3306/${MARIADB_DATABASE}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TZ: UTC
+      # Bez wartosci domyslnej — celowo. Nieustawione AUTH_MODE zatrzymuje kontener na
+      # starcie zamiast wybrac za instalujacego, czy dane maja byc otwarte.
+      AUTH_MODE: ${AUTH_MODE}
       ALLOWED_EMAILS: ${ALLOWED_EMAILS}
-      SSO_VERIFY_URL: ${SSO_VERIFY_URL:-http://identity_proxy:8080/api/verify}
-      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://usage.example.org}
+      AUTH_EMAIL_HEADER: ${AUTH_EMAIL_HEADER:-X-Forwarded-Email}
+      AUTH_VERIFY_URL: ${AUTH_VERIFY_URL:-}
+      AUTH_EMAIL_FIELD: ${AUTH_EMAIL_FIELD:-email}
+      AUTH_VERIFIED_AT_FIELD: ${AUTH_VERIFIED_AT_FIELD:-}
+      AUTH_REDIRECT_FIELD: ${AUTH_REDIRECT_FIELD:-}
+      AUTH_LOGIN_URL: ${AUTH_LOGIN_URL:-}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
       APP_BASE_PATH: ${APP_BASE_PATH:-/claude-usage}
       INGEST_TOKENS: ${INGEST_TOKENS}
       STREAM_TOKENS: ${STREAM_TOKENS:-}
@@ -63,7 +71,17 @@ services:
         condition: service_healthy
     networks:
       - claude-usage-monitor_internal
-      - identity-proxy_default
+      - claude-usage-monitor_edge
+    # Domyslnie na PETLI ZWROTNEJ: instalacja lokalna dziala od razu pod
+    # http://127.0.0.1:8080/claude-usage/, a jednoczesnie nic nie wychodzi na swiat, dopoki
+    # nie postawisz przed tym proxy z TLS-em i logowaniem.
+    #
+    # Za reverse proxy publikowanie portu jest zbedne — proxy siega kontenera po sieci
+    # dockerowej. Zdjac je mozna TYLKO przez `ports: !reset []` w docker-compose.override.yml
+    # (Compose >= 2.24). `BACKEND_BIND=` nie wystarczy: `:-` odpala sie takze na wartosci
+    # pustej, wiec port wroci na domyslny.
+    ports:
+      - "${BACKEND_BIND:-127.0.0.1:8080}:8000"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health', timeout=2).status==200 else 1)\""]
       interval: 15s
@@ -77,9 +95,9 @@ networks:
     name: claude-usage-monitor_internal
     driver: bridge
     internal: true
-  # Backend jest tu z dwoch powodow: wola /api/verify oauth2-proxy ORAZ dostaje adres
-  # routowalny z hosta, dzieki czemu Apache siega go po nazwie kontenera (pomocnik wpisujacy nazwy kontenerow do /etc/hosts).
-  # Celowo NIE tworzymy trzeciej sieci — host ma juz ~33 sieci i Docker wyczerpal
-  # predefiniowane pule adresowe ("all predefined address pools have been fully subnetted").
-  identity-proxy_default:
-    external: true
+  # Backend potrzebuje drugiej sieci, bo `internal: true` odcina takze ruch WYCHODZACY:
+  # bez niej AUTH_MODE=verify nie mialby jak zapytac uslugi tozsamosci, a publikowanie
+  # portu nie mialoby czego publikowac.
+  claude-usage-monitor_edge:
+    name: claude-usage-monitor_edge
+    driver: bridge

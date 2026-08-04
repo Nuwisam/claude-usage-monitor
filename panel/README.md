@@ -143,7 +143,7 @@ więc pokazuje HH:MM.
 
 Konfiguracja: `%LOCALAPPDATA%\claude-usage-monitor\panel.json` — ten sam katalog
 co `config.json` sondy, ale **osobny plik**: token strumienia ma inny zakres niż
-token ingestu, a `/usage-monitor-enrollment` przepisuje plik sondy.
+token ingestu, a plik sondy bywa nadpisywany przy jej aktualizacji.
 
 ```json
 {

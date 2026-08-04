@@ -21,3 +21,14 @@ frontend/dist/
 # w katalogu repo i czeka, az ktos go zgarnie.
 .env.bak-*
 backups/
+
+# Brudnopis: zrzuty payloadow, klatki z panelu, robocze notatki. Nic stad nie idzie
+# do repozytorium — a bez tej reguly jedno `git add -A` publikuje calosc.
+tmp/
+
+# Lokalne nadpisanie compose (sieci i porty specyficzne dla jednego wdrozenia).
+docker-compose.override.yml
+
+# Artefakty `pip install -e` i lokalna konfiguracja narzedzi.
+*.egg-info/
+.claude/

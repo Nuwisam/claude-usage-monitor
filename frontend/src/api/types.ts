@@ -1,4 +1,4 @@
-/** Kontrakt /api — odbicie 1:1 backend/app/schemas.py, opisane w docs/UI-HANDOUT.md. */
+/** Kontrakt /api — odbicie 1:1 backend/app/schemas.py, opisane w docs/API.md. */
 
 /** Musi isc w tym samym commicie co `CONTRACT_VERSION` w services/status.py — Nav
  *  porownuje obie i przy rozjezdzie zapala ostrzezenie w naglowku. */

@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -8,14 +10,39 @@ class Settings(BaseSettings):
     database_url: str = Field(..., alias="DATABASE_URL")
     log_level: str = Field("INFO", alias="LOG_LEVEL")
 
-    # --- SSO (oauth2-proxy osiagalny w sieci identity-proxy_default) ---
-    sso_verify_url: str = Field(
-        "http://identity_proxy:8080/api/verify", alias="SSO_VERIFY_URL"
-    )
-    # Lista po przecinku. Pusty zbior = deny all (fail-safe).
+    # --- Autoryzacja dostepu do UI/API ---
+    # Wymagane, bez wartosci domyslnej: kazda domyslna bylaby zla odpowiedzia. `none`
+    # otwieralby dane po cichu u kogos, kto po prostu nie doczytal; cokolwiek innego
+    # przewracaloby instalacje lokalna bez zadnego proxy przed soba. Niech instalujacy
+    # powie wprost, co ma sie stac.
+    #
+    # Typ `Literal`, nie `str` — Compose podstawia PUSTY CIAG za nieustawiona zmienna
+    # srodowiskowa, a `str` przyjalby go bez slowa i wpadlby w gałąź "nic nie pasuje".
+    # `Literal` jest dopasowaniem doslownym, wiec pusta wartosc konczy sie bledem startu.
+    auth_mode: Literal["none", "header", "verify"] = Field(..., alias="AUTH_MODE")
+
+    # `header`: proxy juz uwierzytelnilo i podaje adres dalej. Wolno tylko za proxy, ktore
+    # ten naglowek USUWA z zadan przychodzacych — inaczej kazdy nazwie sie kim zechce.
+    auth_email_header: str = Field("X-Forwarded-Email", alias="AUTH_EMAIL_HEADER")
+
+    # `verify`: uslugą tozsamosci pytamy przez JSON, kim jest wolajacy. Nazwy pol
+    # odpowiedzi sa konfiguracja, bo kazdy dostawca opisuje je inaczej. Puste = pole
+    # nieczytane.
+    auth_verify_url: str = Field("", alias="AUTH_VERIFY_URL")
+    auth_email_field: str = Field("email", alias="AUTH_EMAIL_FIELD")
+    auth_verified_at_field: str = Field("", alias="AUTH_VERIFIED_AT_FIELD")
+    auth_redirect_field: str = Field("", alias="AUTH_REDIRECT_FIELD")
+
+    # Adres logowania oddawany przegladarce przy 401, gdy usluga tozsamosci nie podala
+    # zadnego sama (typowo: odpowiada strona HTML, nie JSON-em). `{rd}` zostaje zastapione
+    # zakodowanym adresem powrotu. Puste = nie ma dokad odeslac i UI tak wlasnie powie.
+    auth_login_url: str = Field("", alias="AUTH_LOGIN_URL")
+
+    # Lista po przecinku. Pusty zbior = deny all (fail-safe). Nie dotyczy `AUTH_MODE=none`,
+    # gdzie zadnego adresu po prostu nie ma.
     allowed_emails_raw: str = Field("", alias="ALLOWED_EMAILS")
-    # Potrzebne do zbudowania URL-a logowania, bo oauth2-proxy zwraca HTML bez redirect_url.
-    public_origin: str = Field("https://usage.example.org", alias="PUBLIC_ORIGIN")
+    # Sklada adres powrotu dla `{rd}`. Ten sam origin, pod ktorym stoi aplikacja.
+    public_origin: str = Field("http://localhost:8080", alias="PUBLIC_ORIGIN")
     app_base_path: str = Field("/claude-usage", alias="APP_BASE_PATH")
 
     # --- Ingest ---

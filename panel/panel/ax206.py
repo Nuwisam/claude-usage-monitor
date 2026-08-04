@@ -19,7 +19,7 @@ Swiadomie sa tu TYLKO set-property i blit. Komend flash (0xCB, kasowanie
 i zapis SPI) w tym pliku nie ma i byc nie moze — to one potrafia zabic panel.
 
 Trzy wlasciwosci TEGO egzemplarza, zmierzone, ktorych nie ma w zadnym zrodle
-referencyjnym (szczegoly w docs/POC-FINDINGS.md):
+referencyjnym:
 
   1. Komenda odpytania o geometrie (`0xCD .. bajt5=2`) jest ZAWODNA: w tych samych
      warunkach raz zwraca poprawne 480x320, raz milczy az do przeterminowania,

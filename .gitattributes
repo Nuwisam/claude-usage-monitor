@@ -1,11 +1,9 @@
-# Ten katalog roboczy jest widziany NARAZ przez dwa systemy: Windows (Z:, core.autocrlf=true)
-# i Linuksa (/var/lib/claude-usage-monitor przez Sambe). Ten sam plik uruchamia wiec /bin/sh
-# na hoscie i Git Bash na Windows. Bez wymuszenia LF checkout po stronie Windows wstawilby
-# CRLF, a host odpowiedzialby "bad interpreter: No such file or directory" — na hooku
-# gitowym objawiloby sie to jako push, ktory po cichu przestaje byc sprawdzany.
+# Ten sam katalog roboczy bywa widziany NARAZ przez dwa systemy: Windows
+# (core.autocrlf=true) i Linuksa. Ten sam plik uruchamia wiec /bin/sh na hoscie i Git Bash
+# na Windows. Bez wymuszenia LF checkout po stronie Windows wstawilby CRLF, a host
+# odpowiedzialby "bad interpreter: No such file or directory".
 *.sh                text eol=lf
-scripts/git-hooks/* text eol=lf
 
-# Sonda jest porownywana bajt w bajt z wydaniem w repo skilli (hook pre-push). Rozne
-# konce linii robilyby z tego falszywy alarm przy kazdym pushu.
+# Sonda bywa porownywana bajt w bajt z kopia rozdana na maszyny. Rozne konce linii robilyby
+# z tego falszywy alarm przy kazdym porownaniu.
 *.py                text eol=lf

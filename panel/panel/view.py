@@ -191,7 +191,7 @@ def plan_label(account):
     """"Max 5×" / "Team Standard" — plan MUSI byc widoczny.
 
     "40%" znaczy co innego na Max 20x niz na miejscu Team Standard, wiec
-    UI-HANDOUT stawia to jako zasade 1 prezentacji. Wyprowadzamy z tokenu, a nie
+    docs/API.md stawia to jako zasade 1 prezentacji. Wyprowadzamy z tokenu, a nie
     ze slownika — nowy tier ma sie pokazac sam, choćby surowo (zasada 5).
     """
     if account is None:

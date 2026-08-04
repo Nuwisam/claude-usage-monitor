@@ -78,8 +78,8 @@ async def api(db, monkeypatch):
         email="a@b.pl", verified_at=None
     )
     # `require_stream_client` calls SSO DIRECTLY rather than through Depends — the path is
-    # chosen by the presence of an `Authorization` header, so with a token oauth2-proxy
-    # must not be touched at all. Consequence: `dependency_overrides` does not cover it,
+    # chosen by the presence of an `Authorization` header, so with a token the gate must
+    # not be touched at all. Consequence: `dependency_overrides` does not cover it,
     # and without this patch the tests reached the real SSO (getaddrinfo failed).
     async def _user(request=None):
         return CurrentUser(email="a@b.pl", verified_at=None)
@@ -366,7 +366,7 @@ async def test_bearer_opens_the_stream_without_sso(api, db, monkeypatch):
     import app.sso as sso
     from app.sso import require_authorized_user
 
-    # SSO removed entirely — if the endpoint went to oauth2-proxy despite the token, this
+    # SSO removed entirely — if the endpoint consulted the gate despite the token, this
     # test would fail rather than pass by accident.
     main.app.dependency_overrides.pop(require_authorized_user, None)
 

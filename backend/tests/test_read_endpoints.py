@@ -6,7 +6,7 @@ ktora i tak trzymala stala z kodu. `routers/read.py` czytal je dalej — czyli `
 i `/api/batches` oddawaly 500 od momentu wdrozenia migracji.
 
 Nie zlapal tego zaden test, bo tych endpointow nie dotykal ZADEN. Diagnostyka zostala
-swiadomie przy `curl` (README, `docs/UI-HANDOUT.md` § 10), tylko z tej decyzji wyszlo
+swiadomie przy `curl` (README, `docs/API.md` § 10), tylko z tej decyzji wyszlo
 milczaco, ze nikt jej nie sprawdza. Ten plik zamyka luke: wola kazdy endpoint odczytu
 i sprawdza, ze w ogole odpowiada.
 

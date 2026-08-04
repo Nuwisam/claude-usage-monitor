@@ -20,5 +20,5 @@ Pillow==12.1.0
 # prosto z uchwytu, ktory otwieramy. Szczegoly w naglowku panel/device.py.
 libusb==1.0.29.post7
 # certifi to magazyn CA — jego odswiezanie ma byc decyzja, nie skutkiem ubocznym.
-# Podbijaj swiadomie, gdy przestanie ufac lancuchowi usage.example.org.
+# Podbijaj swiadomie, gdy przestanie ufac lancuchowi certyfikatow Twojego serwera.
 certifi==2026.7.22

@@ -5,7 +5,7 @@ import { fetchStatus } from "../api/client";
 import { serverOffsetMs } from "../lib/time";
 
 /** /status co 15 s — tempo z handoutu. Dane i tak przyrastaja tylko wtedy, gdy pracujesz;
- *  czestsze pytanie nic nie kupuje, a kazde odpytanie to round-trip do oauth2-proxy. */
+ *  czestsze pytanie nic nie kupuje, a kazde odpytanie przechodzi przez brame autoryzacji. */
 export const STATUS_REFETCH_MS = 15_000;
 
 /** With SSE connected the poll stops being the way new data arrives and becomes a safety

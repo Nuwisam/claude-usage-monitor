@@ -8,26 +8,34 @@ export function LoadingBlock() {
   );
 }
 
-/** Bledy inne niz 401 pokazujemy W MIEJSCU, bez przekierowania.
- *  403 (email poza allowlista) i 503 (oauth2-proxy nieosiagalny) skierowane na logowanie
- *  daja petle: SSO odsyla zalogowanego uzytkownika, backend znow odmawia. */
+/** Błędy pokazujemy W MIEJSCU. Przekierowanie robi wyłącznie `handle401`, i tylko wtedy,
+ *  gdy backend poda adres logowania.
+ *
+ *  403 (adres poza allowlistą) i 503 (usługa tożsamości nieosiągalna) skierowane na
+ *  logowanie dałyby pętlę: logowanie odsyła zalogowanego użytkownika, backend znów odmawia. */
 export function ErrorBlock({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   const api = error instanceof ApiError ? error : null;
 
   const [title, body] = ((): [string, string] => {
     switch (api?.reason ?? api?.status) {
+      case "not-authenticated":
+      case 401:
+        return [
+          "Nie jesteś zalogowany",
+          "Backend odmówił dostępu i nie podał adresu logowania. Przy AUTH_MODE=header brakuje nagłówka od proxy; przy AUTH_MODE=verify ustaw AUTH_LOGIN_URL, żeby było dokąd odesłać.",
+        ];
       case "email-not-allowed":
       case 403:
         return [
           "Twój adres nie jest na liście",
-          "Sesja SSO jest poprawna, ale backend nie dopuszcza tego adresu. Dopisz go do ALLOWED_EMAILS w .env i podnieś kontener.",
+          "Uwierzytelnienie się powiodło, ale backend nie dopuszcza tego adresu. Dopisz go do ALLOWED_EMAILS w .env i podnieś kontener.",
         ];
       case "sso-unreachable":
       case "sso-unavailable":
       case 503:
         return [
           "Nie mogę potwierdzić sesji",
-          "Backend nie dosięga oauth2-proxy. Sprawdź, czy kontener identity_proxy żyje i czy backend jest w sieci identity-proxy_default.",
+          "Backend nie dosięga usługi tożsamości z AUTH_VERIFY_URL. Sprawdź, czy adres jest poprawny i czy backend ma do niego drogę siecią.",
         ];
       default:
         return [

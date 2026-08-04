@@ -29,12 +29,27 @@ async def lifespan(app: FastAPI):
     logger.info("claude-usage-monitor backend stop")
 
 
-app = FastAPI(title="Claude Usage Monitor", version="0.1.0", lifespan=lifespan)
+# Schemat i przegladarki API wylaczone. Reverse proxy przepuszcza caly korzen kontenera,
+# wiec `/openapi.json` i `/docs` bylyby osiagalne BEZ autoryzacji — brama siedzi na
+# zaleznosci endpointow, nie na tych trasach. Oddawalyby wtedy komplet sciezek, nazw pol
+# i ksztaltow bledow kazdemu, kto zgadnie adres. Kontrakt opisuje docs/API.md.
+app = FastAPI(
+    title="Claude Usage Monitor",
+    version="0.1.0",
+    lifespan=lifespan,
+    openapi_url=None,
+    docs_url=None,
+    redoc_url=None,
+)
 
 
 @app.get("/api/health")
 async def health() -> dict:
-    """Bez SSO — sluzy healthcheckowi kontenera. Apache tego nie wystawia."""
+    """Bez autoryzacji — sluzy healthcheckowi kontenera, ktory nie ma zadnej sesji.
+
+    Oddaje sam fakt, ze proces zyje: ani danych, ani konfiguracji. Reverse proxy nie ma
+    powodu tego wystawiac, ale gdyby wystawil, nie ma tu czego wyniesc.
+    """
     return {"status": "ok"}
 
 

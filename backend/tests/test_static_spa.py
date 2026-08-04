@@ -81,6 +81,21 @@ def test_plik_z_dist_jest_oddawany_wprost(client):
     assert r.status_code == 200 and "svg" in r.headers["content-type"]
 
 
+@pytest.mark.parametrize("sciezka", ["/openapi.json", "/docs", "/redoc"])
+def test_schemat_i_przegladarki_api_sa_wylaczone(client, sciezka):
+    """Reverse proxy przepuszcza caly korzen kontenera, a brama siedzi na zaleznosci
+    endpointow — nie na tych trasach. Wystawiony schemat oddawalby komplet sciezek, nazw
+    pol i ksztaltow bledow kazdemu bez sesji.
+
+    Asercja patrzy na TRESC, nie na kod odpowiedzi: catch-all SPA oddaje index.html
+    z kodem 200, wiec `status_code != 200` nie zaswiadczy tu o niczym.
+    """
+    r = client.get(sciezka)
+    assert "openapi" not in r.text
+    assert "swagger" not in r.text.lower()
+    assert "/api/status" not in r.text
+
+
 def test_wyjscie_ze_katalogu_statykow_nie_jest_mozliwe(client):
     """Sciezka z ../ nie moze wyprowadzic poza dist — oddajemy powloke, nie plik hosta."""
     r = client.get("/../../etc/passwd")

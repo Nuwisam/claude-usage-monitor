@@ -6,7 +6,7 @@ Three decisions that are not obvious:
    would force the receiver to go fetch from /api/status, and that endpoint is SSO-only —
    so the desk panel would require opening the read gate to a token. The fat event keeps
    that surface closed and is cheaper anyway: one frame instead of a full multi-account
-   response plus a round-trip to oauth2-proxy.
+   response plus, under AUTH_MODE=verify, a round-trip to the identity service.
 
 2. THE KEY IS `account_uuid`, NEVER THE EMAIL. One address really does point at several
    accounts (Pro and a Team seat under the same address), and `Account.email` is

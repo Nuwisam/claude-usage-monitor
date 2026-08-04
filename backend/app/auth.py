@@ -67,7 +67,7 @@ async def require_stream_client(
     is already in circulation and that nobody would rotate for this reason.
 
     SSO is called DIRECTLY rather than through `Depends`, because the path is chosen only
-    after inspecting the header: with a valid token we must not touch oauth2-proxy at all.
+    after inspecting the header: with a valid token we must not touch the gate at all.
     The trade-off is that `dependency_overrides` does not cover it — tests patch
     `app.sso.require_authorized_user` instead.
     """
