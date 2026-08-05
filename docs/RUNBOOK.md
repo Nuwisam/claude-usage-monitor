@@ -54,7 +54,9 @@ python client/analyze-samples.py        # tempo zmian, błędy, przełączenia k
 
 Log lokalny: `%LOCALAPPDATA%\claude-usage-monitor\usage-samples.jsonl`.
 Jeśli log rośnie, a baza nie — problem jest w wysyłce; sprawdź `spool.jsonl` (rośnie przy
-nieudanych POST-ach) i sekcję o certyfikatach w `client/README.md`.
+nieudanych POST-ach), powtórz handshake z
+[`client/README.md`](../client/README.md#3-handshake--sekrety-sprawdzamy-przed-dotknięciem-settingsjson)
+i porównaj status z wierszami o 401/403 w „Typowe problemy" niżej.
 
 ## Typowe problemy
 
@@ -109,6 +111,8 @@ stracić.
 
 ## Zmiana klienta na maszynie
 
+Pierwsza instalacja na nowej maszynie: [`client/README.md`](../client/README.md#instalacja).
+
 **Nic nie kopiujesz**, jeśli pod ścieżką z hooków leży przekierowanie wykonujące
 `client/usage-probe.py` prosto z repo — wtedy edycja działa od następnego przebiegu i nie
 trzeba nic restartować, bo hook czyta skrypt i `config.json` przy każdym uruchomieniu.
@@ -128,7 +132,10 @@ Rename-Item "$env:LOCALAPPDATA\claude-usage-monitor\config.json" config.json.off
 ```
 
 Po stronie serwera unieważnienie pojedynczej maszyny to usunięcie jej wpisu z `INGEST_TOKENS`
-w `.env` + `docker compose up -d`.
+w `.env` + `docker compose up -d`. **Nie `restart`** — `INGEST_TOKENS` czytane jest przy
+tworzeniu kontenera, więc po `restart` odwołany token dalej działa. Odwrotny kierunek
+(wydanie tokenu nowej maszynie) jest w
+[`client/README.md`](../client/README.md#1-token-maszyny--ten-krok-dzieje-się-na-serwerze).
 
 ## Klient strumienia SSE (panel AX206, skrypty)
 

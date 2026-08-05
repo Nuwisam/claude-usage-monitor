@@ -21,10 +21,13 @@ konta — rotacji jednorazowego refresh tokenu.
 | Brama autoryzacji: `none` / `header` / `verify` | działa |
 | API odczytu, kontrakt v3 | działa |
 | UI — **Live** i **Historia** | działa |
-| Panel biurkowy AX206 (SSE) | działa |
+| Panele biurkowe przez SSE — AX206 i Turing rev A | działa |
 
 Diagnostyka (zdarzenia, batche, maszyny, surowe payloady) została świadomie przy `curl` —
 patrz [docs/API.md](docs/API.md) § 10.
+
+Panele: instalacja, `panel.json` i **wskazanie modułu po łańcuchu portów USB** (`port_path`,
+`--list`, `--identify`) — [`panel/README.md` → Instalacja](panel/README.md#instalacja).
 
 Typowe wdrożenie stawia to za reverse proxy z SSO, ale to jedna z trzech możliwości, nie założenie
 projektu. Instalacja na własnej maszynie nie wymaga niczego przed backendem.
@@ -113,36 +116,14 @@ połowę próbek do złego konta i cicho zatruwał historię obu.
 
 ## Instalacja klienta na nowej maszynie
 
-1. Pod ścieżką z hooków połóż **przekierowanie**, nie kopię sondy — wtedy zmiana u źródła
-   działa od razu, bez kopiowania:
-   ```python
-   SRC = r"<pełna ścieżka do usage-probe.py>"
-   if not os.path.isfile(SRC):
-       sys.exit(0)
-   runpy.run_path(SRC, run_name="__main__")
-   ```
-2. Utwórz `%LOCALAPPDATA%\claude-usage-monitor\config.json`:
-   ```json
-   {"ingest_url": "https://usage.example.org/claude-usage/api/ingest",
-    "ingest_token": "<token TEJ maszyny z INGEST_TOKENS>",
-    "edge_key": "<INGEST_EDGE_KEY>",
-    "throttle_sec": 60}
-   ```
-3. W `~/.claude/settings.json` — **pełna ścieżka**, bo hooki idą przez Git Bash, który nie
-   rozwija `%LOCALAPPDATA%`:
-   ```json
-   "hooks": {
-     "PostToolUse": [{"hooks": [{"type": "command", "async": true, "timeout": 10,
-        "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}],
-     "Stop": [{"hooks": [{"type": "command", "timeout": 10,
-        "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}]
-   }
-   ```
-4. Wymagany `claude` w `PATH` (albo `claude_bin` w `config.json`).
+**[`client/README.md` → Instalacja](client/README.md#instalacja).** Tam jest cała
+procedura: wymagania, wydanie tokenu maszyny po stronie serwera, konfiguracja, handshake
+sprawdzający sekrety przed dotknięciem `settings.json`, przekierowanie, hooki i weryfikacja.
+Streszczenia tutaj celowo nie ma — rozjechałoby się z oryginałem.
 
-Bez `config.json` sonda działa w trybie **tylko lokalnym** — loguje do
-`%LOCALAPPDATA%\claude-usage-monitor\usage-samples.jsonl`, nic nie wysyła.
-Analiza lokalna: `python client/analyze-samples.py`.
+Sonda bez konfiguracji jest **nieszkodliwa**: mierzy i pisze do lokalnego
+`usage-samples.jsonl`, ale nie wysyła nic i nie potrzebuje serwera. Do obejrzenia tego logu
+wystarczy `python client/analyze-samples.py` — monitor nie jest do tego konieczny.
 
 ## Wdrożenie serwera
 

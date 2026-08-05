@@ -63,16 +63,111 @@ sondy są nierozróżnialne.
 
 ## Instalacja
 
-**1. Pod ścieżką z hooków stawiamy przekierowanie, nie kopię.** Ścieżka
-`%LOCALAPPDATA%\claude-usage-monitor\usage-probe.py` jest **kontraktem** — wskazuje na nią każdy
-wpis w `settings.json`. Leży tam kilkanaście linijek Pythona, które wykonują prawdziwą sondę
-spod `SRC`:
+Instrukcja jest kompletna: od pustej maszyny do potwierdzonego pomiaru w monitorze.
+Kolejność kroków ma znaczenie — sekrety sprawdzamy **zanim** ruszymy `settings.json`,
+żeby nieudana instalacja zostawiła plik nietknięty.
+
+### 0. Wymagania
+
+| Czego trzeba | Jak sprawdzić | Gdy brak |
+|---|---|---|
+| `claude` w `PATH` | `claude --version` | Pełna ścieżka idzie do `config.json` jako `claude_bin`. Bez tego sonda nie ma czym zlecić pomiaru i loguje `brak-claude-w-path` |
+| Działający Python | po kolei `python3 --version`, `python --version`, `py -3 --version` | Stop — hook nie ma czym się uruchomić |
+| `~/.claude/settings.json` | plik istnieje i parsuje się jako JSON | Brak pliku: utwórz `{}`. **Jest, ale się nie parsuje: stop.** Nie nadpisuj — trzyma całą konfigurację Claude Code |
+
+**Zapamiętaj nazwę interpretera, która zadziałała — dokładnie ta wchodzi do hooka.**
+Nie wpisuj tam ścieżki bezwzględnej: aktualizacja Pythona ją przesuwa i wszystkie hooki
+giną po cichu. Na Linuksie i macOS zwykle istnieje wyłącznie `python3`.
+
+### 1. Token maszyny — ten krok dzieje się na serwerze
+
+Ingest autoryzuje **każdą maszynę osobno**, tokenem z `INGEST_TOKENS`. Maszyna zdalna nie
+ma dostępu do hosta monitora, więc tokenu nie wygeneruje sobie sama. Kandydata robi się tak:
+
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+a na hoście monitora dopisuje się go do `INGEST_TOKENS` w `.env` — jako `,<token>:<nazwa-maszyny>`,
+gdzie `<nazwa-maszyny>` to etykieta widoczna w panelu (`desktop`, `laptop`, `vps-1`). Potem,
+w katalogu z `docker-compose.yml`:
+
+```bash
+docker compose up -d
+```
+
+**`docker compose up -d`, nigdy `restart`.** `INGEST_TOKENS` czytane jest przy *tworzeniu*
+kontenera; `restart` zostawia stary zestaw zmiennych i świeży token dalej jest nieważny —
+objaw nie do odróżnienia od źle przepisanego tokenu.
+
+Drugi sekret, `INGEST_EDGE_KEY`, sprawdza Apache przed aplikacją, żeby skanery nie dobijały
+się do Pythona. Jest **wspólny dla wszystkich maszyn** — weź istniejący z `.env` hosta, nie
+wymyślaj nowego. Format obu w [`.env.example`](../.env.example), wdrożenie serwera w
+[`README.md`](../README.md#wdrożenie-serwera).
+
+### 2. Konfiguracja
+
+`%LOCALAPPDATA%\claude-usage-monitor\config.json` (Windows)
+albo `~/.local/state/claude-usage-monitor/config.json` (Linux, macOS):
+
+```json
+{
+  "ingest_url": "https://usage.example.org/claude-usage/api/ingest",
+  "ingest_token": "<token TEJ maszyny, z kroku 1>",
+  "edge_key": "<INGEST_EDGE_KEY>",
+  "throttle_sec": 60,
+  "claude_bin": "<opcjonalnie, gdy `claude` nie jest w PATH>"
+}
+```
+
+Plik jest **celowo poza repo** — token maszyny nie ma prawa trafić do gita.
+Katalog danych sonda wyprowadza z `%LOCALAPPDATA%` / `~/.local/state` w czasie działania,
+**nie** ze swojego położenia — więc nie ma znaczenia, gdzie leży sam skrypt.
+
+Bez `config.json` sonda działa w **trybie tylko lokalnym**: mierzy i loguje, nic nie wysyła.
+To jest legalny stan, nie awaria.
+
+### 3. Handshake — sekrety sprawdzamy przed dotknięciem `settings.json`
+
+Pusty POST rejestruje maszynę i wraca przed jakimkolwiek sprawdzaniem konta, więc testuje
+dokładnie te dwa sekrety i nic więcej. `INGEST_URL`, `TOKEN` i `EDGE_KEY` to trzy wartości
+wpisane przed chwilą do `config.json`:
+
+```bash
+curl -s -o /tmp/hs.txt -w '%{http_code}' -X POST "$INGEST_URL" \
+  -H "Authorization: Bearer $TOKEN" -H "X-Ingest-Key: $EDGE_KEY" \
+  -H 'Content-Type: application/json' -d '{}'
+```
+
+| Status | Ciało | Znaczenie |
+|---|---|---|
+| `200` | `{"ok":false,…,"batchId":N}` | Oba sekrety dobre. `ok:false` jest **poprawne** — pusty batch nie niesie próbek |
+| `403` | **HTML od Apache** | Zły albo brakujący edge key. Nie parsuj ciała jako JSON przed sprawdzeniem statusu |
+| `401` | `{"detail":{"reason":"invalid-token"}}` | Tokenu nie ma w `INGEST_TOKENS` — albo kontener został `restart`owany zamiast odtworzony (krok 1) |
+
+**Dopóki nie ma 200, nie instalujemy hooków.**
+
+### 4. Pod ścieżką z hooków stawiamy przekierowanie, nie kopię
+
+Ścieżka
+`%LOCALAPPDATA%\claude-usage-monitor\usage-probe.py` (Windows) albo
+`~/.local/state/claude-usage-monitor/usage-probe.py` (Linux, macOS) jest **kontraktem** —
+wskazuje na nią każdy wpis w `settings.json`. Leży tam kilkanaście linijek Pythona, które
+wykonują prawdziwą sondę spod `SRC`. To jest **cała treść pliku**, nie fragment:
 
 ```python
-SRC = r"C:\sciezka\do\repo\client\usage-probe.py"   # pelna sciezka do pliku w repo
+#!/usr/bin/env python3
+"""Przekierowanie, nie sonda. Prawdziwy kod leży pod SRC."""
+import os, runpy, sys
+
+SRC = r"C:\sciezka\do\repo\client\usage-probe.py"   # pelna sciezka do pliku ze zrodlem
+
 if not os.path.isfile(SRC):        # zasada 5: brak źródła to cisza, nie traceback
     sys.exit(0)
-runpy.run_path(SRC, run_name="__main__")
+try:
+    runpy.run_path(SRC, run_name="__main__")
+except OSError:
+    sys.exit(0)
 ```
 
 Dzięki temu **edycja w repo działa natychmiast**, bez kopiowania po każdej zmianie. Docelowo
@@ -87,49 +182,68 @@ Koszt: jeden odczyt pliku więcej, a przy `SRC` na dysku sieciowym +19 ms na wyw
 `claude` (~3,4 s, odłączone), a większość przebiegów kończy się na throttlu po ~30 ms. Maszyna
 zdalna czyta z dysku lokalnego i nie płaci nawet tego.
 
-**2. Konfiguracja** — `%LOCALAPPDATA%\claude-usage-monitor\config.json` (Windows)
-albo `~/.local/state/claude-usage-monitor/config.json` (Linux):
+### 5. Hooki w `~/.claude/settings.json`
+
+Każdy wpis jest identyczny — różni je wyłącznie zdarzenie, pod które trafia:
 
 ```json
-{
-  "ingest_url": "https://usage.example.org/claude-usage/api/ingest",
-  "ingest_token": "<token TEJ maszyny z INGEST_TOKENS>",
-  "edge_key": "<INGEST_EDGE_KEY>",
-  "throttle_sec": 60,
-  "claude_bin": "<opcjonalnie, gdy `claude` nie jest w PATH>"
-}
+{"type": "command", "async": true, "timeout": 10,
+ "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}
 ```
 
-Plik jest **celowo poza repo** — token maszyny nie ma prawa trafić do gita.
-Bez `config.json` sonda działa w **trybie tylko lokalnym**: mierzy i loguje, nic nie wysyła.
+Na Linuksie i macOS ten sam wpis z `python3` i ścieżką
+`/home/<user>/.local/state/claude-usage-monitor/usage-probe.py`.
 
-**3. Hooki** w `~/.claude/settings.json`:
+Zdarzeń jest **dziewięć**: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
+`PostToolUseFailure`, `PostToolBatch`, `SubagentStop`, `Stop` oraz `Notification`
+z `"matcher": "idle_prompt"`. W całości:
 
 ```json
 "hooks": {
-  "PostToolUse": [{"hooks": [{"type": "command", "async": true, "timeout": 10,
-     "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}],
-  "Stop": [{"hooks": [{"type": "command", "timeout": 10,
-     "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}]
+  "PostToolUse":        [{"hooks": [{"type": "command", "async": true, "timeout": 10, "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}],
+  "Stop":               [{"hooks": [{"type": "command", "async": true, "timeout": 10, "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}],
+  "SessionStart":       [{"hooks": [{"type": "command", "async": true, "timeout": 10, "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}],
+  "UserPromptSubmit":   [{"hooks": [{"type": "command", "async": true, "timeout": 10, "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}],
+  "PreToolUse":         [{"hooks": [{"type": "command", "async": true, "timeout": 10, "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}],
+  "PostToolUseFailure": [{"hooks": [{"type": "command", "async": true, "timeout": 10, "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}],
+  "PostToolBatch":      [{"hooks": [{"type": "command", "async": true, "timeout": 10, "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}],
+  "SubagentStop":       [{"hooks": [{"type": "command", "async": true, "timeout": 10, "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}],
+  "Notification":       [{"matcher": "idle_prompt", "hooks": [{"type": "command", "async": true, "timeout": 10, "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}]
 }
 ```
+
+**Scalaj, nigdy nie nadpisuj.** `settings.json` trzyma model, motyw i cudze hooki —
+jedyna dopuszczalna edycja to dopisanie się do istniejących tablic.
+
+`PostToolUse` z `"async": true` to główny wyzwalacz — zmierzone 0,24 ms narzutu. `Stop` domyka
+lukę dla tur bez wywołań narzędzi, reszta skraca lukę po wznowieniu sesji. Przy throttlu 60 s
+gęstsze wyzwalanie nic nie kosztuje.
 
 **Ścieżka musi być pełna, `%LOCALAPPDATA%` nie zadziała.** Hooki na Windows uruchamiane są
 przez Git Bash (widać to w `claude --debug`: `Using bash path: C:\Program Files\Git\bin\bash.exe`),
 a bash nie rozwija składni `%ZMIENNA%`.
 
-`PostToolUse` z `"async": true` to główny wyzwalacz — zmierzone 0,24 ms narzutu. `Stop` domyka
-lukę dla tur bez wywołań narzędzi. Zarejestrowanych jest dziewięć zdarzeń
-(dochodzą `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUseFailure`, `PostToolBatch`,
-`SubagentStop`, `Notification`/`idle_prompt`) — przy throttlu 60 s gęstsze wyzwalanie nic nie
-kosztuje, a skraca lukę po wznowieniu sesji.
-
 **`UserPromptSubmit` wymaga `"async": true`.** Synchronicznie blokuje wysłanie promptu aż do
 30-sekundowego timeoutu — to jest zdarzenie, w którym hook *może* dopisać kontekst do promptu,
 więc Claude Code czeka na jego wynik. Z `async` nie ma na co czekać.
 
-**4. Wymagane:** `claude` w `PATH` (albo `claude_bin` w konfiguracji). Bez tego sonda nie ma
-czym zlecić pomiaru i loguje `brak-claude-w-path`.
+### 6. Weryfikacja — i co znaczy „działa"
+
+**Pierwszy przebieg nie mierzy.** Sonda nigdy nie czeka na proces potomny: `claude -p "/usage"`
+trwa ~3,4 s, a wynik konsumuje **następny** przebieg. Poprawna instalacja przez jeden cykl
+wygląda więc na pustą — nie diagnozuj przed drugim uruchomieniem.
+
+1. Uruchom komendę hooka ręcznie, odczekaj ~60 s (throttle) i uruchom drugi raz.
+   Na Windows rób to **z PowerShella** albo z `MSYS_NO_PATHCONV=1` — patrz pułapka Git Basha
+   wyżej; z Git Basha dostaniesz płatną turę modelu zamiast darmowej komendy.
+2. `usage-samples.jsonl` w katalogu danych rośnie, a ostatnia linia ma blok `measurement`
+   ze `source: cli_merged` albo `cli_usage_cache`.
+3. `spool.jsonl` zostaje pusty. **Rosnący spool przy zdrowym logu to jedyny sygnał, że sama
+   wysyłka pada** — wyniku POST-a sonda celowo nie loguje.
+4. Maszyna widoczna w panelu; `scriptVersion` w `/api/machines` mówi, na jakim kodzie chodzi.
+
+Wyłączenie albo odinstalowanie: [`docs/RUNBOOK.md`](../docs/RUNBOOK.md#wyłączenie-zbierania),
+sekcja „Wyłączenie zbierania".
 
 ## Zasady, których nie wolno złamać
 
