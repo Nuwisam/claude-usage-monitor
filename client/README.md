@@ -166,9 +166,17 @@ if not os.path.isfile(SRC):        # zasada 5: brak źródła to cisza, nie trac
     sys.exit(0)
 try:
     runpy.run_path(SRC, run_name="__main__")
-except OSError:
+except Exception:                  # NIE OSError — patrz niżej
     sys.exit(0)
 ```
+
+Łapka jest **szeroka celowo**. `except OSError` łapie zerwany udział sieciowy i uśpiony
+dysk, ale nie łapie obciętego zapisu: niepełne źródło pod `SRC` daje `SyntaxError` z `compile()`
+w `runpy`, a to nie jest `OSError` — traceback szedłby wtedy do hooka przy każdym
+z dziewięciu zdarzeń, aż ktoś zauważy. `SystemExit` jest `BaseException`, więc
+`sys.exit(main())` z sondy nadal przechodzi tędy na wylot i kod wyjścia się nie zmienia.
+Nic ponad to nie jest ukrywane: ciało sondy ma własne `except Exception`, więc ta łapka
+odpowiada wyłącznie za awarie **ładowania**.
 
 Dzięki temu **edycja w repo działa natychmiast**, bez kopiowania po każdej zmianie. Docelowo
 miało tam stać dowiązanie symboliczne, ale Windows odmawia jego utworzenia bez trybu dewelopera
@@ -177,10 +185,30 @@ albo praw administratora (`Administrator privilege required`) — przekierowanie
 projektu, na maszynie zdalnej katalog, do którego rozdano kopię. Sondę odnajduje po
 `%LOCALAPPDATA%`, nie po `__file__`, więc przekierowanie niczego jej nie przesuwa.
 
-Koszt: jeden odczyt pliku więcej, a przy `SRC` na dysku sieciowym +19 ms na wywołanie (zmierzone:
-27 ms lokalnie vs 46 ms z dysku sieciowego). W wersji 3 to margines — dominującym kosztem jest odpalenie
-`claude` (~3,4 s, odłączone), a większość przebiegów kończy się na throttlu po ~30 ms. Maszyna
-zdalna czyta z dysku lokalnego i nie płaci nawet tego.
+Koszt, rozbity na składniki, bo jedna liczba na cały przebieg zawsze kłamie (mediana z 20–25
+przebiegów, `SRC` na dysku sieciowym):
+
+| składnik | ile |
+|---|---|
+| goły start CPythona — podłoga, nie do zejścia | 31–36 ms |
+| sonda uruchomiona wprost, do wartownika rekurencji | 35,7 ms |
+| to samo przez przekierowanie | 46,7 ms |
+| **narzut samego przekierowania** (dodatkowy odczyt pliku z dysku sieciowego + `runpy`) | **~11 ms** |
+| pełny przebieg kończący się na throttlu | 46,9 ms |
+| odłączony `claude -p "/usage"` | ~3,4 s |
+
+Przekierowanie nie jest więc darmowe, ale i tak ginie przy koszcie, którego dotyczy cała
+konstrukcja: sonda **nie czeka** na `claude`, więc te ~3,4 s nie wchodzą do przebiegu.
+Maszyna zdalna czyta `SRC` z dysku lokalnego i nie płaci nawet tych 11 ms.
+
+Do wersji 6 dochodziły tu jeszcze 23 ms na importy `socket`, `hashlib`, `http.client`
+i `urllib.parse` przy każdym przebiegu; od wersji 7 są leniwe, za throttlem.
+
+**Te liczby mierzyć u siebie, nie przepisywać.** Maszyna, na której powstały, miała rozrzut
+rzędu 30 ms między min a max, a pomiar składników rozjeżdża się z pomiarem całości nawet
+trzykrotnie. Poprzednia
+wersja tego akapitu twierdziła, że przebieg kończy się „po ~30 ms" — czyli poniżej podłogi
+startu samego interpretera.
 
 ### 5. Hooki w `~/.claude/settings.json`
 
@@ -255,13 +283,19 @@ odczytu. Linia podziału leży przy **użyciu** tokena, nie przy odczycie pliku.
 
 **3. Nigdy nie wołamy endpointu tokenowego.** Odświeżanie należy do Claude Code.
 
-**4. Zero ciężkich importów w ścieżce gorącej.** Tylko biblioteka standardowa.
-`subprocess` i `shutil` importowane lokalnie, w gałęzi wykonywanej raz na 60 s.
+**4. Zero ciężkich importów w ścieżce gorącej.** Tylko biblioteka standardowa. Na górze
+pliku stoi wyłącznie `sys, os, json, time, re` — reszta jest lokalna, w gałęziach
+wykonywanych raz na 60 s: `shutil` i `subprocess` w pomiarze przez CLI, `ssl`
+w budowie kontekstu, `http.client` z `urllib.parse` w `post()`, `socket` z `hashlib`
+przy składaniu rekordu. Te cztery ostatnie zeszły z góry w wersji 7 i były warte 23 ms
+na każdym przebiegu. **Nie przenosić ich w górę ani nie dodawać użyć przed linią importu**
+— `NameError`/`UnboundLocalError` połknie tu zasada 5 i maszyna przestanie raportować
+bez jednego objawu.
 
 **5. Nigdy nie rzuca wyjątkiem.** `except: sys.exit(0)` na najwyższym poziomie.
 
 **6. Sonda nigdy nie czeka na proces potomny.** `claude -p "/usage"` trwa ~3,4 s. Wynik
-konsumuje **następny** przebieg — dzięki temu hook kosztuje ~36 ms, a nie 3,4 s.
+konsumuje **następny** przebieg — dzięki temu hook kosztuje ~47 ms, a nie 3,4 s.
 
 **7. Zapora przed rekurencją jest obowiązkowa.** Proces potomny to normalna sesja Claude Code
 i odpala hook `Stop`. Sonda ustawia potomkowi `CUM_PROBE_CHILD=1` i przy tej zmiennej kończy

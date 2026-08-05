@@ -39,9 +39,9 @@ Konfiguracja: %LOCALAPPDATA%\\claude-usage-monitor\\config.json (Windows)
      "claude_bin": "<opcjonalnie pelna sciezka do claude>"}
 Celowo plik lokalny, a nie repo — token maszyny nie ma prawa trafic do gita.
 """
-import sys, os, json, time, re, socket, hashlib, http.client, urllib.parse
+import sys, os, json, time, re
 
-SCRIPT_VERSION = 6
+SCRIPT_VERSION = 7
 
 # Znacznik dziedziczony przez proces potomny. `claude -p "/usage"` to normalna sesja
 # Claude Code — odpali hook Stop, ktory odpali sonde, ktora odpalilaby kolejnego
@@ -583,6 +583,11 @@ def ssl_context(cfg):
 
 
 def post(cfg, body):
+    # Importy lokalne — sciezka zimna, raz na 60 s. `http.client` wciaga socket i ssl;
+    # te cztery moduly na gorze pliku kosztowaly ~23 ms przy KAZDYM przebiegu, takze tym,
+    # ktory konczy sie na throttlu. NIE przenosic w gore ani nie dodawac uzyc przed ta linia.
+    import http.client, urllib.parse
+
     url = urllib.parse.urlsplit(cfg["ingest_url"])
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     if url.scheme == "https":
@@ -672,6 +677,11 @@ def main():
     # (swiezosc) NIE robimy tutaj: sonda nie zna poprzedniej wartosci serii. Robi to
     # backend, ktory ma series_state — patrz confirmed_at w backend/app/services/ingest.py.
     captured = cache_at
+
+    # Jak w post(): import lokalny, bo tu jestesmy juz za throttlem. NIE przenosic
+    # w gore — uzycie przed ta linia to UnboundLocalError, ktory `except Exception`
+    # w :764 polknie w cisze i maszyna przestanie raportowac bez jednego objawu.
+    import socket, hashlib
 
     record = {
         "account": {

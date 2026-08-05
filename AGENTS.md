@@ -28,9 +28,21 @@ jednorazowego refresh tokenu to główny udokumentowany wektor utraty konta
 ([#38248](https://github.com/anthropics/claude-code/issues/38248), #47754, #53063).
 
 **2. Zero ciężkich importów w kliencie.**
-Wolno: `sys`, `json`, `os`, `time`, `socket`, `hashlib`, `http.client`, `urllib.parse`, `ssl`.
-Sam `import httpx` to ~150 ms, a skrypt startuje przy **każdym** wywołaniu narzędzia. Zmierzony
-start CPythona: 27 ms — cały budżet zależy od tej zasady.
+Na górze pliku wolno tylko: `sys`, `json`, `os`, `time`, `re`.
+`socket`, `hashlib`, `http.client`, `urllib.parse` i `ssl` są dozwolone, ale **wyłącznie
+leniwie, za throttlem** — importowane w ciele `post()` i `main()`. Na górze kosztowały
+23 ms przy **każdym** odpaleniu hooka, także tym, który zaraz wychodzi na throttlu, czyli
+na zdecydowanej większości. Zmierzone: 59,5 → 35,7 ms mediana, na dwóch identycznych
+kopiach sondy różniących się tylko tą linią.
+Sam `import httpx` to ~150 ms, a skrypt startuje przy **każdym** wywołaniu narzędzia.
+Podłoga jest twarda: goły start CPythona to 31–36 ms (min–mediana pomiaru referencyjnego)
+i nic jej nie zejdzie — cały budżet zależy od tej zasady.
+
+Liczb wydajnościowych **nie przepisywać z tego pliku bez ponownego pomiaru**. Maszyna, na
+której powstały, miała rozrzut rzędu 30 ms między min a max, a pomiar składników
+(`python -c "import ..."`)
+potrafi rozminąć się z pomiarem końcówka-do-końcówki nawet trzykrotnie. Wiążący jest
+pomiar całego przebiegu sondy, nie suma kosztów modułów.
 
 **3. Sonda nigdy nie rzuca wyjątkiem.**
 `except: sys.exit(0)` na najwyższym poziomie. To jedyny kod w projekcie, który działa w ścieżce
