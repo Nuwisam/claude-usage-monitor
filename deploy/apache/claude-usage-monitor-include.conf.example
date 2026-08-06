@@ -25,6 +25,18 @@
 ProxyPass        /claude-usage/api/ingest http://claude_usage_monitor_backend:8000/api/ingest
 ProxyPassReverse /claude-usage/api/ingest http://claude_usage_monitor_backend:8000/api/ingest
 
+# --- Alerty sesji: ten sam rodzaj ruchu co ingest, ta sama para warstw ------
+# Bez tego bloku sciezka jest publicznie osiagalna i broni sie samym Bearerem —
+# czyli skanery dobijaja sie do Pythona. Filtr brzegowy jest tu tak samo obowiazkowy
+# jak przy ingescie, bo endpoint wola ten sam klient tym samym sekretem.
+<Location /claude-usage/api/session-alert>
+    <If "req('X-Ingest-Key') != '__INGEST_EDGE_KEY__'">
+        Require all denied
+    </If>
+</Location>
+ProxyPass        /claude-usage/api/session-alert http://claude_usage_monitor_backend:8000/api/session-alert
+ProxyPassReverse /claude-usage/api/session-alert http://claude_usage_monitor_backend:8000/api/session-alert
+
 # --- Strumien SSE: dlugie polaczenie, bez buforowania ----------------------
 # MUSI byc PRZED regula /claude-usage/api, inaczej ta generyczna przechwyci strumien.
 #

@@ -116,6 +116,8 @@ niż brak odpowiedzi.
 | `GET /series` | Rejestr serii (zob. § 6 — lista jest otwarta) |
 | `GET /events` | Log operacyjny: przełączenia konta, drift schematu, błędy klienta |
 | `GET /batches` · `GET /batches/{id}/raw` | Log przyjęć + surowa odpowiedź Anthropic |
+| `GET /stats` | Liczniki, współczynnik dedupu, skuteczność ingestu 24 h |
+| `POST /session-alert` | **Bez SSO, Bearer per maszyna.** Sesje Claude Code, które stanęły i czekają na człowieka. Zob. § 3.2 |
 
 **W `/batches` nie ma kodów HTTP i nie będzie** — od v3 sonda nie wysyła żadnego żądania do
 Anthropic, więc nie ma odpowiedzi, którą miałyby opisywać. W ich miejscu jest proweniencja
@@ -123,7 +125,6 @@ pomiaru: `measurementSource` (`cli_merged` = świeże procenty ze stdout `/usage
 `cli_usage_cache` = sam cache Claude Code, do 5 min stary), `cacheAgeS`, `freshAgeS`.
 Przewaga `cli_usage_cache` to cicha awaria — dane płyną dalej, tylko rozdzielczość spadła
 z minuty do pięciu, i **to jedyne miejsce, w którym widać to wprost**.
-| `GET /stats` | Liczniki, współczynnik dedupu, skuteczność ingestu 24 h |
 
 **Czas działa w obie strony.** `from` i `to` w `/history` przyjmują ISO-8601 ze strefą
 (`…Z`, `…+02:00`) albo bez niej — bez strefy zakłada się UTC, ze strefą wartość jest
@@ -168,6 +169,7 @@ przy `AUTH_MODE=none`.
 | `account` | snapshot na starcie + po każdym przyjętym pomiarze | `{contractVersion, serverNow, account, warnings[]}` |
 | `ping` | co `pingSec` (15 s) | `{serverNow}` |
 | `lag` | odbiorca nie nadążył | `{reason:"queue-overflow", dropped}` |
+| `alert` | snapshot na starcie + po każdym `POST /session-alert` | `{contractVersion, serverNow, alerts[]}` — zob. § 3.2 |
 | `bye` | po `maxLifetimeSec` (900 s) | `{reason:"lifetime"}`, potem czyste zamknięcie |
 
 **`account` niesie dokładnie ten sam obiekt, co element `accounts[]` w `/status`** — ten sam
@@ -207,6 +209,71 @@ strumienia i tak pobrała `/status`.
 
 **Filtr to routing, nie autoryzacja.** Zalogowany użytkownik widzi wszystkie konta
 w `/status`; strumień niczego przed nikim nie zamyka.
+
+---
+
+## 3.2 Zablokowane sesje Claude Code
+
+Sesja, która stanęła na pytaniu do człowieka — prośbie o zgodę na narzędzie,
+`AskUserQuestion` albo `ExitPlanMode`. Sygnalizuje to `client/usage-probe.py` (ta sama sonda,
+sekcja „alert" — mierzone 1,7 ms wobec 41,9 ms za osobny proces), a panel na biurku pokazuje
+kartę i czerwony trójkąt. Wyłącznik: `"session_status": false` w `config.json`.
+
+**Sesja może chodzić na maszynie zdalnej, a panel stoi lokalnie** — dlatego zdarzenia idą
+przez backend jako proxy. Ale **nie ma ich w bazie**: żyją wyłącznie w pamięci procesu.
+Blokada gaśnie, gdy ktoś kliknie „tak", więc tabela oznaczałaby migrację i cykl życia
+wierszy dla stanu, po którym nie ma zostać żaden ślad. Restart backendu czyści mapę
+świadomie; alerty wracają przy najbliższym zdarzeniu z maszyny.
+
+```
+POST /api/session-alert
+Authorization: Bearer <token TEJ maszyny, z INGEST_TOKENS>
+X-Ingest-Key: <INGEST_EDGE_KEY>
+
+{"entries": [
+  {"key": "<sesja>__<agent|main>__<klucz>", "reason": "permission",
+   "project": "claude-usage-monitor", "tool": "Bash", "detail": "git status",
+   "since": "2026-08-05T21:00:00Z", "account_uuid": "…", "session_id": "…",
+   "agent_id": null, "agent_type": null, "permission_mode": "default"}],
+ "sent_at": "2026-08-05T21:00:01Z", "script_version": 8}
+
+200 {"ok": true, "machine": "desktop", "accepted": 1, "subscribers": 1}
+```
+
+Sonda wysyła **snake_case**, tak jak wygląda wpis na dysku; modele przyjmują obie formy
+(`populate_by_name`), więc camelCase też przejdzie. Na wyjściu, w ramce `alert`, pola są już
+camelCase jak w całej reszcie kontraktu.
+
+Cztery rzeczy, które trzeba wiedzieć:
+
+1. **Każdy POST ZASTĘPUJE zbiór swojej maszyny w całości.** Nie ma przyrostów, więc nie ma
+   stanu do uzgadniania i nie ma sposobu, żeby zgubione „wyjście" zostawiło sierotę.
+   Pusta lista gasi alerty tej maszyny. Dwa nakładające się żądania z jednej maszyny dają
+   ten sam wynik co samo późniejsze — dlatego endpoint nie serializuje zapisów i nie
+   otwiera transakcji.
+2. **`machine` nadaje serwer z tokenu, nigdy klient.** To etykieta, którą człowiek czyta
+   z panelu i po której decyduje, gdzie iść.
+3. **Ramka `alert` niesie PEŁNY bieżący zbiór ze wszystkich maszyn**, tak samo jak `account`
+   niesie pełną kartę. Idzie do **wszystkich** subskrybentów strumienia, nie do tych
+   zapisanych na jakieś konto: blokada nie należy do żadnego pojedynczego konta.
+   Ramka niesie `machine` per wpis, więc filtr da się dołożyć później bez zmiany formatu.
+4. **Snapshot przy połączeniu jest wymogiem, nie ozdobą.** `STREAM_MAX_LIFETIME_SEC` zmusza
+   panel do przełączenia połączenia co 15 minut, a zablokowana sesja nie emituje w tym
+   czasie **żadnego** zdarzenia (zmierzone: 98% blokad). Bez tego blokada trwająca 40 minut
+   znikałaby z ekranu po piętnastu.
+
+Pojedynczy wpis nie do przyjęcia jest **pomijany**, a reszta zbioru przechodzi: zgaszenie
+alertu przez błąd formatowania byłoby tym samym rodzajem błędu co fałszywe zero w pomiarze.
+Wpis starszy niż 24 h wypada ze snapshotu — maszyna, która zniknęła w trakcie blokady,
+nigdy nie przyśle korekty.
+
+**`contractVersion` nie rośnie.** Dodanie ramki jest zmianą niełamiącą — dokładnie tak jak
+dodanie całego `/api/stream` i pola `deltaFrom` (§ 11). Przeglądarka jej nie widzi
+z konstrukcji: `useLiveStream.ts` rejestruje pięć nazwanych listenerów i **nie ma
+`onmessage`**.
+
+Ta ścieżka **musi** być objęta filtrem brzegowym `X-Ingest-Key` w Apache, tak samo jak
+`/ingest` — bez tego stoi otworem dla skanerów i broni się samym Bearerem.
 
 ---
 

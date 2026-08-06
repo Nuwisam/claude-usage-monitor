@@ -192,6 +192,45 @@ class PingFrame(CamelModel):
     server_now: UtcDt
 
 
+# Sesja Claude Code, ktora stanela i czeka na czlowieka. Stan CHWILOWY: zyje wylacznie
+# w pamieci procesu, nie ma go w bazie i nie ma po nim historii.
+#
+# Wszystkie pola opisowe sa opcjonalne CELOWO. To jedyny ksztalt w tym kontrakcie, ktorego
+# zrodlem jest payload hooka Claude Code, a ten zmienia sie miedzy wersjami klienta —
+# `PermissionRequest` nie ma `tool_use_id` mimo ze `PreToolUse` ma. Twardy model odrzucalby
+# tu cala ramke za brak pola, ktore i tak jest tylko podpisem na ekranie.
+class SessionAlert(CamelModel):
+    key: str
+    machine: str | None = None
+    reason: str                  # permission | question | plan
+    project: str | None = None
+    tool: str | None = None
+    detail: str | None = None
+    since: UtcDt | None = None
+    account_uuid: str | None = None
+    session_id: str | None = None
+    agent_id: str | None = None
+    agent_type: str | None = None
+    permission_mode: str | None = None
+
+
+class AlertFrame(CamelModel):
+    contract_version: int
+    server_now: UtcDt
+    # PELNY biezacy zbior ze WSZYSTKICH maszyn, nie przyrost. Trzy niezalezne powody:
+    # snapshot w stream.py kasuje kolejke, przepelnienie kolejki wymienia zawartosc na
+    # `lag`, a polityka projektu (docs/API.md) mowi wprost, ze kazda ramka jest pelnym
+    # stanem. Przy pelnym stanie kazda pojedyncza ramka leczy dowolna zgube.
+    alerts: list[SessionAlert] = []
+
+
+class SessionAlertResult(CamelModel):
+    ok: bool
+    machine: str
+    accepted: int
+    subscribers: int
+
+
 class HistoryPoint(CamelModel):
     t: UtcDt
     min: float | None

@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from app.logging_config import configure
+from app.routers import alert as alert_router
 from app.routers import ingest as ingest_router
 from app.routers import read as read_router
 from app.routers import stream as stream_router
@@ -63,6 +64,7 @@ async def no_store(request, call_next):
     return response
 
 
+app.include_router(alert_router.router, prefix="/api")
 app.include_router(ingest_router.router, prefix="/api")
 app.include_router(read_router.router, prefix="/api")
 app.include_router(stream_router.router, prefix="/api")

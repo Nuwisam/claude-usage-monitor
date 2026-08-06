@@ -24,7 +24,7 @@ from app.config import settings
 from app.db import SessionLocal
 from app.models import Account
 from app.services.events import (
-    account_frame, broker, bye_frame, hello_frame, ping_frame,
+    account_frame, alert_frame, broker, bye_frame, hello_frame, ping_frame,
 )
 from app.services.ingest import utcnow
 
@@ -79,6 +79,19 @@ async def stream(
                     # would roll its view backwards. The snapshot supersedes them.
                     while not sub.queue.empty():
                         sub.queue.get_nowait()
+
+            # Alerty PO skasowaniu kolejki, nigdy przed — inaczej ta petla wyzej
+            # zjadlaby wlasnie zbudowany snapshot. Dla ramek `account` to bylo
+            # nieszkodliwe z zalozenia (snapshot je zastepuje), dla efemerycznego
+            # alertu byloby ciche i smiertelne.
+            #
+            # Odtworzenie stanu przy KAZDYM polaczeniu jest wymogiem, nie ozdoba:
+            # STREAM_MAX_LIFETIME_SEC zmusza panel do przelaczenia polaczenia co
+            # 15 minut, a zablokowana sesja nie emituje w tym czasie zadnego
+            # zdarzenia (zmierzone: 98% blokad). Bez tego blokada trwajaca 40 minut
+            # znikalaby z ekranu po pietnastu.
+            if snapshot:
+                yield alert_frame(now=utcnow())
 
             # From here the loop never touches the database: frames arrive ready-made,
             # built by the publisher on the ingest session.

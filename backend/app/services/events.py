@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 from loguru import logger
 from sqlalchemy import select
@@ -36,7 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import Account
-from app.schemas import AccountFrame, HelloFrame, PingFrame
+from app.schemas import AccountFrame, AlertFrame, HelloFrame, PingFrame, SessionAlert
 from app.services.ingest import utcnow
 from app.services.status import (
     CONTRACT_VERSION, build_account_status, last_batch_time,
@@ -75,6 +75,56 @@ def lag_frame(dropped: int) -> str:
 
 def bye_frame(reason: str) -> str:
     return sse("bye", '{"reason":"%s"}' % reason)
+
+
+# --------------------------------------------------------------------------- alerts
+# Sesje, ktore stanely i czekaja na czlowieka. IN-PROCESS, bez bazy — stan z definicji
+# chwilowy, a tabela oznaczalaby migracje i cykl zycia wierszy dla czegos, co gasnie,
+# gdy ktos kliknie "tak". Restart backendu czysci mape swiadomie: alerty wracaja przy
+# najblizszym zdarzeniu z maszyny.
+#
+# Klucz to NAZWA MASZYNY z tokenu ingestu, a wartoscia jest CALY biezacy zbior tej
+# maszyny. Kazdy POST zastepuje wpis maszyny w calosci, wiec nie ma tu stanu do
+# uzgadniania i nie ma sposobu, zeby zgubione "wyjscie" zostawilo sierote.
+ALERTS: dict[str, list[SessionAlert]] = {}
+
+# Sufit wieku przy skladaniu snapshotu. Writer ma wlasny TTL (`blocked_ttl_sec`), ale
+# maszyna, ktora zniknela w trakcie blokady, nigdy juz nie przysle korekty — bez tego
+# jej wpis wisialby do restartu procesu.
+ALERT_MAX_AGE_SEC = 86400.0
+
+
+def set_alerts(machine: str, alerts: list[SessionAlert]) -> None:
+    if alerts:
+        ALERTS[machine] = alerts
+    else:
+        ALERTS.pop(machine, None)
+
+
+def _aware(v: datetime) -> datetime:
+    return v if v.tzinfo is not None else v.replace(tzinfo=timezone.utc)
+
+
+def current_alerts(*, now: datetime) -> list[SessionAlert]:
+    """Zbior ze wszystkich maszyn, najstarsze pierwsze. Wpis bez `since` przechodzi:
+    brak stempla znaczy 'nie wiem, jak dlugo', nie 'przeterminowany' — i laduje na
+    koncu, bo o kolejnosci ma decydowac wiek, a nie brak wiedzy o nim."""
+    ref = _aware(now)
+    out: list[SessionAlert] = []
+    for alerts in ALERTS.values():
+        for a in alerts:
+            if a.since is not None and (ref - _aware(a.since)).total_seconds() > ALERT_MAX_AGE_SEC:
+                continue
+            out.append(a)
+    out.sort(key=lambda a: (a.since is None, _aware(a.since) if a.since else ref))
+    return out
+
+
+def alert_frame(*, now: datetime) -> str:
+    return sse("alert", AlertFrame(
+        contract_version=CONTRACT_VERSION, server_now=now,
+        alerts=current_alerts(now=now),
+    ).model_dump_json(by_alias=True))
 
 
 # --------------------------------------------------------------------------- broker
@@ -151,6 +201,32 @@ class Broker:
                 # The receiver cannot keep up. Intermediate frames are disposable because
                 # each one carries the account's FULL state — we keep only the `lag`
                 # signal, and the next frame will be complete anyway.
+                dropped = _drain(sub.queue)
+                sub.queue.put_nowait(lag_frame(dropped))
+                logger.warning("SSE: client {} fell behind, dropped {} frame(s)",
+                               sub.label, dropped)
+        return sent
+
+    def publish_all(self, frame: str) -> int:
+        """A frame that belongs to no single account — today: session alerts.
+
+        Deliberately NOT a second subscription axis. The alternative (index by machine,
+        subscribe the panel to machines) was designed and dropped: it rested on the
+        premise that routing by account would leak project names to OTHER subscribers,
+        and that premise is false here. `ALLOWED_EMAILS` holds one address, sso.py
+        rejects every other one with 403 even if the proxy lets it through, and
+        `STREAM_TOKENS` holds a single entry labelled `panel`. There is no second
+        person for anything to leak to.
+
+        The frame carries `machine` per entry, so a filter can be added LATER without
+        changing the wire format, the day a second stream token appears.
+        """
+        sent = 0
+        for sub in self._subs:
+            try:
+                sub.queue.put_nowait(frame)
+                sent += 1
+            except asyncio.QueueFull:
                 dropped = _drain(sub.queue)
                 sub.queue.put_nowait(lag_frame(dropped))
                 logger.warning("SSE: client {} fell behind, dropped {} frame(s)",
