@@ -42,6 +42,32 @@ DEFAULTS = {
     # czasu na panelu zostaje obraz z poprzedniego biegu — to celowe.
     "splash_after_sec": 20,
     "record_sse": False,
+    # --- zablokowane sesje Claude Code (ramka `alert`) ---
+    # Wylacznik calej funkcji. Przy `false` ramka jest ignorowana i panel zachowuje sie
+    # dokladnie jak przedtem — trojkat nie zapala sie ani razu.
+    "session_alerts": True,
+    # Jak dlugo blokada ZAJMUJE ekran karta. Potem zwija sie do czerwonego trojkata
+    # obok nazwy konta; wpis zyje dalej, przestaje byc tylko przejmujacy. Liczone od
+    # `since` z serwera, wiec restart panelu nie wskrzesza starej karty.
+    #
+    # Liczba sekund, 0 (od razu trojkat, bez karty) albo "infinity" — wtedy karta stoi,
+    # dopoki nie odpowiesz, i zuzycie jest przez ten czas niewidoczne.
+    "alert_takeover_sec": 300,
+    # Jak dlugo baner karty miga na czerwono. Liczba sekund, 0 wylacza albo "infinity" —
+    # wtedy miga przez cale zycie karty, czyli do `alert_takeover_sec`.
+    #
+    # Miga sam baner (20% klatki, ~375 ms) — pelnoekranowy blysk to pelna klatka, czyli
+    # 1,87 s powolnego zamalowania zamiast blysku. Kazde mrugniecie kosztuje ~0,73 s na
+    # obu ekranach lacznie, wiec "infinity" zajmuje lacze przez caly czas trwania karty.
+    # Zapala sie raz na KLUCZ blokady.
+    "alert_flash_sec": 20,
+    # Ile blokada musi trwac, zanim karta wejdzie. Chroni przed blyskiem przy zgodzie
+    # udzielonej od razu. To OSAD, nie pomiar — stad klucz konfiguracyjny.
+    "blocked_debounce_sec": 2,
+    # Ile karta zostaje po zniknieciu ostatniej blokady, ZAMROZONA. Przejscie sceny
+    # kosztuje pelna klatke na obu ekranach, wiec kazde zaoszczedzone przelaczenie
+    # to realne ~1,5 s, w ktorym panel nie odswieza niczego innego.
+    "blocked_linger_sec": 10,
 }
 
 

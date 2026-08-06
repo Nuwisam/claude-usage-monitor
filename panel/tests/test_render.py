@@ -79,6 +79,7 @@ def test_ellipsize_nie_przekracza_szerokosci():
     (theme.TEXT, "tekst"), (theme.TEXT_50, "plan"), (theme.TEXT_28, "kontur"),
     (theme.TEXT_10, "skos"), (theme.ACCENT, "akcent"), (theme.ACCENT_200, "etykieta"),
     (theme.NEUTRAL_900, "tor"), (theme.DIVIDER, "separator"),
+    (theme.DANGER, "ostrzezenie"),
 ])
 def test_kolory_przezywaja_kwantyzacje(fg, nazwa):
     """Panel ma 5/6/5 bitow. Najbardziej zagrozony jest kreskowany kontur
@@ -86,6 +87,25 @@ def test_kolory_przezywaja_kwantyzacje(fg, nazwa):
     stalby sie niewidoczny."""
     assert theme.to_rgb565_pair(fg) != theme.to_rgb565_pair(theme.BG), \
         "%s ginie na tle po kwantyzacji" % nazwa
+
+
+@pytest.mark.parametrize("fg,bg,nazwa", [
+    (theme.ACCENT_800, theme.BG, "baner alertu na tle"),
+    (theme.ACCENT_100, theme.ACCENT_800, "tytul alertu na banerze"),
+    (theme.ACCENT_200, theme.ACCENT_800, "godzina na banerze"),
+    (theme.DANGER, theme.BG, "trojkat na tle"),
+    (theme.DANGER, theme.ACCENT, "trojkat obok akcentu"),
+])
+def test_pary_kolorow_przezywaja_kwantyzacje(fg, bg, nazwa):
+    """Osobny test od powyzszego, bo tamten porownuje WYLACZNIE z `theme.BG`.
+
+    Marginalna para karty to `ACCENT_800` na `BG` (roznica 42,13,4 przed kwantyzacja),
+    a nie tekst na banerze. Para DANGER/ACCENT jest tu dlatego, ze akcent panelu sam
+    jest pomaranczowo-czerwony — gdyby trojkat zlal sie z nim, czytalby sie jako
+    'troche inny pomarancz', czyli jako ozdoba, a nie jako ostrzezenie.
+    """
+    assert theme.to_rgb565_pair(fg) != theme.to_rgb565_pair(bg), \
+        "%s znika po kwantyzacji" % nazwa
 
 
 # --- render -----------------------------------------------------------------

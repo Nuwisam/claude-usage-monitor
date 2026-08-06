@@ -47,6 +47,50 @@ F_WORDS = 13            # "nie wiem" zamiast liczby
 
 DIVIDER_H = 1
 
+# Trojkat ostrzegawczy przy nazwie konta. Zmierzony zapas w naglowku przy najdluzszej
+# realnej nazwie to 202 px w gornym pasie i 259 px w dolnym, wiec 19 px (trojkat plus
+# odstep) to ponizej 6% budzetu tytulu — i gryzie wylacznie wtedy, gdy nazwa i tak jest
+# skracana. Pionowo 11 px wysrodkowane na y+9 zajmuje pasmo juz uzywane przez tekst.
+WARN_W = 11
+WARN_H = 11
+WARN_GAP = 8
+
+
+class Alert:
+    """Geometria karty przejmujacej ekran. WERSJA ROBOCZA — spojna z reszta, ale
+    zaprojektowana pomiarem, nie makieta; przeprojektowanie jest osobnym krokiem.
+
+    Zadnych nowych pomyslow wizualnych: te same stale co w pasach, ten sam slownik
+    czcionek, to samo tlo. Tlo zostaje `theme.BG` — pelnoekranowe pole akcentu przy
+    jasnosci 5 to blask w oczy i widoczne pasmowanie RGB565.
+    """
+
+    BANNER_H = 56
+    F_BANNER = 20
+    F_CLOCK = 20
+    F_PROJECT = 34
+    F_PROJECT_TIGHT = 26    # jak F_SES_NUM -> F_SES_NUM_TIGHT: stopien nizej, nie nowy mechanizm
+    F_LABEL = 13
+    F_WAITED = 24
+    F_OTHERS = 13
+
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+        self.banner = (0, 0, width, self.BANNER_H)
+        self.x0 = PAD_X
+        self.x1 = width - PAD_X
+
+        y = self.BANNER_H + 26
+        self.project_y = y
+        y += self.F_PROJECT + 8
+        self.label_y = y
+        y += self.F_LABEL + 12
+        self.waited_y = y
+        y += self.F_WAITED + 10
+        self.others_y = y
+        self.bottom = y + self.F_OTHERS
+
 
 class Band:
     """Prostokaty jednego pasa konta, we wspolrzednych EKRANU."""
@@ -106,3 +150,4 @@ class Layout:
         self.divider = (0, band_h, width, band_h + DIVIDER_H)
         self.band_b = Band(band_h + DIVIDER_H, height - band_h - DIVIDER_H, width)
         self.bands = (self.band_a, self.band_b)
+        self.alert = Alert(width, height)

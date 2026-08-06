@@ -15,7 +15,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
-from panel import fmt, model, render, stream                # noqa: E402
+from panel import fmt, model, render, status, stream        # noqa: E402
 
 
 def chunks(path, size=4096):
@@ -39,6 +39,7 @@ def main():
     clock = fmt.ServerClock(lambda: 0.0)
     accounts = {}
     order = []
+    alerts = []
     frames = 0
 
     for event, payload in stream.parse_events(chunks(args.path)):
@@ -46,21 +47,31 @@ def main():
             continue
         if payload.get("serverNow"):
             clock.anchor(payload["serverNow"])
-        if event != "account":
+        # Ramki `alert` MUSZA przechodzic przez ten filtr. Wczesniej stalo tu
+        # `if event != "account": continue`, wiec nagrane alerty byly dla tego
+        # narzedzia niewidzialne — czyli jedyna scena, ktorej nie da sie wywolac
+        # na zadanie, bylaby tez jedyna, ktorej nie da sie odtworzyc.
+        if event == "alert":
+            alerts = status.parse_frame(payload)
+        elif event != "account":
             continue
-        account = model.AccountStatus(payload.get("account") or {})
-        if not account.uuid:
-            continue
-        if account.uuid not in accounts:
-            order.append(account.uuid)
-        accounts[account.uuid] = account
+        if event == "account":
+            account = model.AccountStatus(payload.get("account") or {})
+            if not account.uuid:
+                continue
+            if account.uuid not in accounts:
+                order.append(account.uuid)
+            accounts[account.uuid] = account
 
         now_ms = clock.now_ms()
-        bands = [render.band_state(accounts[u], now_ms=now_ms, show_clock=(i == 0))
+        flagged = {0} if alerts else set()
+        bands = [render.band_state(accounts[u], now_ms=now_ms, show_clock=(i == 0),
+                                   alert=(i in flagged))
                  for i, u in enumerate(order[:2])]
         while len(bands) < 2:
             bands.append(None)
-        state = render.ScreenState(clock=fmt.hm(clock.now()), link="live", bands=bands)
+        state = render.ScreenState(clock=fmt.hm(clock.now()), link="live", bands=bands,
+                                   alert=render.alert_state(alerts, now_ms))
         img = renderer.frame(state).image
         if args.zoom > 1:
             from PIL import Image

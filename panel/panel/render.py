@@ -25,11 +25,12 @@ class BandState:
 
     __slots__ = ("title", "plan", "session", "weekly", "credits",
                  "session_view", "weekly_view", "reset_session", "reset_week",
-                 "ago", "note", "show_clock")
+                 "ago", "note", "show_clock", "alert")
 
     def __init__(self, title="", plan="", session=None, weekly=None, credits=None,
                  session_view=None, weekly_view=None, reset_session=("", None),
-                 reset_week=("", None), ago="", note=None, show_clock=False):
+                 reset_week=("", None), ago="", note=None, show_clock=False,
+                 alert=False):
         self.title = title
         self.plan = plan
         self.session = session
@@ -42,19 +43,66 @@ class BandState:
         self.ago = ago
         self.note = note
         self.show_clock = show_clock
+        self.alert = alert          # trojkat przy nazwie konta
+
+
+class AlertState:
+    """Karta przejmujaca ekran. Skladana przez `alert_state()`."""
+
+    __slots__ = ("title", "project", "label", "waited", "others", "footer", "clock",
+                 "blink")
+
+    def __init__(self, title="", project="", label="", waited="", others="",
+                 footer=None, clock="", blink=False):
+        self.blink = blink          # baner na czerwono — faza migania po wejsciu karty
+        self.title = title          # baner: CZEKA NA ZGODĘ / PYTANIE DO CIEBIE / ...
+        self.project = project
+        self.label = label          # narzedzie i maszyna
+        self.waited = waited
+        self.others = others        # "inne: alpha, beta" — tylko gdy blokad jest wiecej
+        self.footer = footer        # np. informacja o niezgodnym kontrakcie
+        self.clock = clock          # godzina POJAWIENIA sie promptu, nie zywy zegar
 
 
 class ScreenState:
-    __slots__ = ("clock", "link", "bands", "message")
+    # __slots__ jako LITERAL, nie `__slots__ += (...)`. To drugie wykonuje sie bez bledu,
+    # przepisuje atrybut klasy i wywala AttributeError dopiero przy pierwszym przypisaniu.
+    __slots__ = ("clock", "link", "bands", "message", "alert")
 
-    def __init__(self, clock="", link="down", bands=(), message=None):
+    def __init__(self, clock="", link="down", bands=(), message=None, alert=None):
         self.clock = clock
         self.link = link            # "live" | "reconnecting" | "down"
         self.bands = list(bands)
         self.message = message      # pelnoekranowy komunikat zamiast pasow
+        self.alert = alert          # AlertState — bije i pasy, i komunikat
 
 
-def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None):
+def alert_state(blocked, now_ms=0.0, footer=None, blink=False):
+    """[status.Blocked] -> AlertState. Pierwszy wpis jest naglowkiem — o kolejnosci
+    rozstrzyga `status.parse_frame`, tutaj juz nie ma decyzji do podjecia."""
+    from . import fmt
+
+    if not blocked:
+        return None
+    head = blocked[0]
+    rest = [b.project for b in blocked[1:] if b.project]
+    since_ms = fmt.ms(head.since)
+    return AlertState(
+        title=head.title,
+        project=head.project or "—",
+        label=head.label,
+        waited="czeka %s" % fmt.waited(since_ms, now_ms),
+        # "inne: alpha, beta" jest poprawne po polsku dla kazdej liczby, wiec nie ma
+        # tu obslugi liczby mnogiej i nie musi byc.
+        others=("inne: %s" % ", ".join(rest)) if rest else "",
+        footer=footer,
+        clock=fmt.hm(head.since) if head.since else "",
+        blink=blink,
+    )
+
+
+def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None,
+               alert=False):
     """model.AccountStatus -> BandState. JEDYNE miejsce tego przejscia, wspolne
     dla klienta i dla tools/render-png.py — inaczej narzedzie diagnostyczne
     pokazywaloby cos innego niz panel."""
@@ -66,7 +114,7 @@ def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None):
         why = note or "brak danych z serwera"
         return BandState(title=name or "—", note=note, show_clock=show_clock,
                          reset_session=(why, None), reset_week=(why, None),
-                         ago="—")
+                         ago="—", alert=alert)
 
     session = V.pick_session(account.series)
     weekly = V.pick_weekly(account.series)
@@ -107,6 +155,7 @@ def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None):
         ago=age,
         note=note,
         show_clock=show_clock,
+        alert=alert,
     )
 
 
@@ -156,7 +205,12 @@ class Renderer:
 
     def frame(self, state):
         img, d = draw.new_canvas((self.layout.width, self.layout.height))
-        if state.message:
+        if state.alert is not None:
+            # Alert bije takze `message`. Odwrotna kolejnosc zdegradowalaby go do
+            # wiersza na dole karty bledu — a to jest jedyna rzecz na tym ekranie,
+            # ktora wymaga, zebys wstal od biurka.
+            self._alert(d, state.alert)
+        elif state.message:
             self._message(d, state.message)
         else:
             for band_rect, band in zip(self.layout.bands, state.bands):
@@ -184,6 +238,54 @@ class Renderer:
                                                 self.layout.width - 2 * L.PAD_X),
                    font=f_body, fill=theme.TEXT_60)
             y += 22
+
+    def _alert(self, d, a):
+        """Karta przejmujaca — WERSJA ROBOCZA.
+
+        Zbudowana wylacznie z istniejacego slownika: paleta z theme.py, czcionki
+        z draw.font, `ellipsize` na kazdym napisie o nieznanej dlugosci. Nic tu nie
+        jest nowym pomyslem wizualnym; ma dzialac i nie klocic sie z pasami, a nie
+        wygladac na skonczone.
+        """
+        L_ = self.layout.alert
+        f_banner = draw.font(L_.F_BANNER)
+        f_clock = draw.font(L_.F_CLOCK)
+        f_label = draw.font(L_.F_LABEL)
+        f_waited = draw.font(L_.F_WAITED)
+        f_others = draw.font(L_.F_OTHERS)
+
+        # Miga TYLKO baner, nie cały ekran. Pelnoekranowy blysk to z definicji pelna
+        # klatka, a Turing maluje ja 1,87 s progresywnie — wychodzi powolne zamalowanie,
+        # nie blysk. Baner to 17,5% klatki, czyli ~0,33 s, i miesci sie w ticku.
+        d.rectangle(L_.banner, fill=theme.DANGER if a.blink else theme.ACCENT_800)
+        tekst = theme.BG if a.blink else theme.ACCENT_100
+        zegar = theme.BG if a.blink else theme.ACCENT_200
+        right = L_.x1
+        if a.clock:
+            d.text((right, 17), a.clock, font=f_clock, fill=zegar, anchor="ra")
+            right -= draw.text_width(a.clock, f_clock) + 12
+        d.text((L_.x0, 17), draw.ellipsize(a.title, f_banner, right - L_.x0),
+               font=f_banner, fill=tekst)
+
+        room = L_.x1 - L_.x0
+        # Ten sam mechanizm co F_SES_NUM -> F_SES_NUM_TIGHT w pasie: dluga nazwa schodzi
+        # o stopien zamiast byc obcieta w polowie.
+        f_project = draw.font(L_.F_PROJECT)
+        if draw.text_width(a.project, f_project) > room:
+            f_project = draw.font(L_.F_PROJECT_TIGHT)
+        d.text((L_.x0, L_.project_y), draw.ellipsize(a.project, f_project, room),
+               font=f_project, fill=theme.TEXT)
+
+        if a.label:
+            d.text((L_.x0, L_.label_y), draw.ellipsize(a.label, f_label, room),
+                   font=f_label, fill=theme.TEXT_60)
+        d.text((L_.x0, L_.waited_y), a.waited, font=f_waited, fill=theme.ACCENT_200)
+        tail = a.others or ""
+        if a.footer:
+            tail = "%s · %s" % (tail, a.footer) if tail else a.footer
+        if tail:
+            d.text((L_.x0, L_.others_y), draw.ellipsize(tail, f_others, room),
+                   font=f_others, fill=theme.TEXT_50)
 
     def _empty_band(self, d, b):
         f = draw.font(13)
@@ -221,8 +323,15 @@ class Renderer:
                               theme.TEXT_50, tracking=1)
             right -= w + 8
 
-        title = draw.ellipsize(band.title, f_name, max(20, right - b.x0))
+        room = max(20, right - b.x0 - ((L.WARN_W + L.WARN_GAP) if band.alert else 0))
+        title = draw.ellipsize(band.title, f_name, room)
         d.text((b.x0, y), title, font=f_name, fill=theme.TEXT)
+        if band.alert:
+            # Przyklejony do PRAWEJ KRAWEDZI NAZWY, nie do marginesu — inaczej przy
+            # krotkiej nazwie wisialby 300 px od niej i czytalby sie jako ozdoba pasa.
+            x = b.x0 + draw.text_width(title, f_name) + L.WARN_GAP
+            draw.warn_triangle(d, (x, y + 3, x + L.WARN_W, y + 3 + L.WARN_H),
+                               theme.DANGER)
 
     def _link_mark(self, d, centre, link):
         """Kropka pelna = na zywo, pierscien = wznawiam, przekreslona = brak.

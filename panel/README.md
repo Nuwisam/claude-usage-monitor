@@ -155,11 +155,21 @@ rectangle straight out of the full-frame payload. Measured on real frames
 | `base` → `states` | 63 | 87 680 | 4.5 ms | 535 ms |
 | `base` → `edges` | 69 | 129 920 | 5.8 ms | 793 ms |
 
-So the steady state is ~1 % of a tick and a **scene change costs 0.5–0.9 s** —
-rare, always cheaper than a full frame, and the loop drops ticks rather than
-catching up. Above 256 rectangles or 60 % of the frame the client sends the whole
-frame instead: on a scene change a bounding box *is* the whole frame, and a
-thousand crops on top of it are pure loss.
+So the steady state is ~1 % of a tick and a **scene change costs 0.5–1.2 s** — the
+top of that range is the bands → alert card transition (62.5 % dirty, 45 crops,
+1.17 s), which is the most expensive one this client draws. Rare, always cheaper
+than a full frame, and the loop drops ticks rather than catching up. Above 256
+rectangles or 85 % of the frame the client sends the whole frame instead: past that
+many rectangles the Python loop stops being worth it.
+
+**The threshold is 85 %, not 60 %, and the old wording here was wrong.** It said a
+bounding box on a scene change *is* the whole frame — true for a bounding-box
+coalescer, and this one is not that: `coalesce()` provably never covers a clean
+pixel, and the wire is linear at 6.1 µs/byte with only a 6 B rectangle header, so
+a set of crops is **never** heavier than the full frame. The measurement that
+forced the change: the bands → alert card transition dirties 62.5 % of the frame
+in 45 rectangles, landing just above the old threshold and turning 1.16 s of crops
+into a 1.87 s full frame for nothing. `tests/test_alert.py` pins the number.
 
 **The periodic full repaint is timed from the last FULL write**, not from the last
 write. With partial updates the clock writes something every minute, so timing it
@@ -181,6 +191,73 @@ zgubiona ramka jest nieszkodliwa.
 - Odczyt strumienia idzie przez `read1()`, nie `read()`. `read(n)` czeka na całe
   `n` bajtów, więc kolejne karty i pingi zostawały w buforze, a panel stał
   z pierwszą ramką **wyglądając na żywego**.
+
+## Zablokowana sesja Claude Code
+
+Panel pokazuje nie tylko zużycie, ale i to, że **Claude na Ciebie czeka**: prośbę
+o zgodę na narzędzie, `AskUserQuestion` albo `ExitPlanMode`. Sygnał zbiera
+`client/usage-probe.py` na maszynie z sesją, wysyła do backendu i ten rozsyła
+go ramką `alert` (`docs/API.md` § 3.2). **Sesja może chodzić na maszynie zdalnej** —
+panel widzi wyłącznie to, co przyszło strumieniem.
+
+Prezentacja jest dwustopniowa i to jest decyzja, nie etap:
+
+1. Karta **przejmuje cały ekran** przez `alert_takeover_sec` — liczba sekund (domyślnie
+   300), `0` (od razu trójkąt, bez karty) albo `"infinity"` (karta stoi, dopóki nie
+   odpowiesz, i zużycie jest przez ten czas niewidoczne). Jej
+   **baner miga na czerwono** przez `alert_flash_sec` — bez tego karta wchodzi cicho,
+   bo jest ciemna jak reszta ekranu, i przy kilku ekranach na biurku łatwo ją przegapić.
+   Wartość to liczba sekund (domyślnie 20), `0` wyłącza, a `"infinity"` miga przez całe
+   życie karty. Zapala się raz na **klucz** blokady, więc tyknięcie „czeka N min" nie
+   miga. Każde mrugnięcie to ~0,73 s łącza na obu ekranach — przy `"infinity"` karta
+   zajmuje je przez cały czas, gdy stoi.
+
+   **Miga sam baner, nie ekran.** Pełnoekranowy błysk jest tu strukturalnie niemożliwy:
+   to z definicji pełna klatka, a Turing maluje ją 1,87 s progresywnie, więc na szkle
+   wychodzi powolne zamalowanie, a nie błysk (sprawdzone na sprzęcie — pierwsza wersja
+   robiła dokładnie to). Baner to 20% klatki: jeden wycinek, 61 kB, ~375 ms na Turingu
+   i 355 ms na AX206, czyli oba zdążą w ticku.
+2. Potem zwija się do **czerwonego trójkąta obok nazwy konta**. Stan przestaje być
+   *przejmujący*, nie przestaje być *prawdziwy* — zużycie wraca na ekran, a to, że
+   coś czeka, dalej widać.
+
+Okno liczy się od `since` z serwera, nie od chwili, w której panel zobaczył wpis:
+inaczej restart panelu wskrzeszałby kartę dla blokady sprzed godziny. Nowa blokada
+to nowy klucz, czyli nowe okno.
+
+- **`blocked_debounce_sec` (2 s)** — ile blokada musi trwać, zanim karta wejdzie.
+  Bez tego zgoda udzielona od razu dawałaby błysk pełnego ekranu.
+- **`blocked_linger_sec` (10 s)** — ile karta zostaje po zniknięciu blokady,
+  **zamrożona**. Zamrożenie jest istotne: bez niego „czeka N min" tykałoby dalej na
+  prompcie, na który już odpowiedziałeś, a każdy przeskok tego napisu to pełna
+  klatka na AX206.
+- **`session_alerts: false`** wyłącza całość — ramka jest wtedy ignorowana i panel
+  zachowuje się dokładnie jak przedtem. To flaga **wyświetlania**; źródło gasi się
+  osobno, kluczem `session_status` w `config.json` na maszynie z sesją. Dwie flagi,
+  bo to bywają dwie różne maszyny.
+
+Alert **bez dopasowania** do żadnego skonfigurowanego konta ląduje na pasie
+**górnym**. Reguła jest celowo prosta: statyczne mapowanie maszyna → pas rozjechałoby
+się po pierwszym `/login`, a przełączanie kont jest tu rutyną. Konto bierze się
+z `oauthAccount.accountUuid` odczytanego na maszynie z sesją — zasada 7 projektu.
+
+Czas czekania jest **gruboziarnisty** („chwilę" / „4 min" / „1 h 05 min" / „2 d 3 h")
+i to nie jest kwestia gustu: AX206 nie umie wycinków, więc każda zmiana napisu to
+pełne 355 ms, a sekundy zamieniłyby ~2,5 % obciążenia USB w ~35 % na cały czas
+trwania karty. Żywego zegara na karcie nie ma — godzina w banerze to statyczny
+moment pojawienia się promptu.
+
+Karta jest **wersją roboczą**: zbudowana wyłącznie z istniejącej palety, czcionek
+i idiomów, żeby mechanika działała, zanim ktoś ją zaprojektuje. Podgląd bez sprzętu:
+
+```
+python tools/render-png.py --alert permission --zoom 3 --rgb565 --out alert.png
+python tools/render-png.py --alert multi --zoom 3 --rgb565 --out alert-multi.png
+python tools/render-png.py --triangle --zoom 3 --rgb565 --out trojkat.png
+```
+
+Gdyby alert się zawiesił, furtka jest na maszynie z sesją, nie tutaj:
+`del %LOCALAPPDATA%\claude-usage-monitor\session-status\*`.
 
 ## Odświeżanie
 

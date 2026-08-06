@@ -187,6 +187,25 @@ def clock_glyph(d, centre, radius, colour):
     d.line((cx, cy, cx + radius - 2, cy), fill=colour, width=1)
 
 
+def warn_triangle(d, box, colour):
+    """Trojkat z wykrzyknikiem — sesja czeka na czlowieka.
+
+    Wykrzyknik rysowany, nie pisany fontem. "!" w rozmiarze 11 ma 8 px tuszu i nie
+    zmiesci sie w 11-pikselowym trojkacie, a poza tym polityka tego pliku (patrz
+    `clock_glyph`) mowi wprost, zeby ikonki byly wektorowe: przy 11 px font zamienia
+    sie w plame, a rysunek nie.
+    """
+    x0, y0, x1, y1 = (int(v) for v in box)
+    cx = (x0 + x1) // 2
+    d.polygon([(cx, y0), (x1, y1), (x0, y1)], fill=colour)
+    # Kreska konczy sie dwa piksele nad kropka, inaczej po kwantyzacji zlewaja sie
+    # w jeden slupek i wykrzyknik przestaje byc wykrzyknikiem.
+    top = y0 + max(3, (y1 - y0) // 3)
+    bottom = y1 - max(3, (y1 - y0) // 4)
+    d.line((cx, top, cx, bottom), fill=theme.BG, width=1)
+    d.point((cx, bottom + 2), fill=theme.BG)
+
+
 def arrow_down_right(d, box, colour):
     """Strzalka przy kredytach: to one sa teraz biezacym szczeblem."""
     x0, y0, x1, y1 = box

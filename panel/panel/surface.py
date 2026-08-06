@@ -79,9 +79,16 @@ TILE = 8
 MAX_RECTS = 256
 
 # Past this much of the frame, send it whole: one command, a known `prev`, and no
-# thousand crops for nothing. Scene transitions land here (they dirty 40-70% of
-# the tiles), and they are exactly the case where the bookkeeping is pure loss.
-FULL_AT = 0.60
+# thousand crops for nothing.
+#
+# 0.85, not 0.60. The bands -> alert card transition measured 62.5% dirty in 45 crops,
+# which landed 2.5 points ABOVE the old threshold and turned 1.17 s of crops into a
+# 1.87 s full frame - for nothing. `coalesce()` provably never covers a clean pixel and
+# the wire costs 6.1 us/byte with no fixed overhead beyond a 6 B rectangle header, so a
+# set of crops is NEVER heavier than the full frame; the real bound is MAX_RECTS. The
+# README line that justified a low threshold ("the bounding box is the whole frame
+# anyway") describes a bounding-box coalescer, and this one is not that.
+FULL_AT = 0.85
 
 
 def dirty_tiles(prev, cur, width, height, tile=TILE):

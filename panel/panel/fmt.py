@@ -166,6 +166,33 @@ def ago(since_ms, now_ms):
     return "%d d %d h temu" % (h // 24, h % 24)
 
 
+def waited(since_ms, now_ms):
+    """Jak dlugo Claude czeka: "chwilę" / "4 min" / "1 h 05 min" / "2 d 3 h".
+
+    GRUBOZIARNISTE, i to nie jest kwestia gustu. AX206 nie umie wycinkow, wiec kazda
+    zmiana napisu na karcie to pelna klatka i 355 ms na USB — a druga sciana kosztuje
+    swoje. Sekundy zamienilyby ~2,5% obciazenia lacza w ~35% na caly czas trwania karty.
+    Ponizej minuty nie ma wiec liczby, tylko slowo: jest tam i tak nic do policzenia.
+
+    Zarzut "zegar w banerze i tak tyka co sekunde" nie stosuje sie: na karcie nie ma
+    zywego zegara, godzina w banerze to statyczny moment pojawienia sie promptu.
+
+    Odroznia sie od `ago()` brakiem "temu": to jest czas trwania, nie stempel.
+    """
+    if since_ms is None:
+        return "—"
+    s = max(0, int(round((now_ms - since_ms) / 1000.0)))
+    if s < 60:
+        return "chwilę"
+    m = s // 60
+    if m < 60:
+        return "%d min" % m
+    h = m // 60
+    if h < 24:
+        return "%d h %s min" % (h, _p2(m % 60))
+    return "%d d %d h" % (h // 24, h % 24)
+
+
 def pct(v):
     """31 -> "31", 30.5 -> "30,5". None zostaje None — o tym, co pokazac zamiast
     liczby, decyduje widok, bo w stanie `unknown` odpowiedzia jest slowo."""
