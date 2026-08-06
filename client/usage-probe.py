@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Sonda limitow Claude, uruchamiana z hooka Claude Code (PostToolUse async + Stop).
+"""Sonda limitow Claude + sygnalizator zablokowanej sesji. Oba z hookow Claude Code.
+
+DWIE FUNKCJE, JEDEN PROCES — i to jest zmierzone, nie estetyczne. Sygnalizator byl
+osobnym skryptem (`client/session-status.py`), przez co 9 z 10 jego zdarzen odpalalo
+DRUGIEGO CPythona obok tego, ktory i tak startowal dla sondy. Pomiar (100 przebiegow
+na wariant, przeplatane, mediana): dolozenie kodu sygnalizatora do tego procesu
+kosztuje 2,7 ms (95% CI 1,9-3,2), a osobny proces 41,9 ms (41,7-42,3). W skali doby,
+przy ~21 000 zdarzen: +57 s wobec +890 s. Dawne uzasadnienie rozdzialu ("+0,294 ms na
+kazda dopisana linie") bylo zawyzone ~71-krotnie — realnie 0,0041 ms/linia.
+
+Skutek uboczny, tez policzony: 9 z 13 wspolnych nazw bylo bajt w bajt identycznych,
+a `_extract_block` (~40 linii) roznil sie tylko komentarzem. Rozdzial WYMUSZAL duplikat.
 
 NIE wola api.anthropic.com. Zamiast tego zleca pomiar samemu Claude Code
 (`claude -p "/usage"`) i czyta wynik z dwoch miejsc, ktore ten zostawia na dysku.
@@ -30,18 +41,28 @@ Scalamy: struktura z cache + swieze procenty ze stdout nadpisane na wierzchu.
 Wynik ma DOKLADNIE ten sam ksztalt co dawna odpowiedz HTTP, wiec parser backendu
 nie wymaga zmian.
 
+SYGNALIZATOR (sekcja "alert" nizej) wykrywa moment, w ktorym Claude Code stanal
+i czeka na CZLOWIEKA: prompt o zgode, AskUserQuestion, ExitPlanMode. Kazda blokada to
+jeden plik w katalogu stanu; zbior tych plikow jest CALA prawda, a POST tylko
+powiadomieniem o zmianie, niosacym zbior w calosci. Odpala sie PRZED throttlem —
+alert nie moze czekac 60 s, a throttle sondy to 60 s. Wylacza go "session_status": false.
+
 Konfiguracja: %LOCALAPPDATA%\\claude-usage-monitor\\config.json (Windows)
               ~/.local/state/claude-usage-monitor/config.json (Linux)
     {"ingest_url": "https://usage.example.org/claude-usage/api/ingest",
      "ingest_token": "<token TEJ maszyny>",
      "edge_key": "<wspolny sekret brzegowy>",
      "throttle_sec": 60,
-     "claude_bin": "<opcjonalnie pelna sciezka do claude>"}
+     "claude_bin": "<opcjonalnie pelna sciezka do claude>",
+     "session_status": true,        # sygnalizator; false wylacza go w calosci
+     "alert_url": "https://usage.example.org/claude-usage/api/session-alert",
+     "toast": true,
+     "blocked_ttl_sec": 86400}
 Celowo plik lokalny, a nie repo — token maszyny nie ma prawa trafic do gita.
 """
 import sys, os, json, time, re
 
-SCRIPT_VERSION = 7
+SCRIPT_VERSION = 8
 
 # Znacznik dziedziczony przez proces potomny. `claude -p "/usage"` to normalna sesja
 # Claude Code — odpali hook Stop, ktory odpali sonde, ktora odpalilaby kolejnego
@@ -121,7 +142,11 @@ def _find(name, in_claude_dir=False):
 def _extract_block(text, key):
     """Wycina zbalansowany blok {...} po kluczu. Odporne na duplikaty kluczy roznjace sie
     wielkoscia liter (z:/... i Z:/...), na ktorych parsery calego pliku padaja —
-    ~/.claude.json REALNIE takie ma, json.load() na calosci sie na nim wywraca."""
+    ~/.claude.json REALNIE takie ma, json.load() na calosci sie na nim wywraca.
+
+    Dwoch wolajacych: `read_claude_json` (tozsamosc konta i cache pomiaru) oraz
+    `account_uuid` z sekcji alertu (do ktorego pasa panelu nalezy trojkat). Przed
+    scaleniem obu skryptow ta funkcja istniala w DWOCH kopiach."""
     i = text.find('"%s"' % key)
     if i < 0:
         return None
@@ -582,13 +607,18 @@ def ssl_context(cfg):
     return _ssl_ctx
 
 
-def post(cfg, body):
-    # Importy lokalne — sciezka zimna, raz na 60 s. `http.client` wciaga socket i ssl;
-    # te cztery moduly na gorze pliku kosztowaly ~23 ms przy KAZDYM przebiegu, takze tym,
-    # ktory konczy sie na throttlu. NIE przenosic w gore ani nie dodawac uzyc przed ta linia.
+def post(cfg, target, body):
+    """Jeden POST. `target` jawnie, bo wolajacych jest dwoch: ingest pomiaru
+    (`ingest_url`) i sygnalizator (`alert_url`). Oba uwierzytelnia ten sam token
+    maszyny i ten sam sekret brzegowy.
+
+    Importy lokalne — sciezka zimna. `http.client` wciaga socket i ssl; te cztery
+    moduly na gorze pliku kosztowaly ~23 ms przy KAZDYM przebiegu, takze tym, ktory
+    konczy sie na throttlu. NIE przenosic w gore ani nie dodawac uzyc przed ta linia.
+    """
     import http.client, urllib.parse
 
-    url = urllib.parse.urlsplit(cfg["ingest_url"])
+    url = urllib.parse.urlsplit(target)
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     if url.scheme == "https":
         conn = http.client.HTTPSConnection(url.netloc, timeout=5.0,
@@ -612,6 +642,512 @@ def _iso(epoch):
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(epoch)) + "Z"
 
 
+# =============================================================== alert: sygnalizator
+# Wykrywa, ze Claude Code stanal i czeka na czlowieka. Ta sekcja NIE dotyka niczego
+# z sondy poza wspolnymi pomocnikami (`_safe`, `load_config`, `_iso`, `_find`,
+# `_extract_block`, `ssl_context`, `post`).
+#
+# CO ZMIERZONO, I DLACZEGO KOD WYGLADA WLASNIE TAK (Claude Code 2.1.221, VS Code,
+# permission_mode=default, Windows; 224 zdarzenia filtrowane po session_id):
+#   * `PermissionRequest` odpala WYLACZNIE przy realnym pytaniu do czlowieka —
+#     auto-dopuszczone Read/Grep/Write/echo nie generuja go ani razu. Zero heurystyk.
+#   * `PermissionRequest` NIE MA `tool_use_id`. Stad klucz hybrydowy.
+#   * `tool_input` dla AskUserQuestion ZMIENIA sie miedzy wejsciem a wyjsciem (harness
+#     domerza odpowiedzi, 1326 -> 1649 B), wiec hash z tool_input nie moze byc jedynym
+#     kluczem. Te dwa narzedzia klucza sie po `tool_use_id` z PreToolUse.
+#   * NIC, co konczy wywolanie inaczej niz normalnym wykonaniem, nie generuje zdarzenia:
+#     odmowa przyciskiem, Esc na prompcie i Esc w trakcie dzialania — 5/5 przypadkow
+#     konczy sie na PreToolUse + PermissionRequest i niczym wiecej. `PermissionDenied`
+#     nie odpalil ani razu, `is_interrupt: true` okazalo sie nieosiagalne. Dlatego
+#     zamiatanie po prefiksie session_id jest OBOWIAZKOWE, a nie ostroznosciowe.
+#   * `Stop` NIE odpala na przerwanej turze, a odmowa konczy ture wlasnie jako
+#     przerwanie. Dlatego w liscie zamiatania pierwszy jest `UserPromptSubmit`.
+#   * `PostToolUse` nie jest gwarantowany (Edit na pliku planu: 0/6 domknietych, na
+#     innych plikach 4/4). Domyka to `PostToolBatch.tool_calls[]`.
+
+STATEDIR = os.path.join(OUTDIR, "session-status")
+POSTED = os.path.join(OUTDIR, "session-status-posted.txt")
+
+DEFAULT_TTL_S = 86400
+DETAIL_MAX = 120
+MAX_ENTRIES = 64            # sufit na wypadek awarii zamiatania; panel i tak pokazuje kilka
+
+# Te dwa narzedzia ZAWSZE blokuja, wiec PreToolUse nie daje przy nich falszywek —
+# a niesie `tool_use_id`, ktorego `PermissionRequest` nie ma.
+ENTER_TOOLS = {"AskUserQuestion": "question", "ExitPlanMode": "plan"}
+
+CLOSING_EVENTS = ("PostToolUse", "PostToolUseFailure")
+SWEEP_EVENTS = ("UserPromptSubmit", "Stop", "SessionEnd")
+
+_ACCT_CACHE = {}
+
+
+def account_uuid():
+    """`oauthAccount.accountUuid` z ~/.claude.json, z cache na mtime.
+
+    Czytane WYLACZNIE na sciezce wejscia (rzadkiej), wiec nie zastepuje
+    `read_claude_json` — ta czyta ten sam plik po throttlu i po znacznie wiecej.
+    Panel maluje trojkat obok konkretnej nazwy konta, wiec musi wiedziec, do ktorego
+    pasa alert nalezy; zasada 7 mowi, ze tozsamosc bierze sie stad i tylko stad.
+    """
+    path = _find(".claude.json")
+    if not path:
+        return None
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return None
+    hit = _ACCT_CACHE.get(path)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except Exception:
+        return None
+    block = _safe(_extract_block, text, "oauthAccount") or {}
+    uuid = block.get("accountUuid")
+    uuid = uuid if isinstance(uuid, str) else None
+    _ACCT_CACHE[path] = (mtime, uuid)
+    return uuid
+
+
+# --------------------------------------------------------------- nazwa projektu
+def _slug(path):
+    """Sciezka -> slug katalogu transkryptow. Kazdy znak spoza [A-Za-z0-9] to '-'.
+
+    Normalizacja obustronna, wiec ewentualna roznica w traktowaniu podkreslnika przez
+    Claude Code nas nie rozjedzie: ten sam filtr kladziemy takze na nazwe katalogu."""
+    return "".join(c if (c.isascii() and c.isalnum()) else "-"
+                   for c in os.path.normcase(path))
+
+
+def project_name(cwd, transcript_path):
+    """Nazwa projektu — z katalogu transkryptu, NIE z `basename(cwd)`.
+
+    Zmierzone: 38 z 73 sesji raportuje wiecej niz jedno `cwd` (w jednej sesji naraz
+    ...\\claude-usage-monitor, ...\\backend, ...\\frontend, ...\\frontend\\src — naglowek
+    pokazywalby "src"), a 27 z 51 roznych `cwd` to `...\\.claude\\worktrees\\agent-a<hex>`.
+
+    "Idz w gore do .git" tez jest zle: korzen worktree ma `.git` jako PLIK, wiec walk-up
+    staje na worktree i zwraca `agent-a00ce9ba287d12ab1`.
+
+    Transkrypty leza pod ~/.claude/projects/<slug PIERWOTNEGO cwd sesji>/, a ten katalog
+    zawiera zmierzone WYLACZNIE korzenie projektow. Odzyskujemy korzen, obcinajac segmenty
+    `cwd`, az slug prefiksu zgodzi sie z nazwa katalogu. Zero I/O na sciezce glownej.
+    """
+    if not isinstance(cwd, str) or not cwd:
+        return None
+    want = None
+    if isinstance(transcript_path, str) and transcript_path:
+        want = _slug(os.path.basename(os.path.dirname(transcript_path)))
+    path = os.path.normpath(cwd)
+    if want:
+        probe = path
+        while True:
+            if _slug(probe) == want:
+                return os.path.basename(probe) or probe
+            parent = os.path.dirname(probe)
+            if parent == probe:
+                break
+            probe = parent
+    # Zapas: katalog z `.git` jako KATALOGIEM (plik = worktree, ten nas nie interesuje).
+    probe = path
+    while True:
+        if _safe(os.path.isdir, os.path.join(probe, ".git")):
+            return os.path.basename(probe) or probe
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            return os.path.basename(path) or path
+        probe = parent
+
+
+# --------------------------------------------------------------- klucz wpisu
+def call_key(tool_name, tool_input, prompt_id):
+    """sha256(prompt_id | tool_name | json(tool_input)) [:16].
+
+    Uzywane tam, gdzie `tool_use_id` nie istnieje — czyli dla `PermissionRequest`.
+    Zmierzone jako stabilne dla Bash/Edit/Read/Grep/Write: 36 wywolan, zero kolizji,
+    dokladnie jeden tool_use_id na klucz. Znany przypadek zdegenerowany: dwa IDENTYCZNE
+    co do znaku wywolania w obrebie jednego prompt_id dziela klucz, wiec wyjscie
+    pierwszego zdejmie wpis drugiego. Rzadkie i tanie.
+    """
+    import hashlib
+    blob = "%s|%s|%s" % (prompt_id or "", tool_name or "",
+                         json.dumps(tool_input, sort_keys=True, ensure_ascii=False,
+                                    default=str))
+    return hashlib.sha256(blob.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _fname(session_id, agent_id, key):
+    return "%s__%s__%s.json" % (session_id, agent_id or "main", key)
+
+
+# --------------------------------------------------------------- katalog stanu
+def entries():
+    """Wszystkie wpisy: [(nazwa_pliku, mtime)]. `scandir`, NIGDY `os.stat(sciezka)`.
+
+    Zmierzone przeciw czytelnikowi w petli: `os.stat(path)` koliduje w 35% przy
+    maksymalnym obciazeniu, `scandir` + `DirEntry.stat()` w 0% — ten drugi jest
+    obslugiwany z rekordu enumeracji katalogu i nie otwiera niczego.
+    """
+    out = []
+    try:
+        with os.scandir(STATEDIR) as it:
+            for de in it:
+                if not de.name.endswith(".json"):
+                    continue
+                try:
+                    out.append((de.name, de.stat().st_mtime))
+                except OSError:
+                    continue
+    except OSError:
+        return []
+    return out
+
+
+def read_entry(name):
+    try:
+        with open(os.path.join(STATEDIR, name), "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def write_excl(name, payload):
+    """Zapis przez O_CREAT|O_EXCL. Zwraca True, gdy plik POWSTAL teraz.
+
+    Zmierzone: 0 twardych porazek na 10 978 prob przeciw czytelnikowi w petli.
+    Wariant "temp + os.replace" odpada, bo CPython otwiera bez FILE_SHARE_DELETE,
+    wiec uchwyt czytelnika blokuje `replace` i `remove` (zreprodukowane: WinError 5 / 32).
+    O_EXCL daje przy okazji zachowanie `since` za darmo i BEZ odczytu: FileExistsError
+    znaczy "ta blokada juz jest", wiec stempel pierwszego wejscia zostaje nietkniety.
+    """
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    flags |= getattr(os, "O_BINARY", 0)
+    try:
+        os.makedirs(STATEDIR, exist_ok=True)
+        fd = os.open(os.path.join(STATEDIR, name), flags, 0o600)
+    except FileExistsError:
+        return False
+    except Exception:
+        return False
+    try:
+        # ensure_ascii=False + utf-8 jawnie, jak log_local: bez tego cp1250 wywala sie
+        # na polskiej sciezce w `detail`.
+        os.write(fd, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+    except Exception:
+        pass
+    finally:
+        _safe(os.close, fd)
+    return True
+
+
+def drop(name):
+    """Kasowanie idempotentne. Jedyna krucha operacja w tej sekcji — uchwyt czytelnika
+    potrafi ja zablokowac, wiec trzy podejscia. Porazka to zawieszony alert, nie
+    zgubiony: kazde kolejne zdarzenie wyjscia probuje ponownie."""
+    path = os.path.join(STATEDIR, name)
+    for _ in range(3):
+        try:
+            os.remove(path)
+            return True
+        except FileNotFoundError:
+            return False
+        except OSError:
+            time.sleep(0.01)
+    return False
+
+
+def sweep_ttl(ttl_s, now):
+    """Granica smieci. Kasuje, NIGDY nie ukrywa — o tym, jak dlugo alert zajmuje ekran,
+    decyduje panel (`alert_takeover_sec`), nie ten prog. Wartosc pochodzi z recznie
+    edytowanego config.json, wiec smieci znacza domyslna, a nie wyjatek."""
+    try:
+        ttl_s = float(ttl_s)
+    except (TypeError, ValueError):
+        ttl_s = DEFAULT_TTL_S
+    for name, mtime in entries():
+        if now - mtime > ttl_s:
+            drop(name)
+
+
+# --------------------------------------------------------------- wysylka alertu
+def snapshot():
+    """Biezacy zbior wpisow maszyny, posortowany po `since`."""
+    out = []
+    for name, _mtime in sorted(entries()):
+        data = read_entry(name)
+        if data is None:
+            continue
+        data["key"] = name[:-5]
+        out.append(data)
+    out.sort(key=lambda e: e.get("since") or "")
+    return out[:MAX_ENTRIES]
+
+
+def _fingerprint(items):
+    return json.dumps([[e.get("key"), e.get("reason")] for e in items], sort_keys=True)
+
+
+def publish(cfg):
+    """POST tylko wtedy, gdy ZBIOR sie zmienil.
+
+    Znacznik zapisujemy DOPIERO po udanej wysylce, wiec nieudany POST powtorzy sie przy
+    nastepnym zdarzeniu. Ograniczenie znane i wpisane w projekt: zablokowana sesja nie
+    generuje kolejnych zdarzen, wiec POST zgubiony dokladnie na wejsciu czeka na
+    najblizszy ruch w tej albo innej sesji na tej maszynie.
+    """
+    items = snapshot()
+    finger = _fingerprint(items)
+    try:
+        with open(POSTED, "r", encoding="utf-8") as f:
+            if f.read() == finger:
+                return
+    except Exception:
+        pass
+    url = cfg.get("alert_url")
+    if not url or not cfg.get("ingest_token"):
+        return                      # tryb tylko lokalny — pliki i toast, bez sieci
+    body = {"entries": items, "sent_at": _iso(time.time()),
+            "script_version": SCRIPT_VERSION}
+    try:
+        code, _resp = post(cfg, url, body)
+    except Exception:
+        return
+    if code >= 300:
+        return
+    try:
+        os.makedirs(OUTDIR, exist_ok=True)
+        with open(POSTED, "w", encoding="utf-8") as f:
+            f.write(finger)
+    except Exception:
+        pass
+
+
+# --------------------------------------------------------------- toast lokalny
+TOAST_TITLES = {"permission": "Claude czeka na zgodę",
+                "question": "Claude ma pytanie",
+                "plan": "Claude czeka na akceptację planu"}
+
+
+def _xml(s):
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace("'", "&apos;").replace('"', "&quot;"))
+
+
+def toast(reason, project, detail):
+    """Powiadomienie Windows przez WinRT, bez zadnych modulow.
+
+    BurntToast nie jest zainstalowany, a wariant z `[xml]` z poradnikow nie dziala
+    (`Cannot find type [Windows.Data.Xml.Dom.XmlDocument]`). Ponizsze jest sprawdzone:
+    PowerShell 5.1, zero modulow, 394 ms. AUMID zarejestrowanego PowerShella jest nosny
+    — Windows po cichu odrzuca toasty z niezarejestrowanych AppID.
+
+    -EncodedCommand, NIE -Command: PowerShell 5.1 dekoduje wiersz polecenia strona
+    kodowa konsoli i polskie znaki wychodzily krzakami. Base64 z UTF-16LE tego nie
+    dotyczy i przy okazji znosi problem cytowania w `detail`.
+    """
+    if os.name != "nt":
+        return
+    import base64, subprocess
+    line1 = TOAST_TITLES.get(reason, "Claude czeka na Ciebie")
+    line2 = project or ""
+    if detail:
+        line2 = ("%s — %s" % (line2, detail))[:90] if line2 else detail[:90]
+    script = (
+        "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications,"
+        " ContentType=WindowsRuntime] > $null;"
+        "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument,"
+        " ContentType=WindowsRuntime] > $null;"
+        "$x = New-Object Windows.Data.Xml.Dom.XmlDocument;"
+        "$x.LoadXml('<toast><visual><binding template=\"ToastText02\">"
+        "<text id=\"1\">%s</text><text id=\"2\">%s</text>"
+        "</binding></visual></toast>');"
+        "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("
+        "'{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'"
+        ").Show((New-Object Windows.UI.Notifications.ToastNotification $x))"
+    ) % (_xml(line1), _xml(line2))
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    try:
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            # CREATE_NO_WINDOW | NEW_PROCESS_GROUP — jak w spawn_refresh. NIE dodawac
+            # DETACHED_PROCESS: wygrywa z CREATE_NO_WINDOW i konsola miga.
+            creationflags=0x08000000 | 0x00000200, close_fds=True)
+    except Exception:
+        pass
+
+
+# --------------------------------------------------------------- maszyna stanow
+_DETAIL_KEYS = ("command", "file_path", "path", "url", "pattern", "description",
+                "prompt", "plan")
+
+
+def detail_of(tool_name, tool_input):
+    if tool_name == "AskUserQuestion":
+        qs = (tool_input or {}).get("questions")
+        if isinstance(qs, list) and qs and isinstance(qs[0], dict):
+            for k in ("question", "header"):
+                v = qs[0].get(k)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()[:DETAIL_MAX]
+        return ""
+    if not isinstance(tool_input, dict):
+        return ""
+    for k in _DETAIL_KEYS:
+        v = tool_input.get(k)
+        if isinstance(v, str) and v.strip():
+            return " ".join(v.split())[:DETAIL_MAX]
+    return ""
+
+
+def enter(cfg, hook, reason, key):
+    session_id = hook.get("session_id")
+    if not session_id or not key:
+        return
+    name = _fname(session_id, hook.get("agent_id"), key)
+    tool_name = hook.get("tool_name")
+    entry = {
+        "session_id": session_id,
+        "agent_id": hook.get("agent_id"),
+        "agent_type": hook.get("agent_type"),
+        "reason": reason,
+        "tool": tool_name,
+        "detail": detail_of(tool_name, hook.get("tool_input")),
+        "project": project_name(hook.get("cwd"), hook.get("transcript_path")),
+        "cwd": hook.get("cwd"),
+        "since": _iso(time.time()),
+        "account_uuid": account_uuid(),
+        # Do diagnostyki: caly pomiar szedl w trybie `default`, a tryby
+        # auto-zatwierdzajace rozstrzygaja wywolanie PRZED warstwa promptu.
+        "permission_mode": hook.get("permission_mode"),
+    }
+    if not write_excl(name, entry):
+        return                              # ta blokada juz jest — bez toasta, bez POST-u
+    if cfg.get("toast", True):
+        toast(reason, entry["project"], entry["detail"])
+    publish(cfg)
+
+
+def _close_keys(hook, call):
+    """Oba kandydaty klucza dla jednego wywolania. Wyjscie nie musi wiedziec, ktorym
+    trybem wpis powstal — kasowanie jest idempotentne, wiec chybienie nic nie kosztuje."""
+    out = []
+    tuid = call.get("tool_use_id")
+    if tuid:
+        out.append(tuid)
+    out.append(call_key(call.get("tool_name"), call.get("tool_input"),
+                        hook.get("prompt_id")))
+    return out
+
+
+def leave(cfg, hook):
+    """Zdarzenie zamykajace. Zdarzenie z `agent_id` nigdy nie zamknie wpisu zapisanego
+    bez niego — segment agenta jest czescia nazwy pliku, wiec regula wynika z konstrukcji."""
+    if not entries():
+        return                              # sciezka goraca konczy sie tutaj
+    session_id = hook.get("session_id")
+    if not session_id:
+        return
+    calls = [hook]
+    if hook.get("hook_event_name") == "PostToolBatch":
+        calls = [c for c in (hook.get("tool_calls") or []) if isinstance(c, dict)]
+    hit = False
+    for call in calls:
+        for key in _close_keys(hook, call):
+            if drop(_fname(session_id, hook.get("agent_id"), key)):
+                hit = True
+    if hit:
+        publish(cfg)
+
+
+def sweep_session(cfg, hook, gc_cwd=False):
+    """Zamiatanie po prefiksie `<session_id>__`.
+
+    OBOWIAZKOWE, nie ostroznosciowe: to jedyny mechanizm gaszacy alert po odmowie
+    i po przerwaniu, bo zadne z nich nie generuje wlasnego zdarzenia. `UserPromptSubmit`
+    jest w tej liscie najwazniejszy, bo `Stop` nie odpala na przerwanej turze.
+
+    `SessionEnd` zamiata WYLACZNIE wlasny session_id: zmierzone, ze przychodzi ~raz na
+    minute z identyfikatorem dziecka `claude -p` odpalanego przez ten sam skrypt, wiec
+    zamiatanie globalne wycieraloby alerty co minute.
+    """
+    session_id = hook.get("session_id")
+    all_entries = entries()
+    if not all_entries:
+        return
+    prefix = ("%s__" % session_id) if session_id else None
+    hit = False
+    for name, _mtime in all_entries:
+        if prefix and name.startswith(prefix):
+            hit = drop(name) or hit
+            continue
+        if gc_cwd and hook.get("cwd"):
+            data = read_entry(name)
+            if data and data.get("cwd") == hook.get("cwd"):
+                # Ten sam projekt, inna sesja: poprzednie okno padlo w blokadzie.
+                hit = drop(name) or hit
+    if hit:
+        publish(cfg)
+
+
+def alert_shutdown(cfg):
+    """Wylaczone przez `session_status: false` — zgas to, co jeszcze wisi.
+
+    Sam `return` by nie wystarczyl: blokada trwajaca w chwili wylaczenia zostalaby na
+    panelu do serwerowego TTL (24 h), bo nikt juz nie wysle korekty. Po pierwszym takim
+    przebiegu katalog jest pusty i kazdy kolejny konczy sie na samym `scandir`.
+    """
+    biezace = entries()
+    if not biezace:
+        return
+    for name, _mtime in biezace:
+        drop(name)
+    publish(cfg)
+
+
+def alert_dispatch(cfg, hook):
+    """Wejscie sekcji alertu. Wolane PRZED throttlem, opakowane w `_safe`."""
+    if not cfg.get("session_status", True):
+        return alert_shutdown(cfg)
+
+    event = hook.get("hook_event_name")
+
+    if event == "PreToolUse":
+        # Bramka nazwa narzedzia jako PIERWSZA instrukcja: dla ~90% wywolan galaz
+        # konczy sie tutaj i nie dotyka dysku.
+        reason = ENTER_TOOLS.get(hook.get("tool_name"))
+        if reason is None:
+            return
+        return enter(cfg, hook, reason, hook.get("tool_use_id"))
+
+    if event == "PermissionRequest":
+        if hook.get("tool_name") in ENTER_TOOLS:
+            # Te dwa maja wlasne wejscie po `tool_use_id`. Kolejnosc PreToolUse vs
+            # PermissionRequest jest NIEGWARANTOWANA (zmierzone 20% inwersji), wiec
+            # dwa zrodla wejscia dla jednego wywolania daly by wyscig o dwa pliki.
+            return
+        return enter(cfg, hook, "permission",
+                     call_key(hook.get("tool_name"), hook.get("tool_input"),
+                              hook.get("prompt_id")))
+
+    if event in CLOSING_EVENTS or event == "PostToolBatch":
+        return leave(cfg, hook)
+
+    if event == "PermissionDenied":
+        # Zarejestrowany przez caly pomiar i nie odpalil ani razu — nie moze na nim
+        # stac zadna regula. Wpiety, bo nic nie kosztuje i zlapie odmowy klasyfikatora.
+        return leave(cfg, hook)
+
+    if event in SWEEP_EVENTS or event == "SessionStart":
+        _safe(sweep_ttl, cfg.get("blocked_ttl_sec", DEFAULT_TTL_S), time.time())
+        return sweep_session(cfg, hook, gc_cwd=(event == "SessionStart"))
+
+
 # --------------------------------------------------------------- main
 def main():
     t0 = time.perf_counter()
@@ -623,6 +1159,12 @@ def main():
 
     hook = _safe(json.loads, sys.stdin.read() or "{}") or {}
     cfg = load_config()
+
+    # PRZED throttlem. Alert ma dojsc natychmiast, a throttle sondy to 60 s — za tym
+    # progiem blokada byla by widoczna dopiero po minucie albo wcale.
+    # `_safe`, bo zasada 3: sonda nie ma prawa rzucic wyjatkiem, a sygnalizator nie ma
+    # prawa zepsuc pomiaru limitow.
+    _safe(alert_dispatch, cfg, hook)
 
     if throttled(int(cfg.get("throttle_sec", 60))):
         return 0
@@ -754,7 +1296,7 @@ def main():
         payload["backlog"] = backlog
 
     try:
-        code, resp = post(cfg, payload)
+        code, resp = post(cfg, cfg["ingest_url"], payload)
     except Exception:
         append_spool(record)
         return 0

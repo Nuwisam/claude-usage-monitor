@@ -16,12 +16,13 @@ konta — rotacji jednorazowego refresh tokenu.
 
 | Element | Stan |
 |---|---|
-| Sonda + hooki (`PostToolUse` async, `Stop`) | działa |
+| Sonda + hooki (12 zdarzeń, `async`) | działa |
 | Backend + MariaDB w Compose | działa |
 | Brama autoryzacji: `none` / `header` / `verify` | działa |
 | API odczytu, kontrakt v3 | działa |
 | UI — **Live** i **Historia** | działa |
 | Panele biurkowe przez SSE — AX206 i Turing rev A | działa |
+| Alert „Claude czeka na Ciebie" — toast + karta i trójkąt na panelu | działa; karta czeka na przeprojektowanie |
 
 Diagnostyka (zdarzenia, batche, maszyny, surowe payloady) została świadomie przy `curl` —
 patrz [docs/API.md](docs/API.md) § 10.
@@ -37,14 +38,15 @@ projektu. Instalacja na własnej maszynie nie wymaga niczego przed backendem.
 ```
 maszyna z Claude Code                              serwer
 ┌──────────────────────────────┐
-│ hook PostToolUse (async)     │
-│ hook Stop                    │
+│ 12 hooków (async), m.in.     │
+│ PostToolUse, PermissionRequest│
 │        ↓                     │      HTTPS + Bearer + X-Ingest-Key
 │ client/usage-probe.py        │ ───────────────────────────────────►  Apache
 │  · zleca `claude -p /usage`  │                                         │
-│  · czyta cache + stdout      │              /claude-usage/api/ingest ──► backend
-│  · throttle 60 s             │              /claude-usage/api/*     ──► backend (brama)
-│  · spool przy awarii         │              /claude-usage/          ──► backend (statyki)
+│  · czyta cache + stdout      │       /claude-usage/api/ingest        ──► backend
+│  · throttle 60 s             │       /claude-usage/api/session-alert ──► backend
+│  · spool przy awarii         │       /claude-usage/api/*             ──► backend (brama)
+│  · alert zablokowanej sesji  │       /claude-usage/                  ──► backend (statyki)
 └──────────────────────────────┘                          ┌──────────────┴──────────────┐
                                                           │ backend  FastAPI :8000       │
                                                           │   + zbudowany frontend       │
@@ -114,6 +116,14 @@ ale brak próbek" (awaria — mówimy „nie wiem").
 przełączasz konta przez `/login`, a `settings.json` jest wspólny — statyczny label przypisywałby
 połowę próbek do złego konta i cicho zatruwał historię obu.
 
+**Zablokowana sesja to sygnał, nie dana.** Gdy Claude czeka na Twoją zgodę, odpowiedź albo
+akceptację planu, tura po prostu stoi — i nic Ci tego nie powie, jeśli odszedłeś od biurka.
+Sonda podnosi wtedy toast lokalnie i wysyła alert na panel. Idzie on
+przez backend, bo **sesja może chodzić na maszynie zdalnej, a panel stoi lokalnie**, ale
+**nie trafia do bazy**: blokada gaśnie, gdy klikniesz „tak", więc tabela oznaczałaby migrację
+i cykl życia wierszy dla stanu, po którym nie ma zostać żaden ślad. Szczegóły:
+[docs/API.md § 3.2](docs/API.md), instalacja: [`client/README.md`](client/README.md#instalacja).
+
 ## Instalacja klienta na nowej maszynie
 
 **[`client/README.md` → Instalacja](client/README.md#instalacja).** Tam jest cała
@@ -121,9 +131,13 @@ procedura: wymagania, wydanie tokenu maszyny po stronie serwera, konfiguracja, h
 sprawdzający sekrety przed dotknięciem `settings.json`, przekierowanie, hooki i weryfikacja.
 Streszczenia tutaj celowo nie ma — rozjechałoby się z oryginałem.
 
-Sonda bez konfiguracji jest **nieszkodliwa**: mierzy i pisze do lokalnego
-`usage-samples.jsonl`, ale nie wysyła nic i nie potrzebuje serwera. Do obejrzenia tego logu
-wystarczy `python client/analyze-samples.py` — monitor nie jest do tego konieczny.
+Sonda bez konfiguracji **nie wysyła nic na zewnątrz**: mierzy i pisze do lokalnego
+`usage-samples.jsonl`, i nie potrzebuje serwera. Do obejrzenia tego logu wystarczy
+`python client/analyze-samples.py` — monitor nie jest do tego konieczny.
+
+Jedno zastrzeżenie, bo bywa niespodzianką: **sygnalizator zablokowanej sesji działa też bez
+konfiguracji** i na Windows podnosi wtedy toasty. Wysyłka milczy, powiadomienia nie. Gasi je
+`"session_status": false` w `config.json`, a sam toast `"toast": false`.
 
 ## Wdrożenie serwera
 
@@ -167,7 +181,7 @@ cd ../frontend && npm run typecheck
 cd ../panel && pytest
 ```
 
-271 testów backendu i 152 panelu, w tym normalizator i ścieżka zapisu uruchamiane na
+324 testy backendu i 319 panelu, w tym normalizator i ścieżka zapisu uruchamiane na
 **realnym payloadzie** z konta Max (`backend/tests/fixtures/usage_max.json`), nie na
 wymyślonym. Kwoty rozliczeniowe w fixture'ach są przeskalowane; procenty zostały
 oryginalne, więc `spend.percent` dalej zgadza się z `used/limit` obok.

@@ -29,8 +29,12 @@ jednorazowego refresh tokenu to główny udokumentowany wektor utraty konta
 
 **2. Zero ciężkich importów w kliencie.**
 Na górze pliku wolno tylko: `sys`, `json`, `os`, `time`, `re`.
-`socket`, `hashlib`, `http.client`, `urllib.parse` i `ssl` są dozwolone, ale **wyłącznie
-leniwie, za throttlem** — importowane w ciele `post()` i `main()`. Na górze kosztowały
+`socket`, `hashlib`, `http.client`, `urllib.parse`, `ssl`, `base64` i `subprocess` są
+dozwolone, ale **wyłącznie leniwie, poza ścieżką gorącą** — w ciele `post()`, `main()`
+oraz w gałęziach wejścia i wyjścia z blokady w sekcji alertu. Ta sekcja biegnie PRZED
+throttlem, więc nie jest „za throttlem" — jest za czymś innym: odpala się parę razy na
+blokadę, a nie przy każdym wywołaniu narzędzia. Ścieżka gorąca kończy się na jednym
+`scandir` i nie importuje niczego. Na górze te moduły kosztowały
 23 ms przy **każdym** odpaleniu hooka, także tym, który zaraz wychodzi na throttlu, czyli
 na zdecydowanej większości. Zmierzone: 59,5 → 35,7 ms mediana, na dwóch identycznych
 kopiach sondy różniących się tylko tą linią.
@@ -128,6 +132,9 @@ HTTP 200 i poprawnie wyglądającej odpowiedzi. Oba typy leżą obok siebie w `a
 ```
 client/     sonda (stdlib-only) + narzędzia analizy; zasady 1-3
               usage-probe.py — ŹRÓDŁO PRAWDY, kopie na maszynach są wydaniem
+                zawiera TAKŻE sygnalizator zablokowanej sesji (sekcja „alert"):
+                zmierzone 1,7 ms za dołożenie go do tego procesu wobec 41,9 ms
+                za osobny — patrz `client/README.md`
 backend/    FastAPI + SQLAlchemy async + Alembic; MariaDB; serwuje też statyki UI
   app/parsing.py     czyste funkcje, cała logika normalizacji  <- tu zaczynaj przy zmianach API
   app/freshness.py   czyste funkcje, cztery stany świeżości
@@ -140,6 +147,7 @@ frontend/   React 18 + Vite + TypeScript, bez Tailwinda i bez biblioteki wykres�
   src/lib/time.ts        stamp/atStamp — JEDYNE miejsce decyzji „czy dopisać dzień"
   src/mocks/             VITE_MOCKS=1: stany, których w produkcji nie da się wywołać
 docs/       API.md (kontrakt), RUNBOOK.md (obsługa i diagnostyka)
+              PANEL-ALERT-HANDOUT.md + handout/ — materiał do przeprojektowania karty alertu
 deploy/     szablon vhosta Apache; sekret podstawiany przy deployu, NIE w repo
 ```
 

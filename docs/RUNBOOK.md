@@ -84,6 +84,10 @@ i porównaj status z wierszami o 401/403 w „Typowe problemy" niżej.
 | Nagłówek UI pokazuje **`kontrakt vN ≠ vM`** | Backend i frontend rozjechały się wersją kontraktu. Najpierw sprawdź, czy `CONTRACT_VERSION` w `app/services/status.py` i w `frontend/src/api/types.ts` są **równe w kodzie** — podbicie samego backendu daje dokładnie ten objaw przy poprawnych danych. Dopiero potem `docker compose up -d --build` (różne commity w obrazie) |
 | Historia daje **500**, w logu `can't subtract offset-naive and offset-aware datetimes` | Parametr `from`/`to` przyszedł ze strefą (przeglądarka wysyła `toISOString()`), a backend liczy na naiwnym UTC. Parametry dat muszą mieć typ `NaiveUtcDt` z `app/schemas.py`, nie `datetime` |
 | **Liczba próbek rośnie przy każdym pomiarze** mimo braku zmian | Zepsuty dedup. Sprawdź, czy porównanie `resets_at` idzie przez `same_reset_window` (tolerancja), a nie na równość — granica okna kołysze się o ~2 s i porównanie dosłowne wyłącza dedup, guard monotoniczności i granice resetu naraz |
+| `POST /api/session-alert` daje **403** (HTML od Apache) | W vhoście brakuje bloku `<Location /claude-usage/api/session-alert>` z filtrem `X-Ingest-Key`. Ingest działa, bo ma własny blok — te dwie ścieżki mają osobne reguły. Wzorzec: `deploy/apache/claude-usage-monitor-include.conf.example` |
+| **Karta albo trójkąt nie gasną** na panelu | Zawieszony wpis stanu: sesja padła w blokadzie, a odmowa i Esc nie generują żadnego zdarzenia. Gaśnie sam przy najbliższej wiadomości w tej sesji (`UserPromptSubmit`). Na żądanie: `del %LOCALAPPDATA%\claude-usage-monitor\session-status\*` albo `"session_status": false` w `config.json`, co przy okazji wysyła pusty zbiór |
+| **Toasty wyskakują na świeżo postawionej maszynie**, choć nic nie skonfigurowano | Zamierzone: sygnalizator działa też bez `config.json` — pisze pliki stanu i podnosi powiadomienia, milknie tylko wysyłka. Wyłącza go `"session_status": false`, sam toast `"toast": false` |
+| **Alert nie dociera, choć pomiar tak** | Sprawdź kolejno: `alert_url` w `config.json`, blok Apache (wiersz wyżej), a potem czy panel ma `"session_alerts": true` w `panel.json`. To dwie osobne flagi na dwóch maszynach: `session_status` gasi ŹRÓDŁO, `session_alerts` WYŚWIETLANIE |
 
 ## Backup
 
@@ -126,10 +130,27 @@ która maszyna chodzi na którym kodzie — bez podbicia dwie różne sondy są 
 ## Wyłączenie zbierania
 
 ```powershell
-# jedna maszyna: usuń albo zmień nazwę config.json  -> tryb tylko lokalny
+# jedna maszyna: usuń albo zmień nazwę config.json  -> przestaje WYSYŁAĆ
 Rename-Item "$env:LOCALAPPDATA\claude-usage-monitor\config.json" config.json.off
-# albo całkiem: usuń bloki PostToolUse i Stop z ~/.claude/settings.json
+# albo całkiem: usuń z ~/.claude/settings.json WSZYSTKIE DWANAŚCIE bloków sondy
 ```
+
+**Nie wystarczy usunąć `PostToolUse` i `Stop`** — po scaleniu z sygnalizatorem sonda wisi na
+dwunastu zdarzeniach (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
+`PostToolUseFailure`, `PostToolBatch`, `SubagentStop`, `Stop`, `Notification[idle_prompt]`,
+`PermissionRequest`, `PermissionDenied`, `SessionEnd`) i po zdjęciu dwóch odpala się dalej
+z pozostałych dziesięciu.
+
+**Zmiana nazwy `config.json` nie ucisza toastów.** Sygnalizator zablokowanej sesji domyślnie
+działa też bez konfiguracji: pisze pliki stanu i podnosi powiadomienia Windows, milknie tylko
+wysyłka. Żeby zgasić sam alert, nie ruszając pomiaru:
+
+```powershell
+# w config.json:  "session_status": false
+```
+
+Wyłączenie **gasi też to, co akurat wisi** — przy pierwszym zdarzeniu kasuje wpisy i wysyła
+jeden pusty zbiór, więc trójkąt znika z panelu od razu, a nie po dobie.
 
 Po stronie serwera unieważnienie pojedynczej maszyny to usunięcie jej wpisu z `INGEST_TOKENS`
 w `.env` + `docker compose up -d`. **Nie `restart`** — `INGEST_TOKENS` czytane jest przy
@@ -203,7 +224,8 @@ wyświetlacz, ten drugi program musi stać. Po dołożeniu drugiego oba programy
 wtedy **każdy trzeba przypiąć do konkretnego egzemplarza** — oba mają ten sam numer
 seryjny `WCH32` (stała firmware'u), a Windows wyprowadza z niego zarówno ID instancji,
 jak i `ContainerID`, więc te wartości też będą identyczne. Rozróżnia je wyłącznie łańcuch
-portów z libusb-1.0 (`"device": {"port_path": "3.4"}`), wypisywany przez `python -m panel
+portów z libusb-1.0 (`"panels": [{"backend": "ax206", "port_path": "3.4"}]`; stary,
+jednoekranowy kształt `"device": {…}` jest nadal migrowany), wypisywany przez `python -m panel
 --list`. Stare `"location": "Port_#0004.Hub_#0005"` daje teraz błąd konfiguracji:
 człon `Hub_#` był licznikiem enumeracji i potrafił przeskoczyć bez ruszania wtyczki.
 Który moduł jest który, potwierdzaj `--identify`.

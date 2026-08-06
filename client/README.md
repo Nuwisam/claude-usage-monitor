@@ -49,8 +49,25 @@ normalny, płatny turn modelu. Sonda wykrywa to po `num_turns>0` i taki zrzut od
 
 | Plik | Rola |
 |---|---|
-| `usage-probe.py` | **Źródło prawdy.** Sonda wpinana w hooki — tu się ją edytuje |
+| `usage-probe.py` | **Źródło prawdy.** Sonda **i** sygnalizator zablokowanej sesji — tu się je edytuje |
 | `analyze-samples.py` | Analiza lokalnego logu — tempo zmian, błędy, konta |
+
+**Dlaczego jeden plik, a nie dwa.** Sygnalizator był osobnym skryptem wpiętym w dziesięć
+zdarzeń, z których **siedem** zajmowała już sonda — a że są to `PreToolUse` i `PostToolUse`,
+czyli te odpalane przy każdym wywołaniu narzędzia, w **przytłaczającej większości przebiegów**
+startowały dwa CPythony zamiast jednego. Zmierzone (100 przebiegów na wariant, przeplatane,
+mediana): dołożenie kodu sygnalizatora do procesu sondy kosztuje **2,7 ms** (95% CI 1,9–3,2),
+a osobny proces **41,9 ms** (41,7–42,3). Po faktycznym scaleniu kontrola dała **1,7 ms** —
+mniej niż prognoza, bo scalenie usunęło duplikaty (+542 linie zamiast +648). W skali doby,
+przy ~21 000 zdarzeń, licząc ze zmierzonych 1,7 ms: **+36 s** zamiast **+890 s**.
+
+Poprzednie uzasadnienie rozdziału — *„+0,294 ms na każdą linię dopisaną do sondy"* — było
+**zawyżone ~71-krotnie**; realnie 0,0041 ms/linię. Rozdział wymuszał przy tym duplikat:
+z 13 nazw wspólnych obu plikom 9 było bajt w bajt identycznych, a `_extract_block` (~40 linii)
+różnił się wyłącznie komentarzem.
+
+Konsekwencja: **alerty wymagają sondy.** Nie ma już osobnego skryptu dla maszyny, która chciałaby
+powiadomienia bez pomiaru limitów.
 
 Tutaj jest **źródło**: ładuje je `backend/tests/test_probe_parsing.py` po sztywnej ścieżce
 i tutaj trafiają zmiany. Każda kopia rozdana na maszyny jest **wydaniem** i **może być
@@ -125,7 +142,9 @@ Katalog danych sonda wyprowadza z `%LOCALAPPDATA%` / `~/.local/state` w czasie d
 **nie** ze swojego położenia — więc nie ma znaczenia, gdzie leży sam skrypt.
 
 Bez `config.json` sonda działa w **trybie tylko lokalnym**: mierzy i loguje, nic nie wysyła.
-To jest legalny stan, nie awaria.
+To jest legalny stan, nie awaria. Sygnalizator zablokowanej sesji (krok 7) jest wtedy
+**włączony** i na Windows podnosi toasty — milknie tylko wysyłka. Wyłącza go
+`"session_status": false`.
 
 ### 3. Handshake — sekrety sprawdzamy przed dotknięciem `settings.json`
 
@@ -173,7 +192,7 @@ except Exception:                  # NIE OSError — patrz niżej
 Łapka jest **szeroka celowo**. `except OSError` łapie zerwany udział sieciowy i uśpiony
 dysk, ale nie łapie obciętego zapisu: niepełne źródło pod `SRC` daje `SyntaxError` z `compile()`
 w `runpy`, a to nie jest `OSError` — traceback szedłby wtedy do hooka przy każdym
-z dziewięciu zdarzeń, aż ktoś zauważy. `SystemExit` jest `BaseException`, więc
+z dwunastu zdarzeń, aż ktoś zauważy. `SystemExit` jest `BaseException`, więc
 `sys.exit(main())` z sondy nadal przechodzi tędy na wylot i kod wyjścia się nie zmienia.
 Nic ponad to nie jest ukrywane: ciało sondy ma własne `except Exception`, więc ta łapka
 odpowiada wyłącznie za awarie **ładowania**.
@@ -222,9 +241,10 @@ Każdy wpis jest identyczny — różni je wyłącznie zdarzenie, pod które tra
 Na Linuksie i macOS ten sam wpis z `python3` i ścieżką
 `/home/<user>/.local/state/claude-usage-monitor/usage-probe.py`.
 
-Zdarzeń jest **dziewięć**: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
-`PostToolUseFailure`, `PostToolBatch`, `SubagentStop`, `Stop` oraz `Notification`
-z `"matcher": "idle_prompt"`. W całości:
+Zdarzeń jest **dziewięć** dla samego pomiaru: `SessionStart`, `UserPromptSubmit`, `PreToolUse`,
+`PostToolUse`, `PostToolUseFailure`, `PostToolBatch`, `SubagentStop`, `Stop` oraz `Notification`
+z `"matcher": "idle_prompt"`. Sygnalizator zablokowanej sesji dokłada trzy — patrz krok 7.
+W całości:
 
 ```json
 "hooks": {
@@ -273,6 +293,71 @@ wygląda więc na pustą — nie diagnozuj przed drugim uruchomieniem.
 Wyłączenie albo odinstalowanie: [`docs/RUNBOOK.md`](../docs/RUNBOOK.md#wyłączenie-zbierania),
 sekcja „Wyłączenie zbierania".
 
+### 7. Sygnalizator zablokowanej sesji
+
+Sonda wykrywa też moment, w którym Claude Code stanął i **czeka na Ciebie**: prośba o zgodę
+na narzędzie, `AskUserQuestion`, `ExitPlanMode`. Podnosi wtedy toast na tej maszynie i wysyła
+alert do monitora, żeby panel na biurku pokazał kartę i czerwony trójkąt.
+
+Nie ma osobnego skryptu ani drugiego przekierowania — to ta sama sonda, ten sam proces.
+
+**Konfiguracja** — cztery klucze dopisane do istniejącego `config.json`. Token i edge key są
+**te same**, bo autoryzuje się ta sama maszyna:
+
+```json
+{
+  "session_status": true,
+  "alert_url": "https://usage.example.org/claude-usage/api/session-alert",
+  "toast": true,
+  "blocked_ttl_sec": 86400
+}
+```
+
+- **`session_status`** — wyłącznik całości, domyślnie włączony. `false` gasi pliki stanu,
+  toast i wysyłkę; pomiar limitów działa dalej. Wyłączenie **gasi też to, co akurat wisi**:
+  przy pierwszym zdarzeniu kasuje wpisy i wysyła jeden pusty zbiór, więc trójkąt na panelu
+  znika od razu, a nie po dobie.
+- Bez **`alert_url`** sygnalizator pracuje **tylko lokalnie**: pisze pliki stanu i podnosi
+  toast, nic nie wysyła. To legalny stan i przy okazji kanał awaryjny — toast dociera nawet
+  wtedy, gdy serwer leży.
+- **`"toast": false`** wyłącza samo powiadomienie; alerty na panel jadą dalej.
+
+Po stronie panelu jest **osobna** flaga `session_alerts` w `panel.json` i tak ma być: sonda
+stoi na maszynie z sesją, panel na biurku, a to bywają różne maszyny. `session_status` gasi
+**źródło**, `session_alerts` **wyświetlanie**.
+
+**Hooki** — do dziewięciu zdarzeń sondy dochodzą **trzy**, w tej samej postaci:
+
+```json
+"PermissionRequest":  [{"hooks": [{"type": "command", "async": true, "timeout": 10, "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}],
+"PermissionDenied":   [{"hooks": [{"type": "command", "async": true, "timeout": 10, "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}],
+"SessionEnd":         [{"hooks": [{"type": "command", "async": true, "timeout": 10, "command": "python \"C:/Users/<user>/AppData/Local/claude-usage-monitor/usage-probe.py\""}]}]
+```
+
+Razem **dwanaście** zdarzeń. `PermissionRequest` jest hookiem **decyzyjnym** — kontrakt brzmi
+„exit 0 bez JSON-a na stdout = oddaj decyzję człowiekowi", a sonda nigdy nic nie wypisuje
+(pilnuje tego `test_sonda_milczy_na_stdout_przy_permission_request`).
+
+**`Notification` NIE jest tu używane.** Zmierzone: w rozszerzeniu VS Code nie odpala się —
+zero wystąpień na 2 395 próbkach, potwierdza to niezależnie zgłoszenie
+[#29928](https://github.com/anthropics/claude-code/issues/29928). Payload i tak nie ma
+`tool_name` ani `tool_use_id`, więc nie dałoby się po nim domknąć wpisu.
+`PermissionRequest` pokrywa wszystkie trzy stany i odpala **wyłącznie** wtedy, gdy człowiek
+jest naprawdę pytany.
+
+**Weryfikacja:**
+
+1. Wywołaj coś zza bramki uprawnień (np. `Bash` poza katalogiem projektu) i **nie
+   odpowiadaj**. W `%LOCALAPPDATA%\claude-usage-monitor\session-status\` musi pojawić się
+   plik `<session_id>__main__<klucz>.json`, a na ekranie toast.
+2. Odpowiedz „tak" — plik znika.
+3. Odpowiedz „nie" albo naciśnij Esc — plik **zostaje** (odmowa nie generuje żadnego
+   zdarzenia, to zmierzone) i znika dopiero, gdy napiszesz kolejną wiadomość.
+4. Panel: karta na pełnym ekranie, po `alert_takeover_sec` (domyślnie 5 min) czerwony
+   trójkąt obok nazwy konta.
+
+Furtka awaryjna, gdyby coś się zawiesiło: `del %LOCALAPPDATA%\claude-usage-monitor\session-status\*`.
+
 ## Zasady, których nie wolno złamać
 
 **1. Żadnego żądania do `api.anthropic.com`.** Ani jednego. To jest cały sens wersji 3.
@@ -284,12 +369,20 @@ odczytu. Linia podziału leży przy **użyciu** tokena, nie przy odczycie pliku.
 **3. Nigdy nie wołamy endpointu tokenowego.** Odświeżanie należy do Claude Code.
 
 **4. Zero ciężkich importów w ścieżce gorącej.** Tylko biblioteka standardowa. Na górze
-pliku stoi wyłącznie `sys, os, json, time, re` — reszta jest lokalna, w gałęziach
-wykonywanych raz na 60 s: `shutil` i `subprocess` w pomiarze przez CLI, `ssl`
-w budowie kontekstu, `http.client` z `urllib.parse` w `post()`, `socket` z `hashlib`
-przy składaniu rekordu. Te cztery ostatnie zeszły z góry w wersji 7 i były warte 23 ms
-na każdym przebiegu. **Nie przenosić ich w górę ani nie dodawać użyć przed linią importu**
-— `NameError`/`UnboundLocalError` połknie tu zasada 5 i maszyna przestanie raportować
+pliku stoi wyłącznie `sys, os, json, time, re` — reszta jest lokalna, w gałęziach, których
+ścieżka gorąca **nie dotyka**: `shutil` i `subprocess` w pomiarze przez CLI, `ssl` w budowie
+kontekstu, `http.client` z `urllib.parse` w `post()`, `socket` z `hashlib` przy składaniu
+rekordu, `hashlib` w `call_key`, `base64` z `subprocess` w `toast()`. Te cztery z `post()`
+i `record` zeszły z góry w wersji 7 i były warte 23 ms na każdym przebiegu.
+
+Uwaga po scaleniu: importy sekcji alertu **nie** są „za throttlem" — sygnalizator biegnie
+przed nim. Są za czymś innego rodzaju: odpalają się wyłącznie przy WEJŚCIU w blokadę i przy
+WYJŚCIU z niej, czyli parę razy na blokadę, a nie przy każdym wywołaniu narzędzia. Ścieżka
+gorąca (`PostToolUse` przy pustym katalogu stanu) kończy się na jednym `scandir` i nie
+importuje niczego.
+
+**Nie przenosić ich w górę ani nie dodawać użyć przed linią importu** —
+`NameError`/`UnboundLocalError` połknie tu zasada 5 i maszyna przestanie raportować
 bez jednego objawu.
 
 **5. Nigdy nie rzuca wyjątkiem.** `except: sys.exit(0)` na najwyższym poziomie.
@@ -329,7 +422,9 @@ python client/analyze-samples.py          # tempo zmian, błędy, konta, przeł�
 Pliki robocze w `%LOCALAPPDATA%\claude-usage-monitor\`:
 `usage-samples.jsonl` (log), `spool.jsonl` (zaległości), `last-probe.txt` (throttle),
 `usage-cli.json` (zrzut stdout z `/usage`), `config.json`, `usage-probe.py` (**przekierowanie**
-do źródła, nie sonda — patrz Instalacja).
+do źródła, nie sonda — patrz Instalacja), `session-status\` (po jednym pliku na trwającą
+blokadę) i `session-status-posted.txt` (odcisk ostatnio wysłanego zbioru — stąd wiadomo,
+że nie trzeba wysyłać ponownie).
 
 Pole `measurement` w każdym wpisie logu mówi, skąd wzięty jest pomiar: `source`
 (`cli_merged` / `cli_usage_cache`), `cache_age_s`, `fresh_age_s`, `fresh_at` (czas zrzutu),
