@@ -301,6 +301,23 @@ alert do monitora, żeby panel na biurku pokazał kartę i znacznik przy koncie.
 
 Nie ma osobnego skryptu ani drugiego przekierowania — to ta sama sonda, ten sam proces.
 
+**Co przy tym czyta** (poza `config.json` i własnym katalogiem stanu), zawsze tylko do odczytu
+i wyłącznie w gałęzi zamiatania, czyli na `UserPromptSubmit`, `Stop`, `SessionEnd`
+i `SessionStart` — i tylko wtedy, gdy katalog stanu **nie jest pusty**:
+
+- **`~/.claude/sessions/`** (albo `$CLAUDE_CONFIG_DIR/sessions/`) — rejestr żywych sesji, który
+  Claude Code prowadzi sam: plik `<pid>.json` z polem `sessionId`. Wpis blokady sesji, której
+  w rejestrze już nie ma, jest wpisem po sesji, która nie żyje, i wtedy gaśnie. Sonda **nigdy**
+  nie sprawdza pidów: `os.kill(pid, 0)` na Windows mapuje się na `TerminateProcess`, czyli
+  ubijałaby sesje Claude Code. Liczy się sama obecność rekordu.
+- **transkrypt sesji** (`~/.claude/projects/<slug>/<session_id>.jsonl`, dla subagenta
+  `…/<session_id>/subagents/agent-<agent_id>.jsonl`) — ostatnie 32 KB, żeby sprawdzić, czy
+  wywołanie ma już `tool_result`. Uchwyt trzymany na czas jednego odczytu i nic dłużej.
+
+Gdy któregokolwiek z tych źródeł nie da się przeczytać w całości, sonda **nie kasuje niczego** —
+„nie wiem" nigdy nie znaczy „pusto" — i zostawia jedną linię w `usage-samples.jsonl`
+(`alert_skip`), żeby dało się odróżnić zepsuty mechanizm od braku pracy.
+
 **Konfiguracja** — cztery klucze dopisane do istniejącego `config.json`. Token i edge key są
 **te same**, bo autoryzuje się ta sama maszyna:
 
@@ -351,8 +368,14 @@ jest naprawdę pytany.
    odpowiadaj**. W `%LOCALAPPDATA%\claude-usage-monitor\session-status\` musi pojawić się
    plik `<session_id>__main__<klucz>.json`, a na ekranie toast.
 2. Odpowiedz „tak" — plik znika.
-3. Odpowiedz „nie" albo naciśnij Esc — plik **zostaje** (odmowa nie generuje żadnego
-   zdarzenia, to zmierzone) i znika dopiero, gdy napiszesz kolejną wiadomość.
+3. Odpowiedz „nie" albo naciśnij Esc — plik **zostaje**, bo odmowa nie generuje żadnego
+   zdarzenia hooka (zmierzone 5/5). Znika przy najbliższym zdarzeniu zamiatania, i to
+   **dowolnej** sesji na tej maszynie, nie tylko tej zablokowanej: odmowa i Esc zapisują
+   w transkrypcie `tool_result`, a sonda czyta ogon 32 KB transkryptu każdego wpisu
+   (`closed_by_transcript`). To jedyna droga dla sesji, która po odmowie **zamilkła** —
+   `Stop` nie odpala na przerwanej turze, więc bez tego wpis wisiałby do TTL 24 h.
+   Nie domknie się w ten sposób wpis, którego rekord `tool_use` nie mieści się w ogonie
+   (`Write` z dużą treścią, ~1,3% przypadków) — taki czeka na TTL.
 4. Panel: karta na pełnym ekranie, po `alert_takeover_sec` (domyślnie 5 min) znacznik
    akcentu przy nazwie konta. Okno należy do **zbioru**: jeśli w międzyczasie zablokuje
    się druga sesja, karta zostanie — z obiema blokadami — dopóki i ta druga się nie wypali.

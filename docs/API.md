@@ -235,12 +235,16 @@ X-Ingest-Key: <INGEST_EDGE_KEY>
    "project": "claude-usage-monitor", "tool": "Bash", "detail": "git status",
    "since": "2026-08-05T21:00:00Z", "account_uuid": "…", "session_id": "…",
    "agent_id": null, "agent_type": null, "permission_mode": "default"}],
- "sent_at": "2026-08-05T21:00:01Z", "script_version": 9}
+ "sent_at": "2026-08-05T21:00:01Z", "script_version": 10}
 
 200 {"ok": true, "machine": "desktop", "accepted": 1, "subscribers": 1}
 ```
 
-Sonda wysyła **snake_case**, tak jak wygląda wpis na dysku; modele przyjmują obie formy
+Sonda wysyła **snake_case**, tak jak wygląda wpis na dysku — z jednym wyjątkiem: pola
+**lokalne** (`transcript_path`, `prompt_id`, `registry_seen`) `snapshot()` zdejmuje przed
+wysyłką. Służą wyłącznie do zgaszenia blokady po stronie klienta: dwa pierwsze do domykania
+z transkryptu, `registry_seen` do reguły śmierci z rejestru sesji harnessu. `transcript_path`
+niesie przy okazji nazwę katalogu domowego człowieka. Modele przyjmują obie formy
 (`populate_by_name`), więc camelCase też przejdzie. Na wyjściu, w ramce `alert`, pola są już
 camelCase jak w całej reszcie kontraktu.
 

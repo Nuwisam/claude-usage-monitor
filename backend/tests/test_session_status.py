@@ -15,6 +15,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import time
 from pathlib import Path
 
@@ -34,6 +35,10 @@ def ss(tmp_path, monkeypatch):
     mod.STATEDIR = str(tmp_path / "session-status")
     mod.POSTED = str(tmp_path / "posted.txt")
     mod.CONFIG = str(tmp_path / "config.json")
+    # Rejestr sesji harnessu tez do tmp_path. Domyslnie katalog NIE ISTNIEJE, czyli zbior
+    # zywych sesji jest "nie wiem" i regula smierci nie biegnie — testy, ktore jej nie
+    # dotycza, przechodza ta sama sciezka co dotad.
+    mod.REGDIR = str(tmp_path / "sessions")
     # Sciezki sondy tez do tmp_path: `main()` jest tu wolane i nie ma prawa dotknac
     # prawdziwego stanu maszyny ani odpalic `claude -p`.
     mod.THROTTLE_FILE = str(tmp_path / "last-probe.txt")
@@ -66,6 +71,19 @@ def hook(event, **kw):
 
 def names(ss):
     return sorted(n for n, _ in ss.entries())
+
+
+def rejestr(ss, *session_ids):
+    """Rekordy `<pid>.json` w podstawionym rejestrze harnessu.
+
+    Wypelniamy PRZED `alert_dispatch`: `registry_seen` zapisuje sie w `enter()`, a `O_EXCL`
+    nie pozwoli tego potem poprawic."""
+    os.makedirs(ss.REGDIR, exist_ok=True)
+    for i, sid in enumerate(session_ids):
+        pid = 1000 + i
+        with open(os.path.join(ss.REGDIR, "%d.json" % pid), "w", encoding="utf-8") as f:
+            json.dump({"pid": pid, "sessionId": sid, "kind": "interactive",
+                       "cwd": r"Z:\projects\x", "version": "2.1.223"}, f)
 
 
 # --------------------------------------------------------------------- maszyna stanow
@@ -184,20 +202,161 @@ def test_zamiatanie_gasi_alert_po_odmowie(ss, event):
 
 def test_zamiatanie_nie_rusza_cudzej_sesji(ss):
     """`SessionEnd` przychodzi ~raz na minute z identyfikatorem dziecka `claude -p`
-    odpalanego przez sonde. Zamiatanie globalne wycieraloby alerty co minute."""
+    odpalanego przez sonde. Zamiatanie globalne wycieraloby alerty co minute.
+
+    Rejestr podstawiamy jawnie i obie sesje w nim SA — inaczej przypadek przechodzilby
+    tylko dlatego, ze zbior zywych sesji jest nieznany, i nie mowilby nic."""
+    rejestr(ss, SID, "dziecko-claude-p")
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
                           tool_input={"command": "ls"}))
     ss.alert_dispatch(CFG, hook("SessionEnd", session_id="dziecko-claude-p"))
     assert len(names(ss)) == 1
 
 
-def test_sessionstart_zbiera_sierote_po_tym_samym_projekcie(ss):
-    """Zabite okno VS Code w trakcie blokady zostawia wpis, ktorego nikt juz nie
-    zamknie. Nastepny start sesji w TYM SAMYM katalogu go zbiera."""
-    ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
-                          tool_input={"command": "ls"}))
-    ss.alert_dispatch(CFG, hook("SessionStart", session_id="nowa-sesja"))
+# --------------------------------------------------- smierc wpisu z rejestru
+# Rejestr harnessu (`~/.claude/sessions/<pid>.json`) jest jedynym zrodlem wiedzy o tym, czy
+# sesja jeszcze zyje. Nigdy `os.kill` — na Windows to `TerminateProcess`.
+#
+# Zdarzenie zamiatajace ma INNY `session_id` niz wpis i NIE jest `SessionStart`/`SessionEnd`
+# (na tych dwoch regula nie biegnie), inaczej przypadek przechodzi inna sciezka.
+def wpis_obcej_sesji(ss, sid="obca-sesja", w_rejestrze=True):
+    """Wpis sesji `sid`, powstaly gdy ta sesja BYLA w rejestrze (czyli z `registry_seen`)."""
+    if w_rejestrze:
+        rejestr(ss, sid, SID)
+    else:
+        rejestr(ss, SID)
+    ss.alert_dispatch(CFG, hook("PermissionRequest", session_id=sid, tool_name="Bash",
+                                tool_input={"command": "ls"}))
+    return names(ss)[0]
+
+
+def zabij_rekord(ss, sid):
+    """Usuwa z rejestru rekord tej sesji — tak jak robi to harness po wyjsciu procesu.
+
+    Uchwyt zamykamy PRZED `os.remove`: Windows nie pozwala skasowac otwartego pliku
+    (WinError 32) — ta sama pulapka, ktora `drop()` obchodzi trzema podejsciami."""
+    do_usuniecia = []
+    for f in os.listdir(ss.REGDIR):
+        p = os.path.join(ss.REGDIR, f)
+        with open(p, encoding="utf-8") as fh:
+            if json.load(fh).get("sessionId") == sid:
+                do_usuniecia.append(p)
+    for p in do_usuniecia:
+        os.remove(p)
+
+
+def test_wpis_sesji_bez_rekordu_ginie_i_jest_publikowany(ss):
+    """Zamknieta karta nie odpala zadnego hooka, ale jej rekord w rejestrze znika (zmierzone
+    <=5 s przy zamknieciu okna, 626 ms po zabiciu procesu — usuwa go sam harness)."""
+    nazwa = wpis_obcej_sesji(ss)
+    zabij_rekord(ss, "obca-sesja")
+    ss.alert_dispatch(CFG, hook("Stop"))
+    assert names(ss) == [], nazwa
+    assert ss.wyslane[-1]["entries"] == [], "opustoszenie zbioru MUSI dojsc do panelu"
+
+
+def test_wpis_sesji_z_rekordem_zostaje(ss):
+    """Kontrola negatywna: czlowiek nadal czeka w tamtej karcie."""
+    wpis_obcej_sesji(ss)
+    ss.alert_dispatch(CFG, hook("Stop"))
+    assert len(names(ss)) == 1
+
+
+def test_wpis_bez_registry_seen_nie_podlega_regule(ss):
+    """Sesja, ktorej harness nie rejestruje, istnieje realnie: `claude.exe` bez konsoli zyl
+    18 s i rekordu nie dostal. Bez tego znacznika jej blokada ginelaby natychmiast."""
+    wpis_obcej_sesji(ss, w_rejestrze=False)
+    ss.alert_dispatch(CFG, hook("Stop"))
+    assert len(names(ss)) == 1
+    assert ss.read_entry(names(ss)[0])["registry_seen"] is False
+
+
+def test_brak_katalogu_rejestru_nie_kasuje_nic(ss):
+    """"Nie wiem" NIGDY nie znaczy "pusty" — inaczej maszyna bez rejestru gasilaby
+    wszystkie swoje alerty przy pierwszym zdarzeniu."""
+    nazwa = wpis_obcej_sesji(ss)
+    shutil.rmtree(ss.REGDIR)
+    ss.alert_dispatch(CFG, hook("Stop"))
+    assert names(ss) == [nazwa]
+
+
+def test_jeden_nieczytelny_rekord_uniewaznia_caly_przebieg(ss):
+    """Katalog przeczytany do polowy skrocilby zbior zywych i skasowal HURTEM cudze wpisy."""
+    nazwa = wpis_obcej_sesji(ss)
+    zabij_rekord(ss, "obca-sesja")
+    os.mkdir(os.path.join(ss.REGDIR, "31337.json"))     # nazwa pasuje, `open` rzuca
+    ss.alert_dispatch(CFG, hook("Stop"))
+    assert names(ss) == [nazwa]
+
+
+def test_pliki_nie_bedace_rekordami_sa_ignorowane(ss):
+    """Harness trzyma w tym katalogu tez `.in_use` i `.last_inuse_sweep` — filtruje po
+    `<cyfry>.json` i my filtrujemy tak samo. To nie sa "rekordy nieparsowalne"."""
+    nazwa = wpis_obcej_sesji(ss)
+    zabij_rekord(ss, "obca-sesja")
+    for smiec in (".in_use", ".last_inuse_sweep", "nie-liczba.json"):
+        with open(os.path.join(ss.REGDIR, smiec), "w", encoding="utf-8") as f:
+            f.write("cokolwiek, nie JSON")
+    ss.alert_dispatch(CFG, hook("Stop"))
+    assert names(ss) == [], nazwa
+
+
+def test_nazwa_wpisu_bez_trzech_czlonow_nie_ginie(ss):
+    """`smieci.json` potrafi tam byc realnie (patrz test snapshotu). Nazwa spoza schematu
+    nie jest martwa — jest obca, wiec jej nie ruszamy."""
+    rejestr(ss, SID)
+    os.makedirs(ss.STATEDIR, exist_ok=True)
+    with open(os.path.join(ss.STATEDIR, "smieci.json"), "w", encoding="utf-8") as f:
+        json.dump({"registry_seen": True, "reason": "permission"}, f)
+    ss.alert_dispatch(CFG, hook("Stop"))
+    assert names(ss) == ["smieci.json"]
+
+
+@pytest.mark.parametrize("event", ["SessionStart", "SessionEnd"])
+def test_na_brzegach_sesji_regula_nie_biegnie(ss, event):
+    """Zmierzone: na `SessionStart` rekord powstaje 0,2-1,0 s PO pierwszym hooku (13/13),
+    a na `SessionEnd` jeszcze ISTNIEJE (14/14). Na tych dwoch jego brak nie dowodzi niczego.
+
+    Sesja zamiatajaca MUSI byc w rejestrze (`hook()` uzywa `SID`, ktory tam wlozylismy),
+    inaczej wpis ratuje bezpiecznik "brak biezacej sesji" i przypadek nie mowi nic o brzegach.
+    """
+    nazwa = wpis_obcej_sesji(ss)
+    zabij_rekord(ss, "obca-sesja")
+    ss.alert_dispatch(CFG, hook(event))
+    assert names(ss) == [nazwa]
+    # Kontrola pozytywna: to samo zdarzenie, ktore brzegiem nie jest, wpis KASUJE.
+    ss.alert_dispatch(CFG, hook("Stop"))
     assert names(ss) == []
+
+
+def test_brak_biezacej_sesji_w_rejestrze_wstrzymuje_regule(ss):
+    """Sesja, w ktorej biegnie ten hook, ZYJE. Jesli jej w rejestrze nie ma, to nie rozumiemy
+    rejestru — i nie wolno na nim opierac kasowania czegokolwiek."""
+    nazwa = wpis_obcej_sesji(ss)
+    zabij_rekord(ss, "obca-sesja")
+    zabij_rekord(ss, SID)
+    ss.alert_dispatch(CFG, hook("Stop"))
+    assert names(ss) == [nazwa]
+
+
+def test_wstrzymanie_zostawia_slad_w_logu(ss):
+    """Inaczej "mechanizm umarl po zmianie u Anthropic" i "nie ma czego zbierac" sa
+    nierozroznialne, a objawem jest dokladnie ten blad, ktory ta sekcja naprawia."""
+    wpis_obcej_sesji(ss)
+    shutil.rmtree(ss.REGDIR)
+    ss.alert_dispatch(CFG, hook("Stop"))
+    with open(ss.LOG, encoding="utf-8") as f:
+        linie = [json.loads(l) for l in f if l.strip()]
+    assert [r for r in linie if r.get("alert_skip") == "rejestr-niepelny"]
+
+
+def test_pusty_katalog_stanu_nie_czyta_rejestru(ss, monkeypatch):
+    """Sciezka goraca: przy pustym katalogu stanu nie ma czego zbierac, wiec rejestr nie ma
+    prawa byc otwierany. Zmierzone, ze to caly koszt tej galezi na typowym zdarzeniu."""
+    monkeypatch.setattr(ss, "live_sessions",
+                        lambda: pytest.fail("rejestr czytany przy pustym katalogu stanu"))
+    ss.alert_dispatch(CFG, hook("Stop"))
+    ss.alert_dispatch(CFG, hook("UserPromptSubmit"))
 
 
 def test_ttl_kasuje_ale_nigdy_nie_ukrywa(ss):
@@ -208,6 +367,247 @@ def test_ttl_kasuje_ale_nigdy_nie_ukrywa(ss):
     os.utime(os.path.join(ss.STATEDIR, nazwa), (stary, stary))
     ss.sweep_ttl(ss.DEFAULT_TTL_S, time.time())
     assert names(ss) == []
+
+
+# ------------------------------------------------------- domykanie z transkryptu
+# Odmowa i Esc nie generuja ZADNEGO zdarzenia hooka, ale ZAPISUJA `tool_result`
+# w transkrypcie — zmierzone na 2.1.223 trzy razy, z trzema roznymi trescami. To jedyna
+# droga, ktora gasi alert sesji zamilklej po odmowie, i dziala z zamiatania DOWOLNEJ sesji.
+#
+# W kazdym przypadku zdarzenie zamiatajace ma INNY `session_id` niz wpis. Bez tego wpis ginie
+# od zamiatania po prefiksie, zanim ktokolwiek otworzy transkrypt, i test nie mowi nic.
+@pytest.fixture
+def tdir(tmp_path):
+    """Katalog transkryptow. Nazwa MUSI zostac slugiem projektu, bo z niej liczy sie
+    `project` i na tym stoja asercje pozostalych testow."""
+    d = tmp_path / "z--projects-claude-usage-monitor"
+    d.mkdir()
+    return d
+
+
+def uzycie(tool, ti, tuid):
+    """Rekord `assistant` z blokiem `tool_use` — zmierzone, ze wystepuje wylacznie tam."""
+    return {"type": "assistant", "timestamp": "2026-08-07T10:00:00.000Z",
+            "message": {"content": [{"type": "tool_use", "id": tuid,
+                                     "name": tool, "input": ti}]}}
+
+
+def wynik(tuid, kiedy, prompt_id="p1", is_error=True):
+    """Rekord `user` z blokiem `tool_result`. `promptId` jest na TYM rekordzie i tylko tu."""
+    return {"type": "user", "timestamp": kiedy, "promptId": prompt_id,
+            "message": {"content": [{"type": "tool_result", "tool_use_id": tuid,
+                                     "is_error": is_error,
+                                     "content": "The user doesn't want to proceed"}]}}
+
+
+def zapisz(path, *rekordy):
+    """Transkrypt z rekordow; `str` przechodzi surowo, zeby dalo sie wstawic zepsuta linie."""
+    linie = [r if isinstance(r, str) else json.dumps(r, ensure_ascii=False)
+             for r in rekordy]
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text("\n".join(linie) + "\n", encoding="utf-8")
+    return str(path)
+
+
+def pozniej(ss):
+    return ss._iso(time.time() + 5)
+
+
+def zamiataj(ss):
+    ss.alert_dispatch(CFG, hook("Stop", session_id="inna-sesja"))
+
+
+def wpis_plan(ss, tp, tuid="toolu_9"):
+    ss.alert_dispatch(CFG, hook("PreToolUse", tool_name="ExitPlanMode", tool_input={},
+                                tool_use_id=tuid, transcript_path=tp))
+
+
+def wpis_permission(ss, tp, ti, **kw):
+    ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash", tool_input=ti,
+                                transcript_path=tp, **kw))
+
+
+def test_transkrypt_gasi_plan_po_odmowie_z_cudzego_zamiatania(ss, tdir):
+    """Przypadek ze zgloszenia: plan odrzucony, sesja potem zamilkla. Dzis taki wpis
+    nie ma zbieracza, bo `Stop` nie odpala na przerwanej turze."""
+    tp = zapisz(tdir / "x.jsonl", uzycie("ExitPlanMode", {}, "toolu_9"),
+                wynik("toolu_9", pozniej(ss)))
+    wpis_plan(ss, tp)
+    assert len(names(ss)) == 1
+    zamiataj(ss)
+    assert names(ss) == []
+    assert ss.wyslane[-1]["entries"] == [], "opustoszenie zbioru MUSI dojsc do panelu"
+
+
+def test_samo_wywolanie_bez_wyniku_nie_gasi(ss, tdir):
+    """Kontrola negatywna na zywym przypadku: czlowiek NADAL czeka."""
+    tp = zapisz(tdir / "x.jsonl", uzycie("ExitPlanMode", {}, "toolu_9"))
+    wpis_plan(ss, tp)
+    zamiataj(ss)
+    assert len(names(ss)) == 1
+
+
+def test_klucz_cytowany_jako_wolny_tekst_nie_gasi(ss, tdir):
+    """Dopasowanie po podciagu zgasiloby KAZDA zywa blokade: klucz jest w ogonie zawsze,
+    bo siedzi w swoim wlasnym rekordzie `tool_use`."""
+    tp = zapisz(tdir / "x.jsonl", uzycie("ExitPlanMode", {}, "toolu_9"),
+                {"type": "assistant", "timestamp": "2026-08-07T10:01:00.000Z",
+                 "message": {"content": [{"type": "text",
+                                          "text": "w logu widze toolu_9, sprawdz to"}]}})
+    wpis_plan(ss, tp)
+    zamiataj(ss)
+    assert len(names(ss)) == 1
+
+
+def test_brak_pliku_transkryptu_nie_gasi(ss, tdir):
+    wpis_plan(ss, str(tdir / "nie-ma-mnie.jsonl"))
+    zamiataj(ss)
+    assert len(names(ss)) == 1
+
+
+def test_zepsuta_linia_w_srodku_ogona_nie_gubi_wyniku(ss, tdir):
+    """`_safe` na kazdej linii osobno: jedna ucieta linia nie moze zjesc reszty ogona."""
+    tp = zapisz(tdir / "x.jsonl", uzycie("ExitPlanMode", {}, "toolu_9"),
+                '{"type": "user", "message": {"content": [{"type": "tool_re',
+                wynik("toolu_9", pozniej(ss)))
+    wpis_plan(ss, tp)
+    zamiataj(ss)
+    assert names(ss) == []
+
+
+def test_nieczytelny_transkrypt_jednego_wpisu_nie_blokuje_drugiego(ss, tdir):
+    """`_safe` wokol calego odczytu jednego pliku — inaczej jeden zablokowany transkrypt
+    zawiesilby wszystkie pozostale blokady na maszynie."""
+    kaput = tdir / "katalog-nie-plik.jsonl"
+    kaput.mkdir()                                    # open() na katalogu rzuca
+    ok = zapisz(tdir / "x.jsonl", uzycie("ExitPlanMode", {}, "toolu_b"),
+                wynik("toolu_b", pozniej(ss)))
+    wpis_plan(ss, str(kaput), tuid="toolu_a")
+    wpis_plan(ss, ok, tuid="toolu_b")
+    zamiataj(ss)
+    assert names(ss) == ["%s__main__toolu_a.json" % SID]
+
+
+def test_transkrypt_krotszy_niz_ogon_nie_traci_pierwszej_linii(ss, tdir):
+    """Pierwsza linia jest niepelna TYLKO wtedy, gdy realnie zaczelismy w srodku pliku."""
+    tp = zapisz(tdir / "x.jsonl", wynik("toolu_9", pozniej(ss)))
+    wpis_plan(ss, tp)
+    zamiataj(ss)
+    assert names(ss) == []
+
+
+def test_wyslany_wpis_nie_niesie_pol_lokalnych(ss, tdir):
+    """`transcript_path` niesie nazwe katalogu domowego czlowieka i nie ma odbiorcy
+    w `SessionAlert`; `prompt_id` tez nie. Na dysku musza zostac."""
+    tp = str(tdir / "x.jsonl")
+    wpis_permission(ss, tp, {"command": "ls"})
+    wyslany = ss.wyslane[-1]["entries"][0]
+    assert "transcript_path" not in wyslany and "prompt_id" not in wyslany
+    na_dysku = ss.read_entry(names(ss)[0])
+    assert na_dysku["transcript_path"] == tp and na_dysku["prompt_id"] == "p1"
+
+
+# --- wpisy `permission`: klucz to hash, wiec id trzeba odzyskac przeliczeniem
+def test_permission_domyka_sie_przez_przeliczenie_call_key(ss, tdir):
+    ti = {"command": "git push --force"}
+    tp = zapisz(tdir / "x.jsonl", uzycie("Bash", ti, "toolu_x"),
+                wynik("toolu_x", pozniej(ss)))
+    wpis_permission(ss, tp, ti)
+    nazwa = names(ss)[0]
+    assert "toolu_x" not in nazwa, \
+        "klucz wpisu musi byc hashem, inaczej przypadek przechodzi po regule question/plan"
+    zamiataj(ss)
+    assert names(ss) == []
+
+
+def test_to_samo_narzedzie_z_innym_input_nie_gasi(ss, tdir):
+    ti = {"command": "git push --force"}
+    tp = zapisz(tdir / "x.jsonl", uzycie("Bash", {"command": "git status"}, "toolu_x"),
+                wynik("toolu_x", pozniej(ss)))
+    wpis_permission(ss, tp, ti)
+    zamiataj(ss)
+    assert len(names(ss)) == 1
+
+
+@pytest.mark.parametrize("is_error", [True, False])
+def test_identyczny_retry_bez_wyniku_nie_gasi(ss, tdir, is_error):
+    """Zmierzone: 0,24% wywolan ma w oknie 32 KB bajtowo identycznego blizniaka, a scenariusz
+    "odmowa, Claude powtarza identyczne wywolanie" wystapil w korpusie 22 razy. Oba maja ten
+    sam `call_key`, wiec liczy sie WYLACZNIE ostatni rekord `tool_use`."""
+    ti = {"command": "git push --force"}
+    tp = zapisz(tdir / "x.jsonl", uzycie("Bash", ti, "toolu_1"),
+                wynik("toolu_1", pozniej(ss), is_error=is_error),
+                uzycie("Bash", ti, "toolu_2"))
+    wpis_permission(ss, tp, ti)
+    zamiataj(ss)
+    assert len(names(ss)) == 1, "zgaszona blokada, ktorej czlowiek jeszcze nie widzial"
+
+
+def test_kontrola_pozytywna_gdy_mlodszy_retry_tez_rozstrzygniety(ss, tdir):
+    """Ten sam stan z bezpiecznikiem niespelnionym — bez tego test wyzej przechodzi takze
+    przy mechanizmie wycietym."""
+    ti = {"command": "git push --force"}
+    tp = zapisz(tdir / "x.jsonl", uzycie("Bash", ti, "toolu_1"),
+                wynik("toolu_1", pozniej(ss)), uzycie("Bash", ti, "toolu_2"),
+                wynik("toolu_2", pozniej(ss)))
+    wpis_permission(ss, tp, ti)
+    zamiataj(ss)
+    assert names(ss) == []
+
+
+def test_wynik_z_innej_tury_nie_gasi(ss, tdir):
+    """`prompt_id` obejmuje cala ture czlowieka (zmierzone 5-12 wywolan, 89-199 s)."""
+    ti = {"command": "ls"}
+    tp = zapisz(tdir / "x.jsonl", uzycie("Bash", ti, "toolu_x"),
+                wynik("toolu_x", pozniej(ss), prompt_id="p2"))
+    wpis_permission(ss, tp, ti)
+    zamiataj(ss)
+    assert len(names(ss)) == 1
+
+
+def test_wynik_starszy_niz_wejscie_w_blokade_nie_gasi(ss, tdir):
+    """Domyka retry w TEJ SAMEJ turze, ktorego `promptId` nie lapie. Porownanie po
+    sparsowanym czasie: leksykograficznie '...:40.816Z' < '...:40Z', bo '.' < 'Z'."""
+    ti = {"command": "ls"}
+    tp = zapisz(tdir / "x.jsonl", uzycie("Bash", ti, "toolu_x"),
+                wynik("toolu_x", ss._iso(time.time() - 300)))
+    wpis_permission(ss, tp, ti)
+    zamiataj(ss)
+    assert len(names(ss)) == 1
+
+
+def test_wpis_bez_prompt_id_nie_jest_domykany(ss, tdir):
+    """Starsza sonda. Hash z pustym lancuchem nie rozroznia tury, wiec lepiej nie ruszac."""
+    ti = {"command": "ls"}
+    tp = zapisz(tdir / "x.jsonl", uzycie("Bash", ti, "toolu_x"),
+                wynik("toolu_x", pozniej(ss), prompt_id=None))
+    wpis_permission(ss, tp, ti, prompt_id=None)
+    zamiataj(ss)
+    assert len(names(ss)) == 1
+
+
+# --- subagent: hook niesie `transcript_path` RODZICA, rekordy leza w osobnym pliku
+def test_wpis_subagenta_domyka_sie_z_jego_wlasnego_pliku(ss, tdir):
+    rodzic = zapisz(tdir / "x.jsonl", uzycie("ExitPlanMode", {}, "toolu_9"))
+    zapisz(tdir / SID / "subagents" / "agent-a1d9fb.jsonl",
+           uzycie("ExitPlanMode", {}, "toolu_9"), wynik("toolu_9", pozniej(ss)))
+    ss.alert_dispatch(CFG, hook("PreToolUse", tool_name="ExitPlanMode", tool_input={},
+                                tool_use_id="toolu_9", transcript_path=rodzic,
+                                agent_id="a1d9fb", agent_type="general-purpose"))
+    assert len(names(ss)) == 1
+    zamiataj(ss)
+    assert names(ss) == [], "plik subagenta nie zostal wyliczony ze `agent_id`"
+
+
+def test_brak_pliku_subagenta_nie_siega_do_rodzica(ss, tdir):
+    """Rodzic ma rozstrzygniecie, ale nie TEGO wywolania — subagent ma swoj plik."""
+    rodzic = zapisz(tdir / "x.jsonl", uzycie("ExitPlanMode", {}, "toolu_9"),
+                    wynik("toolu_9", pozniej(ss)))
+    ss.alert_dispatch(CFG, hook("PreToolUse", tool_name="ExitPlanMode", tool_input={},
+                                tool_use_id="toolu_9", transcript_path=rodzic,
+                                agent_id="a1d9fb"))
+    zamiataj(ss)
+    assert len(names(ss)) == 1
 
 
 # --------------------------------------------------------------------- zapis i wysylka

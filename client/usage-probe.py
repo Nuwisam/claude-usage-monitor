@@ -62,7 +62,7 @@ Celowo plik lokalny, a nie repo — token maszyny nie ma prawa trafic do gita.
 """
 import sys, os, json, time, re
 
-SCRIPT_VERSION = 9
+SCRIPT_VERSION = 10
 
 # Znacznik dziedziczony przez proces potomny. `claude -p "/usage"` to normalna sesja
 # Claude Code — odpali hook Stop, ktory odpali sonde, ktora odpalilaby kolejnego
@@ -660,6 +660,10 @@ def _iso(epoch):
 #     konczy sie na PreToolUse + PermissionRequest i niczym wiecej. `PermissionDenied`
 #     nie odpalil ani razu, `is_interrupt: true` okazalo sie nieosiagalne. Dlatego
 #     zamiatanie po prefiksie session_id jest OBOWIAZKOWE, a nie ostroznosciowe.
+#   * ...ale w TRANSKRYPCIE takie zakonczenie zostawia `tool_result` — zmierzone na
+#     2.1.223 trzy razy, z trzema roznymi trescami (odmowa przyciskiem, Esc na prompcie,
+#     zamkniecie okna z wiszacym pytaniem). Stad druga droga wyjscia: `closed_by_transcript`,
+#     jedyna, ktora gasi alert sesji, co po odmowie ZAMILKLA. Szczegoly przy tej funkcji.
 #   * `Stop` NIE odpala na przerwanej turze, a odmowa konczy ture wlasnie jako
 #     przerwanie. Dlatego w liscie zamiatania pierwszy jest `UserPromptSubmit`.
 #   * `PostToolUse` nie jest gwarantowany (Edit na pliku planu: 0/6 domknietych, na
@@ -678,6 +682,17 @@ ENTER_TOOLS = {"AskUserQuestion": "question", "ExitPlanMode": "plan"}
 
 CLOSING_EVENTS = ("PostToolUse", "PostToolUseFailure")
 SWEEP_EVENTS = ("UserPromptSubmit", "Stop", "SessionEnd")
+
+# Pola potrzebne WYLACZNIE lokalnie, do domykania z transkryptu. `snapshot()` je zdejmuje:
+# `transcript_path` niesie nazwe katalogu domowego czlowieka, a `prompt_id` nie ma odbiorcy
+# w `SessionAlert`.
+LOCAL_FIELDS = ("transcript_path", "prompt_id", "registry_seen")
+
+# Ogon transkryptu. Zmierzone na sesjach, ktore po rozstrzygnieciu zamilkly: odleglosc
+# rozstrzygniecia od EOF max 366 B (n=8), a przy dopuszczeniu <=4 rekordow po nim max
+# 12,9 KB (n=14). 32 KB to 2,5x nad tym maksimum. Powyzej progu mechanizm NIC nie znajduje
+# i wpis wraca do TTL — kierunek awarii jest bezpieczny.
+TAIL_BYTES = 32768
 
 _ACCT_CACHE = {}
 
@@ -783,6 +798,18 @@ def _fname(session_id, agent_id, key):
     return "%s__%s__%s.json" % (session_id, agent_id or "main", key)
 
 
+def key_of(name):
+    """Klucz z nazwy pliku wpisu, albo None dla nazwy nie z tej formy.
+
+    Nazwa spoza schematu potrafi tam byc naprawde (test kladzie `smieci.json`), a wtedy
+    nie wolno jej ani kasowac, ani zgadywac, co znaczy.
+    """
+    if not name.endswith(".json"):
+        return None
+    czlony = name[:-5].split("__")
+    return czlony[2] if len(czlony) == 3 else None
+
+
 # --------------------------------------------------------------- katalog stanu
 def entries():
     """Wszystkie wpisy: [(nazwa_pliku, mtime)]. `scandir`, NIGDY `os.stat(sciezka)`.
@@ -875,14 +902,319 @@ def sweep_ttl(ttl_s, now):
             drop(name)
 
 
+# ----------------------------------------------------- rejestr sesji harnessu
+# Harness prowadzi rejestr swoich sesji: `<pid>.json` z polem `sessionId`. Zmierzone na
+# 2.1.223, i na tym stoi cala ta sekcja:
+#   * rekord powstaje 0,2-1,0 s PO pierwszym hooku sesji (13/13), wiec na `SessionStart`
+#     jego brak nie znaczy nic;
+#   * na `SessionEnd` rekord jeszcze JEST (14/14) — znika 0,1-0,8 s pozniej;
+#   * zamkniecie okna VS Code sprzata rekord w <=5 s, a rekord po ZABITYM procesie usuwa sam
+#     harness przy pierwszej enumeracji rejestru (zmierzone 626 ms po TerminateProcess);
+#     nie robi tego tylko na WSL i wtedy, gdy zabito ostatnia sesje na maszynie;
+#   * rejestr NIE jest zbiorem wszystkich zywych sesji: `claude.exe` bez konsoli nie
+#     rejestruje sie wcale (zmierzone: 18 s zycia, zero rekordow). Stad `registry_seen`.
+#
+# ZAKAZ: nigdy `os.kill(pid, 0)` — na Windows mapuje sie na `TerminateProcess`, czyli sonda
+# ubijalaby sesje Claude Code, w kodzie, ktory z zasady nie rzuca wyjatkiem. O zyciu decyduje
+# OBECNOSC rekordu i nic wiecej. Harness sam sprawdza `procStart`, wiec recyklingu pidow tez
+# nie musimy pilnowac my.
+
+
+def registry_dir():
+    """`$CLAUDE_CONFIG_DIR/sessions` albo `~/.claude/sessions`.
+
+    Gdy zmienna jest ustawiona, `~` NIE jest zapasem: cudzy katalog konfiguracyjny to cudze
+    `sessionId`, a tych uzylibysmy do KASOWANIA wpisow. Dlatego nie `_find` — on zwraca tylko
+    pliki i ma wlasnie ten zapas.
+    """
+    cfg = os.environ.get("CLAUDE_CONFIG_DIR")
+    if cfg:
+        return os.path.join(cfg, "sessions")
+    return os.path.join(os.path.expanduser("~"), ".claude", "sessions")
+
+
+REGDIR = registry_dir()         # przy imporcie, bez `stat` — jak STATEDIR
+
+
+def live_sessions():
+    """Zbior `sessionId` z rejestru, albo None gdy zbior moze byc NIEPELNY.
+
+    None znaczy "nie wiem" i NIGDY nie znaczy "pusty" — to zasada 4 przeniesiona na ten zbior.
+    Katalog przeczytany do polowy skrocilby liste zywych i skasowal hurtem cudze wpisy, czyli
+    zgasil ZYWE blokady. Dlatego jeden wyjatek na dowolnym rekordzie uniewaznia CALY przebieg.
+
+    Rekordem jest wylacznie plik `<cyfry>.json` — tak samo filtruje sam harness (parsuje nazwe
+    przez `parseInt` i odrzuca `NaN`). Wszystko inne w tym katalogu (`.in_use`,
+    `.last_inuse_sweep` — osobny mechanizm harnessu) jest IGNOROWANE, a nie liczone jako
+    rekord nieparsowalny.
+    """
+    out = set()
+    try:
+        with os.scandir(REGDIR) as it:
+            for de in it:
+                if not de.name.endswith(".json") or not de.name[:-5].isdigit():
+                    continue
+                with open(de.path, "rb") as f:
+                    rec = json.loads(f.read().decode("utf-8", "replace"))
+                sid = rec.get("sessionId") if isinstance(rec, dict) else None
+                if isinstance(sid, str) and sid:
+                    out.add(sid)
+    except Exception:
+        return None
+    return out
+
+
+def registry_view(event, session_id):
+    """(zbior zywych sesji, powod wstrzymania). Zbior `None` = reguly smierci NIE uzywamy."""
+    if event in ("SessionStart", "SessionEnd"):
+        # Na tych dwoch rekord wlasnie powstaje albo wlasnie znika, wiec jego brak nie jest
+        # dowodem na nic. Zbieranie zrobi najblizszy `UserPromptSubmit` albo `Stop`.
+        return None, "rejestr-brzeg-sesji"
+    live = live_sessions()
+    if live is None:
+        return None, "rejestr-niepelny"
+    if session_id and session_id not in live:
+        # Biezaca sesja ZYJE — to w niej biegnie ten hook. Jesli jej w rejestrze nie ma, to
+        # nie rozumiemy rejestru (inna wersja harnessu, inny katalog, sesja nierejestrowana)
+        # i nie wolno na nim opierac kasowania CZEGOKOLWIEK.
+        return None, "rejestr-bez-biezacej-sesji"
+    return live, None
+
+
+def entry_session(name):
+    """`session_id` z nazwy pliku wpisu, albo None dla nazwy nie z tej formy."""
+    if not name.endswith(".json"):
+        return None
+    czlony = name[:-5].split("__")
+    return czlony[0] if len(czlony) == 3 else None
+
+
+def registry_dead(name, live):
+    """Czy sesja tego wpisu juz nie zyje. Nazwa spoza schematu NIE jest martwa — jest obca."""
+    sid = entry_session(name)
+    return bool(sid) and sid not in live
+
+
+def registry_seen(session_id):
+    """Czy MOJA sesja jest teraz w rejestrze. Zapisywane we wpisie przy jego powstaniu.
+
+    Regule smierci podlegaja wylacznie wpisy z tym znacznikiem. Bez niego wpis sesji, ktorej
+    harness nie rejestruje, ginalby natychmiast — a to zgaszenie ZYWEJ blokady, jedyna awaria
+    tego narzedzia, ktora kosztuje realna prace. Czytane na sciezce WEJSCIA, czyli rzadkiej.
+    """
+    live = live_sessions()
+    return bool(live and session_id in live)
+
+
+# --------------------------------------------------- domykanie z transkryptu
+# Odmowa i Esc nie generuja ZADNEGO zdarzenia hooka (zmierzone 5/5), ale ZAPISUJA
+# `tool_result` w transkrypcie — zmierzone trzy razy, z trzema roznymi trescami:
+# odmowa przyciskiem, Esc na prompcie ("The user doesn't want to proceed...") i zamkniecie
+# okna z wiszacym pytaniem ("Tool permission request failed: AbortError..."). Dlatego
+# `is_error` NIE jest tu warunkiem, a tresci nie wolno dopasowywac po tekscie: kazdy
+# `tool_result` znaczy "rozstrzygniete".
+#
+# Ta galaz jest jedynym mechanizmem, ktory gasi alert po odmowie w sesji, ktora POTEM
+# zamilkla (`Stop` nie odpala na przerwanej turze) — i robi to z zamiatania DOWOLNEJ
+# sesji, bo idzie po calym katalogu stanu, nie po wlasnym prefiksie.
+
+
+def _epoch(iso):
+    """ISO-8601 UTC -> epoch (float) albo None.
+
+    Po SPARSOWANYM czasie, nigdy po podciagu: `since` ma rozdzielczosc sekundy, a transkrypt
+    milisekundowa, wiec porownanie leksykograficzne odwraca wynik ("...:40.816Z" < "...:40Z",
+    bo '.' < 'Z') i uznawaloby pozniejsze rozstrzygniecie za wczesniejsze.
+    """
+    if not isinstance(iso, str) or len(iso) < 19:
+        return None
+    import calendar                 # lazy, jak `hashlib` w `call_key`
+    try:
+        base = calendar.timegm(time.strptime(iso[:19], "%Y-%m-%dT%H:%M:%S"))
+    except Exception:
+        return None
+    frac = 0.0
+    if len(iso) > 20 and iso[19] == ".":
+        digits = ""
+        for ch in iso[20:]:
+            if not ch.isdigit():
+                break
+            digits += ch
+        if digits:
+            frac = _safe(float, "0." + digits) or 0.0
+    return base + frac
+
+
+def tail_records(path):
+    """Ostatnie `TAIL_BYTES` bajtow transkryptu jako lista sparsowanych rekordow.
+
+    Uchwyt trzymamy na czas jednego odczytu i nic wiecej: CPython otwiera bez
+    FILE_SHARE_DELETE, wiec dlugo trzymany czytelnik przeszkadza harnessowi w jego wlasnych
+    operacjach na transkrypcie. Pierwsza linia jest niepelna TYLKO wtedy, gdy realnie
+    zaczelismy w srodku pliku.
+    """
+    size = os.path.getsize(path)
+    off = max(0, size - TAIL_BYTES)
+    with open(path, "rb") as f:
+        f.seek(off)
+        raw = f.read()
+    lines = raw.decode("utf-8", "replace").splitlines()
+    if off > 0 and lines:
+        lines = lines[1:]
+    out = []
+    for line in lines:
+        if not line.strip():
+            continue
+        rec = _safe(json.loads, line)      # zepsuta linia nie moze ubic reszty ogona
+        if isinstance(rec, dict):
+            out.append(rec)
+    return out
+
+
+def _blocks(rec, rec_type, block_type):
+    """Bloki `block_type` z rekordu typu `rec_type`. Dopasowanie STRUKTURALNE.
+
+    Zmierzone: `tool_use` wystepuje wylacznie w rekordach `assistant` (43 597/43 597),
+    a `tool_result` wylacznie w `user` (43 475/43 475). Dopasowanie po podciagu jest
+    zakazane — klucz wpisu siedzi w ogonie zawsze, w jego wlasnym rekordzie `tool_use`,
+    wiec podciag gasilby kazda ZYWA blokade przy pierwszym zamiataniu.
+    """
+    if rec.get("type") != rec_type:
+        return []
+    msg = rec.get("message")
+    if not isinstance(msg, dict):
+        return []
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return []
+    return [b for b in content
+            if isinstance(b, dict) and b.get("type") == block_type]
+
+
+def result_record(records, tool_use_id):
+    """Rekord `user` z `tool_result` dla tego `tool_use_id`, albo None."""
+    found = None
+    for rec in records:
+        for b in _blocks(rec, "user", "tool_result"):
+            if b.get("tool_use_id") == tool_use_id:
+                found = rec
+    return found
+
+
+def _rozstrzygniete(records, prompt_id, since):
+    """`tool_use_id` rozstrzygniec, ktore moga dotyczyc TEJ blokady. Dwa z trzech warunkow.
+
+    Warunek 1: `promptId` musi byc z tej tury. To pole jest WYLACZNIE na `tool_result`
+    (7695/7695), na `tool_use` go nie ma — stad cala okrezna droga tej funkcji.
+    Warunek 2: rozstrzygniecie musi byc POZNIEJSZE niz wejscie w blokade. `prompt_id` obejmuje
+    cala ture czlowieka (zmierzone 5-12 wywolan, 89-199 s), wiec identyczny retry w tej samej
+    turze jest realny i warunek 1 go nie lapie.
+
+    Ten filtr idzie PIERWSZY, przed jakimkolwiek hashem, i to jest decyzja o koszcie, nie
+    o stylu: liczenie `call_key` po WSZYSTKICH `tool_use` w ogonie zmierzono na 27,8 ms
+    mediany przy 64 wpisach (max 495 ms), a rozstrzygniec z tej tury jest w ogonie garstka.
+    """
+    out = set()
+    if not prompt_id or since is None:
+        return out
+    for rec in records:
+        if rec.get("promptId") != prompt_id:
+            continue
+        kiedy = _epoch(rec.get("timestamp"))
+        if kiedy is None or kiedy <= since:
+            continue
+        for b in _blocks(rec, "user", "tool_result"):
+            out.add(b.get("tool_use_id"))
+    return out
+
+
+def transcript_closed(data, key, records):
+    """Czy wpis jest rozstrzygniety wedlug ogona transkryptu."""
+    if not records:
+        return False
+    if data.get("reason") in ("question", "plan"):
+        # Klucz wpisu JEST `tool_use_id` — nie ma czego odzyskiwac.
+        return result_record(records, key) is not None
+
+    prompt_id = data.get("prompt_id")
+    if not prompt_id:
+        return False                # starsza sonda: hash z pustym lancuchem nie rozroznia tury
+    gotowe = _rozstrzygniete(records, prompt_id, _epoch(data.get("since")))
+    if not gotowe:
+        return False
+
+    # Klucz wpisu `permission` to `call_key(tool_name, tool_input, prompt_id)`, czyli hash,
+    # ktorego w transkrypcie nie ma. Sa jego skladniki, wiec przeliczamy TA SAMA funkcja — nie
+    # przepisana formula, bo `json.dumps` ma tam `ensure_ascii=False, default=str`, a polskie
+    # sciezki sa realne. Zmierzone, ze skladniki sa identyczne: `tool_input` z hooka odtwarza
+    # `input` z transkryptu bajt w bajt 202/202 (Bash, Edit, Write, PowerShell, Read i dalsze).
+    # Pre-filtr po nazwie narzedzia jest DARMOWY i nie zmienia wyniku: `call_key` liczy sie
+    # z `tool_name`, wiec inna nazwa nie moze dac tego klucza. Realny ogon jest mieszany
+    # (Read, Edit, Bash...), wiec to odsiewa wiekszosc kandydatow przed hashem.
+    tool = data.get("tool")
+    uzycia = [b for rec in records for b in _blocks(rec, "assistant", "tool_use")]
+    trafienie = None
+    for i, b in enumerate(uzycia):
+        if (b.get("id") in gotowe and b.get("name") == tool
+                and call_key(b.get("name"), b.get("input"), prompt_id) == key):
+            trafienie = (i, b)          # przy wielu trafieniach liczy sie OSTATNIE
+    if trafienie is None:
+        return False
+
+    # Warunek 3: gdyby po tym wywolaniu stalo w ogonie DRUGIE, bajtowo identyczne, to ono jest
+    # ta zywa blokada i wpisu nie wolno zdjac — oba maja ten sam `call_key`, wiec sam hash ich
+    # nie rozroznia. Zmierzone: 0,24% wywolan ma takiego blizniaka w oknie 32 KB, a scenariusz
+    # "odmowa, Claude powtarza identyczne wywolanie" wystapil w korpusie 22 razy.
+    i, b = trafienie
+    for pozniejsze in uzycia[i + 1:]:
+        if (pozniejsze.get("name") == b.get("name")
+                and pozniejsze.get("input") == b.get("input")):
+            return False
+    return True
+
+
+def transcript_path_of(data):
+    """Plik transkryptu wpisu. Dla subagenta NIE jest to `transcript_path` z hooka.
+
+    Zmierzone: hook subagenta niesie `transcript_path` RODZICA, a rekordy subagenta leza
+    w osobnym pliku. Sciezka jest wyliczalna i sprawdzona — wszystkie `tool_use` subagentow
+    znalazly sie tam i nigdzie indziej.
+    """
+    tp = data.get("transcript_path")
+    if not isinstance(tp, str) or not tp:
+        return None
+    agent_id = data.get("agent_id")
+    if not agent_id:
+        return tp
+    session_id = data.get("session_id")
+    if not session_id:
+        return None
+    return os.path.join(os.path.dirname(tp), session_id, "subagents",
+                        "agent-%s.jsonl" % agent_id)
+
+
+def closed_by_transcript(name, data, tails):
+    """Jeden wpis wobec swojego transkryptu. Ogon czytamy RAZ na plik, nie raz na wpis."""
+    path = transcript_path_of(data)
+    if not path:
+        return False                # starsza sonda albo subagent bez `session_id`
+    if path not in tails:
+        # `_safe` wokol calego odczytu jednego pliku: zablokowany plik nie moze ubic
+        # sprawdzenia pozostalych wpisow.
+        tails[path] = _safe(tail_records, path) or []
+    return transcript_closed(data, key_of(name), tails[path])
+
+
 # --------------------------------------------------------------- wysylka alertu
 def snapshot():
-    """Biezacy zbior wpisow maszyny, posortowany po `since`."""
+    """Biezacy zbior wpisow maszyny, posortowany po `since`. Pola lokalne zdejmowane."""
     out = []
     for name, _mtime in sorted(entries()):
         data = read_entry(name)
         if data is None:
             continue
+        for pole in LOCAL_FIELDS:
+            data.pop(pole, None)
         data["key"] = name[:-5]
         out.append(data)
     out.sort(key=lambda e: e.get("since") or "")
@@ -1027,6 +1359,13 @@ def enter(cfg, hook, reason, key):
         # Do diagnostyki: caly pomiar szedl w trybie `default`, a tryby
         # auto-zatwierdzajace rozstrzygaja wywolanie PRZED warstwa promptu.
         "permission_mode": hook.get("permission_mode"),
+        # Pola LOKALNE (LOCAL_FIELDS) — `snapshot()` je zdejmuje przed wysylka.
+        # Zmierzone, ze `PermissionRequest` niesie oba pierwsze: 10/10, `prompt_id` nigdy
+        # `undefined`. `registry_seen` musi powstac TUTAJ: `write_excl` idzie przez `O_EXCL`,
+        # wiec potem nie ma jak tego dopisac.
+        "transcript_path": hook.get("transcript_path"),
+        "prompt_id": hook.get("prompt_id"),
+        "registry_seen": registry_seen(session_id),
     }
     if not write_excl(name, entry):
         return                              # ta blokada juz jest — bez toasta, bez POST-u
@@ -1067,7 +1406,7 @@ def leave(cfg, hook):
         publish(cfg)
 
 
-def sweep_session(cfg, hook, gc_cwd=False):
+def sweep_session(cfg, hook):
     """Zamiatanie po prefiksie `<session_id>__`.
 
     OBOWIAZKOWE, nie ostroznosciowe: to jedyny mechanizm gaszacy alert po odmowie
@@ -1077,22 +1416,53 @@ def sweep_session(cfg, hook, gc_cwd=False):
     `SessionEnd` zamiata WYLACZNIE wlasny session_id: zmierzone, ze przychodzi ~raz na
     minute z identyfikatorem dziecka `claude -p` odpalanego przez ten sam skrypt, wiec
     zamiatanie globalne wycieraloby alerty co minute.
+
+    Wpisy CUDZYCH sesji ta petla tez oglada, ale kasuje je na jednym z dwoch DOWODOW, nigdy
+    na podobienstwo: albo sesja nie ma rekordu w rejestrze harnessu (`registry_dead`), albo jej
+    wlasny transkrypt niesie juz rozstrzygniecie (`closed_by_transcript`). Bez tego wpis sesji,
+    ktora po odmowie zamilkla, nie ma zbieracza: to jest awaria ze zgloszenia.
+
+    Regula po zgodnosci `cwd` (`gc_cwd`) zostala USUNIETA. Kasowala po samym podobienstwie
+    projektu, wiec nowa karta w projekcie potrafila zgasic ZYWA blokade sasiedniej — w rejestrze
+    tej maszyny stalo naraz 5 sesji z tym samym `cwd`. Jej jedyny realny zysk (zabite okno)
+    pokrywa teraz rejestr: rekord po zabitym procesie usuwa sam harness.
     """
     session_id = hook.get("session_id")
     all_entries = entries()
     if not all_entries:
         return
     prefix = ("%s__" % session_id) if session_id else None
+    event = hook.get("hook_event_name")
+    live, powod = registry_view(event, session_id)
     hit = False
+    tails = {}                       # transcript_path -> ogon, czytany RAZ na plik
+    wstrzymane = 0
     for name, _mtime in all_entries:
         if prefix and name.startswith(prefix):
             hit = drop(name) or hit
             continue
-        if gc_cwd and hook.get("cwd"):
-            data = read_entry(name)
-            if data and data.get("cwd") == hook.get("cwd"):
-                # Ten sam projekt, inna sesja: poprzednie okno padlo w blokadzie.
+        data = read_entry(name)
+        if data is None:
+            continue
+        if data.get("registry_seen"):
+            if live is None:
+                wstrzymane += 1
+            elif registry_dead(name, live):
+                # Sesja tego wpisu juz nie istnieje, a wpis powstal, gdy BYLA w rejestrze.
                 hit = drop(name) or hit
+                continue
+        # Cudzy wpis zyjacej sesji, ale jego wlasny transkrypt moze juz nosic
+        # rozstrzygniecie — i wtedy tylko MY mozemy go zdjac, bo tamta sesja moze
+        # nie odpalic juz nic.
+        if _safe(closed_by_transcript, name, data, tails):
+            hit = drop(name) or hit
+    if wstrzymane and powod:
+        # Bez tej linii "mechanizm umarl po zmianie u Anthropic" i "nie ma czego zbierac" sa
+        # nierozroznialne, a objawem jest dokladnie ten blad, ktory ta sekcja naprawia.
+        # Osobny klucz, nie `skip`: to nie jest przebieg bez pomiaru, `analyze-samples.py`
+        # liczy tam co innego. Logujemy tylko, gdy realnie bylo co wstrzymac.
+        log_local({"t": round(time.time(), 3), "alert_skip": powod,
+                   "event": event, "wpisy": wstrzymane})
     if hit:
         publish(cfg)
 
@@ -1147,7 +1517,9 @@ def alert_dispatch(cfg, hook):
 
     if event in SWEEP_EVENTS or event == "SessionStart":
         _safe(sweep_ttl, cfg.get("blocked_ttl_sec", DEFAULT_TTL_S), time.time())
-        return sweep_session(cfg, hook, gc_cwd=(event == "SessionStart"))
+        # `SessionStart` zostaje na liscie, bo zamiata wlasny prefiks i liczy TTL. Reguly
+        # smierci z rejestru na nim NIE uzywamy — patrz `registry_view`.
+        return sweep_session(cfg, hook)
 
 
 # --------------------------------------------------------------- main
