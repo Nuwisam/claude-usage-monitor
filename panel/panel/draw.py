@@ -56,6 +56,19 @@ def baseline_for_centre(f, sample, centre_y):
     return int(round(centre_y - (box[1] + box[3]) / 2.0))
 
 
+def baseline_for_top(f, top, line_height):
+    """Linia bazowa tekstu, ktorego PUDELKO LINII zaczyna sie na `top`.
+
+    Odpowiednik pudelka z makiety: CSS zna wysokosc linii i rozklada nadmiar po
+    rowno nad i pod krojem, a Pillow zna wylacznie ascender. Bez tego rachunku
+    "margin-top: 7px" pod nazwa 34 px wychodzi na panelu ujemne — ascender plus
+    descender Segoe UI to przy 34 px az 46 px, czyli o 11 px wiecej niz line-height
+    1,02 z makiety.
+    """
+    asc, desc = f.getmetrics()
+    return int(round(top + (line_height - (asc + desc)) / 2.0 + asc))
+
+
 def ellipsize(text, f, max_w):
     """Ucina z wielokropkiem. Nazwy kont bywaja dluzsze niz 480 px pozwala."""
     if not text or text_width(text, f) <= max_w:
@@ -74,6 +87,33 @@ def ellipsize(text, f, max_w):
     return text[:lo] + ell
 
 
+def wrap_lines(text, f, max_w, max_lines=2):
+    """Zawija po slowach do `max_lines`; nadmiar wpada w ostatnia linie i tam jest
+    obcinany wielokropkiem.
+
+    Jedyne miejsce w projekcie, ktore lamie tekst — `detail` z ramki alertu bywa
+    zdaniem. Obcinanie zostaje robota `ellipsize`, zeby nie bylo dwoch prawd o tym,
+    jak wyglada za dlugi napis.
+    """
+    if not text:
+        return []
+    lines, cur = [], ""
+    for word in text.split():
+        trial = word if not cur else cur + " " + word
+        # `not cur` przepuszcza slowo dluzsze niz cala linia: stoi samo i dostaje
+        # wielokropek, zamiast wpadac w nieskonczona petle albo znikac.
+        if not cur or text_width(trial, f) <= max_w:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines - 1] + [" ".join(lines[max_lines - 1:])]
+    return [ellipsize(line, f, max_w) for line in lines]
+
+
 def text(d, xy, s, f, fill, anchor=None):
     if s:
         d.text(xy, s, font=f, fill=fill, anchor=anchor)
@@ -83,6 +123,21 @@ def tracked_width(s, f, tracking):
     if not s:
         return 0
     return sum(text_width(ch, f) for ch in s) + tracking * (len(s) - 1)
+
+
+def ellipsize_tracked(s, f, max_w, tracking=1):
+    """`ellipsize` dla napisu, ktory pojdzie przez `text_tracked`.
+
+    Osobna funkcja, bo odstep miedzy literami wchodzi do szerokosci: przy wersalikach
+    pasma (tracking 2 na 15 px) zwykly `ellipsize` puscilby napis o kilkanascie pikseli
+    za szeroki i godzina po prawej dostalaby nim po palcach.
+    """
+    if not s or tracked_width(s, f, tracking) <= max_w:
+        return s
+    out = s
+    while out and tracked_width(out + "…", f, tracking) > max_w:
+        out = out[:-1]
+    return out + "…" if out else "…"
 
 
 def text_tracked(d, xy, s, f, fill, tracking=1, anchor=None):
@@ -97,8 +152,23 @@ def text_tracked(d, xy, s, f, fill, tracking=1, anchor=None):
     return x - tracking - xy[0]
 
 
+def fill_rect(d, box, colour):
+    """Prostokat w konwencji POL-OTWARTEJ: `x1` i `y1` sa WYLACZNE, jak w makiecie.
+
+    Pillow liczy granice wlacznie, wiec pasmo (0, 0, 480, 38) wychodzi u niego
+    39 px wysokosci, a kafel konczacy sie na x1 = 462 zjada piksel prawego marginesu.
+    Roznica jednego piksela, ale karta jest zbudowana z pol stykajacych sie
+    krawedziami — jeden piksel za duzo w pasmie przesuwa cala reszte.
+    """
+    x0, y0, x1, y1 = box
+    d.rectangle((x0, y0, x1 - 1, y1 - 1), fill=colour)
+
+
 def rounded(d, box, radius, fill=None, outline=None, width=1):
-    d.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
+    """Jak `fill_rect`, tylko z zaokraglonymi rogami — ta sama konwencja granic."""
+    x0, y0, x1, y1 = box
+    d.rounded_rectangle((x0, y0, x1 - 1, y1 - 1), radius=radius, fill=fill,
+                        outline=outline, width=width)
 
 
 def dashed_rounded(d, box, radius, colour, dash=3, gap=3, width=1):
@@ -185,25 +255,6 @@ def clock_glyph(d, centre, radius, colour):
               outline=colour, width=1)
     d.line((cx, cy, cx, cy - radius + 2), fill=colour, width=1)
     d.line((cx, cy, cx + radius - 2, cy), fill=colour, width=1)
-
-
-def warn_triangle(d, box, colour):
-    """Trojkat z wykrzyknikiem — sesja czeka na czlowieka.
-
-    Wykrzyknik rysowany, nie pisany fontem. "!" w rozmiarze 11 ma 8 px tuszu i nie
-    zmiesci sie w 11-pikselowym trojkacie, a poza tym polityka tego pliku (patrz
-    `clock_glyph`) mowi wprost, zeby ikonki byly wektorowe: przy 11 px font zamienia
-    sie w plame, a rysunek nie.
-    """
-    x0, y0, x1, y1 = (int(v) for v in box)
-    cx = (x0 + x1) // 2
-    d.polygon([(cx, y0), (x1, y1), (x0, y1)], fill=colour)
-    # Kreska konczy sie dwa piksele nad kropka, inaczej po kwantyzacji zlewaja sie
-    # w jeden slupek i wykrzyknik przestaje byc wykrzyknikiem.
-    top = y0 + max(3, (y1 - y0) // 3)
-    bottom = y1 - max(3, (y1 - y0) // 4)
-    d.line((cx, top, cx, bottom), fill=theme.BG, width=1)
-    d.point((cx, bottom + 2), fill=theme.BG)
 
 
 def arrow_down_right(d, box, colour):

@@ -79,7 +79,7 @@ def test_ellipsize_nie_przekracza_szerokosci():
     (theme.TEXT, "tekst"), (theme.TEXT_50, "plan"), (theme.TEXT_28, "kontur"),
     (theme.TEXT_10, "skos"), (theme.ACCENT, "akcent"), (theme.ACCENT_200, "etykieta"),
     (theme.NEUTRAL_900, "tor"), (theme.DIVIDER, "separator"),
-    (theme.DANGER, "ostrzezenie"),
+    (theme.SURFACE, "kafel szczegolu"), (theme.SUNKEN, "listwa"),
 ])
 def test_kolory_przezywaja_kwantyzacje(fg, nazwa):
     """Panel ma 5/6/5 bitow. Najbardziej zagrozony jest kreskowany kontur
@@ -93,16 +93,21 @@ def test_kolory_przezywaja_kwantyzacje(fg, nazwa):
     (theme.ACCENT_800, theme.BG, "baner alertu na tle"),
     (theme.ACCENT_100, theme.ACCENT_800, "tytul alertu na banerze"),
     (theme.ACCENT_200, theme.ACCENT_800, "godzina na banerze"),
-    (theme.DANGER, theme.BG, "trojkat na tle"),
-    (theme.DANGER, theme.ACCENT, "trojkat obok akcentu"),
+    (theme.BG, theme.ACCENT, "napis w zalanym pasmie"),
+    (theme.TEXT_78, theme.SURFACE, "szczegol w kaflu"),
+    (theme.TEXT_45, theme.SURFACE, "etykieta w kaflu"),
+    (theme.TEXT_70, theme.SUNKEN, "wartosc w listwie"),
+    (theme.ACCENT_200, theme.SUNKEN, "licznik reszty w stopce"),
+    (theme.SURFACE, theme.BG, "kafel na tle"),
+    (theme.SUNKEN, theme.BG, "listwa na tle"),
 ])
 def test_pary_kolorow_przezywaja_kwantyzacje(fg, bg, nazwa):
     """Osobny test od powyzszego, bo tamten porownuje WYLACZNIE z `theme.BG`.
 
     Marginalna para karty to `ACCENT_800` na `BG` (roznica 42,13,4 przed kwantyzacja),
-    a nie tekst na banerze. Para DANGER/ACCENT jest tu dlatego, ze akcent panelu sam
-    jest pomaranczowo-czerwony — gdyby trojkat zlal sie z nim, czytalby sie jako
-    'troche inny pomarancz', czyli jako ozdoba, a nie jako ostrzezenie.
+    a nie tekst na banerze. Pary z `SURFACE` i `SUNKEN` sa tu dlatego, ze kafel szczegolu
+    i listwa trybu roznia sie od tla o kilka jednostek — gdyby zlaly sie po kwantyzacji,
+    karta stracilaby caly podzial na pola.
     """
     assert theme.to_rgb565_pair(fg) != theme.to_rgb565_pair(bg), \
         "%s znika po kwantyzacji" % nazwa
@@ -216,3 +221,38 @@ def test_wycofane_kredyty_zostaja_narysowane():
 
     assert wycofane != puste, "wiersz kwot zniknal — panel stracil liczbe"
     assert wycofane == dzialajace, "powodu wycofania panel nie rysuje; kwoty to kwoty"
+
+
+# --- lamanie tekstu ---------------------------------------------------------
+
+@pytest.mark.parametrize("tekst,linie", [
+    ("krotki", 1),
+    # Ten `detail` miesci sie w JEDNEJ linii kafla (420 px) i kafel ma sie wtedy
+    # skrocic, a nie zostawic pustego pola — patrz AlertSolo.detail_box.
+    ("Zakres zrzutu: tylko sesja, sesja i tydzień, czy wszystkie okna limitów", 1),
+    ("Plan na 6 kroków: layout.Alert, render._alert, AlertState, testy geometrii "
+     "i kwantyzacji, a do tego jeszcze jedno zdanie na dokladke", 2),
+    ("Zażółć gęślą jaźń " * 20, 2),
+    ("", 0),
+])
+def test_wrap_lines_nie_przekracza_limitow(tekst, linie):
+    """`detail` bywa zdaniem, a kafel ma dwie linie i szerokosc 420 px. Ani jedno,
+    ani drugie nie moze zalezec od tresci."""
+    f = draw.font(12)
+    out = draw.wrap_lines(tekst, f, 420, 2)
+    assert len(out) == linie
+    for line in out:
+        assert draw.text_width(line, f) <= 420
+
+
+def test_wrap_lines_obcina_ostatnia_linie_wielokropkiem():
+    f = draw.font(12)
+    out = draw.wrap_lines("Zażółć gęślą jaźń " * 20, f, 420, 2)
+    assert out[-1].endswith("…"), "nadmiar ma byc widoczny, nie uciety po cichu"
+
+
+def test_wrap_lines_znosi_slowo_dluzsze_niz_linia():
+    """Regresja: bez tego jedno dlugie slowo albo znikalo, albo zapetlalo funkcje."""
+    f = draw.font(12)
+    out = draw.wrap_lines("a" * 400, f, 100, 2)
+    assert len(out) == 1 and draw.text_width(out[0], f) <= 100

@@ -18,37 +18,43 @@ from panel import fmt, render, status                      # noqa: E402
 from tests import fixtures                                 # noqa: E402
 
 
-def alert_scene(kind, now_ms):
-    """Warianty karty alertu — to jest punkt wyjscia handoutu do UI.
+def blocked(key, reason, project, tool, machine, ago_s, **kw):
+    return status.Blocked(key=key, reason=reason, project=project, tool=tool,
+                          machine=machine, since=_shift(fixtures.NOW_ISO, ago_s),
+                          account_uuid=None, **kw)
 
-    Dobrane tak, zeby pokazac wszystkie trzy rzeczy, ktore moga rozsadzic uklad:
-    najdluzszy naglowek (`plan`), nazwe projektu nie miesczaca sie w duzym stopniu
-    (`long`) i wiersz "inne:" (`multi`).
-    """
-    def blocked(key, reason, project, tool, machine, ago_s):
-        return status.Blocked(
-            key=key, reason=reason, project=project, tool=tool, machine=machine,
-            since=fmt.parse_utc(fixtures.NOW_ISO), account_uuid=None,
-        ) if ago_s is None else status.Blocked(
-            key=key, reason=reason, project=project, tool=tool, machine=machine,
-            since=_shift(fixtures.NOW_ISO, ago_s), account_uuid=None,
-        )
 
-    if kind == "permission":
-        items = [blocked("a", "permission", "claude-usage-monitor", "Bash", "laptop", 245)]
-    elif kind == "question":
-        items = [blocked("a", "question", "panel-raportow", "AskUserQuestion", "desktop", 40)]
-    elif kind == "plan":
-        items = [blocked("a", "plan", "synchronizator-zdjec", "ExitPlanMode",
-                         "laptop", 3900)]
-    elif kind == "long":
-        items = [blocked("a", "permission", "synchronizator-zdjec-worktree",
-                         "PowerShell", "desktop", 90)]
+# Dane demonstracyjne w ksztalcie makiety: te same powody, narzedzia, dlugosci nazw
+# i stemple, zeby PNG dalo sie przylozyc do projektu. Nazwy projektow sa WYMYSLONE —
+# tak samo jak adresy kont w fixtures.py sa z example.org. Kotwica czasu: fixtures.NOW_ISO.
+def alert_scene(kind, now_ms, flood=False):
+    """Warianty karty alertu — po jednym na uklad."""
+    kb = dict(key="a", reason="question", project="panel-raportow",
+              tool="AskUserQuestion", machine="desktop", ago_s=245,
+              detail="Zakres zrzutu: tylko sesja, sesja i tydzień, czy wszystkie "
+                     "okna limitów",
+              permission_mode="default")
+    cum = dict(key="b", reason="plan", project="claude-usage-monitor",
+               tool="ExitPlanMode", machine="laptop", ago_s=610,
+               detail="Plan na 6 kroków: layout.Alert, render._alert, AlertState, "
+                      "testy geometrii i kwantyzacji",
+               agent_type="general-purpose", permission_mode="plan")
+    gps = dict(key="c", reason="permission", project="synchronizator-zdjec-worktree",
+               tool="Bash", machine="desktop", ago_s=20, detail="git status")
+
+    if kind == "solo":
+        items = [blocked(**kb)]
+    elif kind == "pair":
+        # W makiecie ta blokada czeka "chwilę" — te same napisy po obu stronach
+        # pozwalaja porownac render z projektem litera w litere.
+        items = [blocked(**cum), blocked(**dict(kb, ago_s=28))]
+    elif kind == "list":
+        items = [blocked(**cum), blocked(**kb), blocked(**gps)]
     else:
-        items = [blocked("a", "plan", "claude-usage-monitor", "ExitPlanMode", "laptop", 610),
-                 blocked("b", "permission", "backend-api", "Bash", "desktop", 120),
-                 blocked("c", "question", "frontend", "AskUserQuestion", "laptop", 30)]
-    return render.alert_state(items, now_ms)
+        items = [blocked(**cum), blocked(**kb), blocked(**gps),
+                 blocked("d", "permission", "cms-migracja", "Edit", "laptop", 150),
+                 blocked("e", "question", "notes-sync", "AskUserQuestion", "desktop", 98)]
+    return render.alert_state(items, now_ms, flood=flood)
 
 
 def _shift(iso, seconds):
@@ -92,23 +98,26 @@ def main():
     ap.add_argument("--link", default="live",
                     choices=("live", "reconnecting", "down"))
     ap.add_argument("--message", help="zamiast pasow: pelnoekranowa karta stanu")
-    ap.add_argument("--alert",
-                    choices=("permission", "question", "plan", "long", "multi"),
+    ap.add_argument("--alert", choices=("solo", "pair", "list", "many"),
                     help="zamiast pasow: karta zablokowanej sesji")
-    ap.add_argument("--triangle", action="store_true",
-                    help="pasy z trojkatem ostrzegawczym przy nazwie konta")
+    ap.add_argument("--flood", action="store_true",
+                    help="klatka PELNA: pasmo zalane akcentem plus rail")
+    ap.add_argument("--marker", choices=("upper", "lower", "both"),
+                    help="pasy ze znacznikiem alertu na krawedzi wskazanego pasa")
     args = ap.parse_args()
 
     now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
     state = build(args.scene, now_ms, args.link)
-    if args.triangle:
-        for band in state.bands:
-            if band is not None:
-                band.alert = True
+    if args.marker:
+        # Ten sam slownik co w panelu: `status.SHORT`, nie napis wpisany tutaj.
+        which = {"upper": (0,), "lower": (1,), "both": (0, 1)}[args.marker]
+        for i in which:
+            if state.bands[i] is not None:
+                state.bands[i].alert = status.SHORT["permission" if i == 0 else "question"]
     if args.message:
         state.message = args.message.split("|")
     if args.alert:
-        state.alert = alert_scene(args.alert, now_ms)
+        state.alert = alert_scene(args.alert, now_ms, flood=args.flood)
 
     frame = render.Renderer().frame(state)
     img = frame.image

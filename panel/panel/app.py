@@ -157,19 +157,24 @@ class App:
     # -- obraz -------------------------------------------------------------
 
     def alert_slots(self):
-        """Indeksy pasow, przy ktorych ma stanac trojkat.
+        """Pasy ze znacznikiem: indeks pasa -> powod jednym slowem.
+
+        Nie sam zbior indeksow, bo pas pisze przy nazwie planu, NA CO czeka. Przy kilku
+        blokadach na jednym koncie zostaje pierwsza — kolejnosc ustala `status.parse_frame`,
+        wiec pierwsza jest tez najpilniejsza.
 
         Alert bez dopasowania do zadnego skonfigurowanego konta laduje na pasie GORNYM.
         Regula jest prosta i celowo taka zostaje: statyczne mapowanie maszyna -> pas
         rozjechaloby sie po pierwszym /login, a przelaczanie kont jest tu rutyna.
         """
         slots = [a.uuid for a in self.cfg.accounts]
-        out = set()
+        out = {}
         for b in self.alerts:
             try:
-                out.add(slots.index(b.account_uuid))
+                index = slots.index(b.account_uuid)
             except ValueError:
-                out.add(0)
+                index = 0
+            out.setdefault(index, b.short)
         return out
 
     def _card_alerts(self, mono, now_ms):
@@ -207,13 +212,13 @@ class App:
             # Faza migania z zegara, nie z licznika ticków: przy zgubionym ticku
             # (przejscie sceny kosztuje wiecej niz sekunde) licznik rozjechalby sie
             # z czasem i miganie zwalnialoby razem z panelem.
-            blink = (self._flash_until is not None and mono < self._flash_until
+            flood = (self._flash_until is not None and mono < self._flash_until
                      and int(mono) % 2 == 0)
             # Niezgodny kontrakt schodzi do stopki zamiast przykrywac alert: to jedyna
             # rzecz na tym ekranie, ktora wymaga, zebys wstal od biurka.
             footer = ("panel: niezgodny kontrakt"
                       if self.contract_mismatch is not None else None)
-            self._card = (render.alert_state(live, now_ms, footer, blink), None)
+            self._card = (render.alert_state(live, now_ms, footer, flood), None)
         elif self._card is not None:
             state, expiry = self._card
             if expiry is None:
@@ -256,7 +261,7 @@ class App:
             note = "nieznane konto" if slot.uuid in self.unknown_uuids else None
             bands.append(render.band_state(account, name=slot.name, now_ms=now_ms,
                                            show_clock=(index == 0), note=note,
-                                           alert=index in flagged))
+                                           alert=flagged.get(index)))
         while len(bands) < 2:
             bands.append(None)
         return render.ScreenState(clock=fmt.hm(self.clock.now()),

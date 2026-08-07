@@ -21,15 +21,6 @@ ACCENT_300 = (0xE8, 0x94, 0x77)
 ACCENT_200 = (0xF0, 0xAB, 0x90)
 ACCENT_100 = (0xF7, 0xCB, 0xB8)
 
-# Jedyna barwa w tym pliku, ktorej NIE MA w frontend/src/styles/theme.css — bo w calej
-# palecie projektu nie ma czerwieni. Sluzy wylacznie ostrzezeniu o zablokowanej sesji.
-#
-# Zielona skladowa musi zostac nisko (<= 0x50): akcent panelu sam jest pomaranczowo-
-# czerwony, wiec jasniejszy odcien przeczytalby sie jako "troche inny pomarancz", a nie
-# jako inny kolor. Po kwantyzacji 5/6/5 wychodzi (28, 18, 7) — odrozniane i od BG (3, 6, 3),
-# i od ACCENT (27, 29, 10).
-DANGER = (0xE0, 0x4B, 0x3A)
-
 NEUTRAL_900 = (0x32, 0x2F, 0x2B)
 NEUTRAL_800 = (0x41, 0x3D, 0x37)
 NEUTRAL_600 = (0x7A, 0x74, 0x6A)

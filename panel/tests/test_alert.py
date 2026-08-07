@@ -1,4 +1,4 @@
-"""Zablokowana sesja na ekranie: karta, zwiniecie do trojkata, koszt zmiany sceny.
+"""Zablokowana sesja na ekranie: karta, zwiniecie do znacznika, koszt zmiany sceny.
 
 Zegar jest wstrzykiwany wszedzie, bo inaczej test wypalenia okna trwalby 300 s.
 """
@@ -74,8 +74,8 @@ def test_karta_niesie_projekt_narzedzie_i_maszyne():
     a.on_event("alert", ramka(wpis()))
     z.skok(5)
     card = a.screen().alert
-    assert card.project == "proj"
-    assert card.label == "Bash · maszyna: laptop"
+    row = card.rows[0]
+    assert (row.project, row.tool, row.machine) == ("proj", "Bash", "laptop")
     assert card.title == "CZEKA NA ZGODĘ"
 
 
@@ -101,15 +101,15 @@ def test_karta_w_lingerze_jest_zamrozona():
     # Tak dobrane, zeby przy pierwszym renderze bylo 119 s, a piec sekund pozniej 124 s.
     a.on_event("alert", ramka(wpis(since="2026-08-05T21:05:06Z")))
     z.skok(5)
-    przed = a.screen().alert.waited
-    assert przed == "czeka 1 min"
+    przed = a.screen().alert.rows[0].waited
+    assert przed == "1 min"
     a.on_event("alert", ramka())
     a.screen()                      # uzbrojenie lingera
     z.skok(5)                       # przekracza granice minuty — bez zamrozenia "2 min"
-    assert a.screen().alert.waited == przed
+    assert a.screen().alert.rows[0].waited == przed
 
 
-def test_wypalenie_okna_zwija_karte_do_trojkata():
+def test_wypalenie_okna_zwija_karte_do_znacznika():
     z = Zegar()
     a = app(z, alert_takeover_sec=30)
     a.on_event("alert", ramka(wpis(since="2026-08-05T21:06:50Z")))   # 10 s temu
@@ -123,7 +123,7 @@ def test_wypalenie_okna_zwija_karte_do_trojkata():
     z.skok(a.cfg.blocked_linger_sec + 1)
     ekran = a.screen()
     assert ekran.alert is None, "po alert_takeover_sec karta ma oddac ekran"
-    assert ekran.bands[0].alert, "ale wpis zyje dalej i musi byc widoczny jako trojkat"
+    assert ekran.bands[0].alert, "ale wpis zyje dalej i musi byc widoczny jako znacznik"
 
 
 def test_nowa_blokada_dostaje_nowe_okno():
@@ -141,15 +141,15 @@ def test_nowa_blokada_dostaje_nowe_okno():
 # --- blysk ------------------------------------------------------------------
 
 def fazy(a, z, sekundy):
-    """Wartosci `blink` w kolejnych sekundach."""
+    """Wartosci `flood` w kolejnych sekundach."""
     out = []
     for _ in range(sekundy):
-        out.append(a.screen().alert.blink)
+        out.append(a.screen().alert.flood)
         z.skok(1)
     return out
 
 
-def test_baner_miga_a_potem_przestaje():
+def test_klatka_pelna_wchodzi_i_gasnie():
     z = Zegar(1000.0)
     a = app(z, alert_flash_sec=6)
     a.on_event("alert", ramka(wpis()))
@@ -167,7 +167,7 @@ def test_migotanie_nie_wraca_przy_tykaniu_karty():
     po_migotaniu(a, z)
     for _ in range(5):
         z.skok(60)
-        assert not a.screen().alert.blink
+        assert not a.screen().alert.flood
 
 
 def test_druga_blokada_znow_zapala_migotanie():
@@ -195,7 +195,7 @@ def test_infinity_miga_przez_cale_zycie_karty():
     a.on_event("alert", ramka(wpis()))
     z.skok(5)
     obraz = fazy(a, z, 60)
-    assert any(obraz) and not all(obraz), "ma migac, a nie stac na czerwono"
+    assert any(obraz) and not all(obraz), "ma migac, a nie stac zalane"
     assert any(obraz[-6:]), "po minucie nadal miga"
 
 
@@ -217,7 +217,7 @@ def test_takeover_infinity_nie_zwija_karty():
     assert a.screen().alert is not None, "karta ma stac, dopoki nie odpowiesz"
 
 
-def test_takeover_zero_daje_od_razu_trojkat():
+def test_takeover_zero_daje_od_razu_znacznik():
     z = Zegar()
     a = app(z, alert_takeover_sec=0)
     a.first_data_at = z.t
@@ -247,7 +247,7 @@ def test_migniecie_banera_miesci_sie_w_ticku():
     R = render.Renderer()
     a = R.frame(render.ScreenState(alert=render.alert_state(blokady, now_ms))).rgb565("be")
     b = R.frame(render.ScreenState(
-        alert=render.alert_state(blokady, now_ms, blink=True))).rgb565("be")
+        alert=render.alert_state(blokady, now_ms, flood=True))).rgb565("be")
     rects = surface.coalesce(surface.dirty_tiles(a, b, 480, 320), surface.TILE)
     nbytes = sum((x1 - x0) * (y1 - y0) * 2 for x0, y0, x1, y1 in rects)
     assert nbytes / len(a) < 0.25, "migniecie brudzi %.1f%% klatki" % (nbytes / len(a) * 100)
@@ -312,9 +312,9 @@ def test_wylacznik_konfiguracji():
     assert a.screen().alert is None
 
 
-# --- trojkat przy koncie ----------------------------------------------------
+# --- znacznik przy koncie ---------------------------------------------------
 
-def test_trojkat_laduje_na_pasie_wlasciwego_konta():
+def test_znacznik_laduje_na_pasie_wlasciwego_konta():
     z = Zegar()
     a = app(z)
     a.first_data_at = z.t
@@ -332,8 +332,8 @@ def test_alert_bez_dopasowania_laduje_na_pasie_gornym():
     assert bands[0].alert and not bands[1].alert
 
 
-def test_trojkat_nie_wypycha_tytulu_poza_pas():
-    """Trojkat odejmuje sobie miejsce z budzetu TYTULU, a nie dokleja sie za pasem.
+def test_powod_nie_wypycha_tytulu_poza_pas():
+    """Powod odejmuje sobie miejsce z budzetu TYTULU, a nie dokleja sie za pasem.
 
     Sprawdzane na najgorszym przypadku: dluga nazwa, zegar, znacznik lacza i plakietka
     planu naraz — czyli wszystko, co konkuruje o te sama szerokosc.
@@ -345,7 +345,8 @@ def test_trojkat_nie_wypycha_tytulu_poza_pas():
     dluga = ("bardzo.dluga.nazwa.konta.ktorej.nikt.nie.przewidzial"
              "@poddomena.przyklad.example.pl")
     f = draw.font(L.F_NAME)
-    for alert in (False, True):
+    dlugosci = []
+    for alert in (None, "pytanie"):
         img, d = draw.new_canvas((480, 320))
         state = render.BandState(title=dluga, plan="MAX 5×", show_clock=True,
                                  alert=alert)
@@ -356,10 +357,39 @@ def test_trojkat_nie_wypycha_tytulu_poza_pas():
         for x in range(b.x1 + 1, 480):
             for y in range(b.header[1], b.header[3]):
                 assert px[x, y] == theme.BG, "cos wyjechalo poza pas w kolumnie %d" % x
-    # A sam tytul ma byc KROTSZY, gdy trojkat zajmuje miejsce.
-    bez = draw.ellipsize(dluga, f, b.x1 - b.x0)
-    z_trojkatem = draw.ellipsize(dluga, f, b.x1 - b.x0 - L.WARN_W - L.WARN_GAP)
-    assert len(z_trojkatem) < len(bez)
+        # Koniec TYTULU, nie koniec naglowka: tytul jest do lewej, a powod, plakietka
+        # i zegar do prawej, wiec miedzy nimi jest przerwa. Szukamy pierwszej przerwy
+        # szerszej niz odstep miedzyliterowy.
+        tusz = [any(px[x, y] != theme.BG for y in range(b.header[1], b.header[3]))
+                for x in range(b.x0, b.x1)]
+        koniec, przerwa = 0, 0
+        for i, ma in enumerate(tusz):
+            if ma:
+                koniec, przerwa = i, 0
+            else:
+                przerwa += 1
+                if przerwa >= 6:
+                    break
+        dlugosci.append(koniec)
+    assert dlugosci[1] < dlugosci[0], "powod ma skracac tytul, nie nachodzic na niego"
+
+
+def test_znacznik_pasa_ma_pelna_wysokosc_i_siedzi_w_marginesie():
+    """Pasek 4 px stoi w polu marginesu (PAD_X 14), wiec uklad pasa nie drga ani
+    o piksel — i ma pelna wysokosc pasa niezaleznie od liczby wierszy w srodku."""
+    from panel import draw, layout as L
+
+    lay = L.Layout(480, 320)
+    for b in lay.bands:
+        img, d = draw.new_canvas((480, 320))
+        render.Renderer()._band(d, b, render.BandState(title="konto",
+                                                       alert="zgoda"),
+                                render.ScreenState())
+        px = img.load()
+        assert all(px[x, y] == theme.ACCENT
+                   for x in range(L.MARK_W) for y in range(b.top, b.bottom))
+        assert px[L.MARK_W, b.top] != theme.ACCENT, "pasek jest szerszy niz 4 px"
+        assert L.MARK_W < L.PAD_X, "pasek musialby zabrac miejsce trescia pasa"
 
 
 # --- koszt na drucie --------------------------------------------------------
@@ -398,17 +428,22 @@ def test_przejscie_do_karty_miesci_sie_pod_progiem_pelnej_klatki():
     assert rects <= surface.MAX_RECTS
 
 
-def test_sam_trojkat_jest_tani():
-    """Trojkat ma prawo zapalac sie i gasnac czesto — musi kosztowac tyle co nic."""
+def test_sam_znacznik_jest_tani():
+    """Znacznik ma prawo zapalac sie i gasnac czesto — musi kosztowac tyle co nic.
+
+    Prog jest luzniejszy niz przy trojkacie (2%), bo pasek idzie przez CALA wysokosc
+    pasa, a nazwa konta zmienia przy tym kolor: brudzi sie lewa kolumna kafli i dwa
+    naglowki. 6% to ~0,11 s na Turingu, czyli nadal ulamek ticku.
+    """
     now_ms = fmt.ms(fmt.parse_utc(NOW))
     pasy = scena_pasy(now_ms)
-    z_trojkatem = scena_pasy(now_ms)
-    for band in z_trojkatem.bands:
+    ze_znacznikiem = scena_pasy(now_ms)
+    for band in ze_znacznikiem.bands:
         if band is not None:
-            band.alert = True
-    frakcja, rects = _frakcja(pasy, z_trojkatem)
-    assert frakcja < 0.02, "trojkat zmienia %.2f%% klatki" % (frakcja * 100)
-    assert rects <= 8
+            band.alert = "zgoda"
+    frakcja, rects = _frakcja(pasy, ze_znacznikiem)
+    assert frakcja < 0.08, "znacznik zmienia %.2f%% klatki" % (frakcja * 100)
+    assert rects <= 12
 
 
 # --- format czasu -----------------------------------------------------------
@@ -426,3 +461,104 @@ def test_waited_nie_schodzi_ponizej_zera():
     """Zegary maszyn sie rozjezdzaja, wiec `since` z przyszlosci jest realne."""
     assert fmt.waited(10_000.0, 0.0) == "chwilę"
     assert fmt.waited(None, 0.0) == "—"
+
+
+# --- uklady karty -----------------------------------------------------------
+
+def blokady(n):
+    """n blokad o roznych powodach i stemplach, w kolejnosci parsera."""
+    return status.parse_frame(ramka(*[
+        wpis(key="k%d" % i, reason=("plan", "question", "permission")[i % 3],
+             project="projekt-%d" % i, detail="szczegol %d" % i,
+             since="2026-08-05T21:0%d:00Z" % i)
+        for i in range(n)]))
+
+
+@pytest.mark.parametrize("ile,metoda", [
+    (1, "_alert_solo"), (2, "_alert_pair"), (3, "_alert_list"), (5, "_alert_many"),
+])
+def test_uklad_wybiera_liczba_blokad(ile, metoda, monkeypatch):
+    """Prog jest przy trzech: do dwoch nazwa projektu zostaje bohaterem, od trzech
+    schodzi do listy, bo trzy nazwy w 34 px nie istnieja."""
+    now_ms = fmt.ms(fmt.parse_utc(NOW))
+    stan = render.alert_state(blokady(ile), now_ms)
+    wolane = []
+    R = render.Renderer()
+    for nazwa in ("_alert_solo", "_alert_pair", "_alert_list", "_alert_many"):
+        monkeypatch.setattr(R, nazwa,
+                            lambda d, a, n=nazwa: wolane.append(n))
+    R.frame(render.ScreenState(alert=stan))
+    assert wolane == [metoda]
+
+
+def test_lista_pokazuje_trzy_a_liczy_wszystkie():
+    now_ms = fmt.ms(fmt.parse_utc(NOW))
+    stan = render.alert_state(blokady(5), now_ms)
+    assert len(stan.rows) == render.ALERT_ROWS_MAX
+    assert stan.count == 5
+    assert len(stan.rest) == 2, "reszta idzie do stopki z nazwy, nie znika"
+    assert "5" in stan.title
+
+
+def test_pasmo_podaje_najstarsze_czekanie_a_nie_naglowek():
+    """Kolejnosc sortuje najpierw po POWODZIE, wiec pierwszy wiersz nie musi byc
+    najstarszy — a godzina w pasmie ma byc poczatkiem najstarszego czekania."""
+    now_ms = fmt.ms(fmt.parse_utc(NOW))
+    stan = render.alert_state(status.parse_frame(ramka(
+        wpis(key="plan", reason="plan", since="2026-08-05T21:06:00Z"),
+        wpis(key="zgoda", reason="permission", since="2026-08-05T21:01:00Z"),
+    )), now_ms)
+    assert stan.rows[0].short == "plan", "plan idzie pierwszy"
+    assert stan.at == fmt.hm(fmt.parse_utc("2026-08-05T21:01:00Z"))
+
+
+def test_kafel_szczegolu_nie_wchodzi_na_listwe_trybu():
+    from panel import layout as L
+    lay = L.Layout(480, 320)
+    for linie in (1, 2):
+        assert lay.alert_solo.fits(linie), "kafel na %d linie wchodzi na listwe" % linie
+
+
+@pytest.mark.parametrize("ze_stopka", [True, False])
+def test_wiersze_listy_wypelniaja_ekran_bez_szpar(ze_stopka):
+    """Reszta z dzielenia idzie tam, gdzie daje ja przegladarka. Szpara tla przy
+    stopce czytalaby sie jako urwany ekran."""
+    from panel import layout as L
+    lay = L.Layout(480, 320)
+    for uklad in (lay.alert_list, lay.alert_many):
+        rects = uklad.rows(footer=ze_stopka)
+        assert rects[0][0] == L.BANNER_H
+        for (_, bottom), (top, _) in zip(rects, rects[1:]):
+            assert top == bottom + L.DIVIDER_H, "wiersze nie stykaja sie dzielnikiem"
+        koniec = uklad.footer[1] if ze_stopka else uklad.height
+        assert rects[-1][1] == koniec, "ostatni wiersz nie dochodzi do stopki"
+
+
+@pytest.mark.parametrize("ile", [1, 2, 3, 5])
+def test_przejscie_do_karty_miesci_sie_pod_progiem_dla_kazdego_ukladu(ile):
+    """`FULL_AT = 0.85` musi wytrzymac KAZDY uklad, nie tylko ten z jedna blokada:
+    powyzej progu zestaw wycinkow zamienia sie w pelna klatke, czyli 1,87 s na Turingu
+    zamiast ~1,2 s."""
+    now_ms = fmt.ms(fmt.parse_utc(NOW))
+    pasy = scena_pasy(now_ms)
+    karta = scena_pasy(now_ms)
+    karta.alert = render.alert_state(blokady(ile), now_ms)
+    frakcja, rects = _frakcja(pasy, karta)
+    assert frakcja < surface.FULL_AT, \
+        "uklad na %d blokad brudzi %.1f%% klatki — prog FULL_AT wymaga rewizji" % (
+            ile, frakcja * 100)
+    assert rects <= surface.MAX_RECTS
+
+
+def test_klatka_pelna_miesci_sie_w_ticku():
+    """Sedno warstwy ruchu: podmiana klatki pustej na pelna to pasmo plus rail, nie
+    caly ekran. Pelnoekranowy blysk bylby pelna klatka, czyli 1,87 s powolnego
+    zamalowania zamiast blysku."""
+    now_ms = fmt.ms(fmt.parse_utc(NOW))
+    pusta = render.ScreenState(alert=render.alert_state(blokady(1), now_ms))
+    pelna = render.ScreenState(
+        alert=render.alert_state(blokady(1), now_ms, flood=True))
+    frakcja, _ = _frakcja(pusta, pelna)
+    assert frakcja < 0.25, "klatka pelna brudzi %.1f%% klatki" % (frakcja * 100)
+    assert frakcja * len(render.Renderer().frame(pusta).rgb565("be")) * 6.1e-6 < 0.5, \
+        "nie zdazy w ticku"

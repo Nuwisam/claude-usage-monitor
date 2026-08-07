@@ -43,25 +43,47 @@ class BandState:
         self.ago = ago
         self.note = note
         self.show_clock = show_clock
-        self.alert = alert          # trojkat przy nazwie konta
+        # Powod blokady jednym slowem albo None. Zapala pasek akcentu na lewej krawedzi
+        # pasa i przelacza nazwe konta na ACCENT_100 — czerwieni nie ma w projekcie.
+        self.alert = alert
+
+
+class AlertRow:
+    """Jedna blokada w postaci gotowej do narysowania. Kazdy uklad karty bierze
+    z tego samego zestawu pol — rozni sie tym, ktore pokazuje i jak duzo."""
+
+    __slots__ = ("short", "project", "tool", "machine", "waited", "detail", "mode")
+
+    def __init__(self, short="", project="", tool="", machine="", waited="",
+                 detail="", mode=""):
+        self.short = short          # powod jednym slowem: zgoda / pytanie / plan
+        self.project = project
+        self.tool = tool
+        self.machine = machine
+        self.waited = waited
+        self.detail = detail
+        self.mode = mode            # tryb uprawnien (+ typ subagenta)
 
 
 class AlertState:
-    """Karta przejmujaca ekran. Skladana przez `alert_state()`."""
+    """Karta przejmujaca ekran. Skladana przez `alert_state()`.
 
-    __slots__ = ("title", "project", "label", "waited", "others", "footer", "clock",
-                 "blink")
+    Uklad wybiera sie LICZBA blokad, nie flaga: prog jest przy trzech, bo trzy nazwy
+    projektow w 34 px nie istnieja. Stan niesie wiec wszystkie wiersze, a renderer
+    rozstrzyga, ile z nich i jak duzo o kazdym zmiesci sie na 480 x 320.
+    """
 
-    def __init__(self, title="", project="", label="", waited="", others="",
-                 footer=None, clock="", blink=False):
-        self.blink = blink          # baner na czerwono — faza migania po wejsciu karty
-        self.title = title          # baner: CZEKA NA ZGODĘ / PYTANIE DO CIEBIE / ...
-        self.project = project
-        self.label = label          # narzedzie i maszyna
-        self.waited = waited
-        self.others = others        # "inne: alpha, beta" — tylko gdy blokad jest wiecej
+    __slots__ = ("title", "rows", "count", "at", "rest", "footer", "flood")
+
+    def __init__(self, title="", rows=(), count=0, at="", rest=(), footer=None,
+                 flood=False):
+        self.flood = flood          # klatka PELNA: pasmo zalane akcentem plus rail
+        self.title = title          # baner: CZEKA NA ZGODĘ / CZEKAJĄ · 3 / ...
+        self.rows = list(rows)
+        self.count = count          # WSZYSTKIE blokady, takze niewypisane
+        self.at = at                # godzina najstarszego czekania NA EKRANIE
+        self.rest = list(rest)      # nazwy projektow, ktore nie zmiescily sie w wierszach
         self.footer = footer        # np. informacja o niezgodnym kontrakcie
-        self.clock = clock          # godzina POJAWIENIA sie promptu, nie zywy zegar
 
 
 class ScreenState:
@@ -77,27 +99,53 @@ class ScreenState:
         self.alert = alert          # AlertState — bije i pasy, i komunikat
 
 
-def alert_state(blocked, now_ms=0.0, footer=None, blink=False):
-    """[status.Blocked] -> AlertState. Pierwszy wpis jest naglowkiem — o kolejnosci
-    rozstrzyga `status.parse_frame`, tutaj juz nie ma decyzji do podjecia."""
+# Ile wierszy pokazuje uklad listowy. Wiecej niz trzy nie miesci sie w 282 px
+# w stopniu, ktory da sie przeczytac z drugiego konca biurka.
+ALERT_ROWS_MAX = 3
+
+
+def alert_title(blocked):
+    """Napis w pasmie. Przy jednej blokadzie zdanie o niej, przy wielu licznik.
+
+    "3 czekają" (doslownie z makiety) nie jest polszczyzna przy pieciu — "5 czekają"
+    to blad, a "5 czeka" to inna forma niz przy trzech. Gole "czekają" BEZ zwiazanego
+    liczebnika jest poprawne dla kazdej licznosci, wiec liczba stoi za kropka jako
+    osobny licznik, a nie jako podmiot.
+    """
+    if len(blocked) == 1:
+        return blocked[0].title
+    return "CZEKAJĄ · %d" % len(blocked)
+
+
+def alert_state(blocked, now_ms=0.0, footer=None, flood=False):
+    """[status.Blocked] -> AlertState. O kolejnosci rozstrzyga `status.parse_frame`,
+    tutaj juz nie ma decyzji do podjecia poza tym, ile sie zmiesci."""
     from . import fmt
 
     if not blocked:
         return None
-    head = blocked[0]
-    rest = [b.project for b in blocked[1:] if b.project]
-    since_ms = fmt.ms(head.since)
+    shown = blocked[:ALERT_ROWS_MAX] if len(blocked) > 2 else blocked
+    rows = [AlertRow(
+        short=b.short,
+        project=b.project or "—",
+        tool=b.tool or "",
+        machine=b.machine or "",
+        waited=fmt.waited(fmt.ms(b.since), now_ms),
+        detail=b.detail or "",
+        mode=b.mode_label,
+    ) for b in shown]
+    # Godzina w pasmie to poczatek NAJSTARSZEGO czekania na ekranie, nie `since`
+    # naglowka: kolejnosc sortuje najpierw po powodzie, wiec pierwszy wpis nie musi
+    # byc najstarszy.
+    stamps = [b.since for b in shown if b.since is not None]
     return AlertState(
-        title=head.title,
-        project=head.project or "—",
-        label=head.label,
-        waited="czeka %s" % fmt.waited(since_ms, now_ms),
-        # "inne: alpha, beta" jest poprawne po polsku dla kazdej liczby, wiec nie ma
-        # tu obslugi liczby mnogiej i nie musi byc.
-        others=("inne: %s" % ", ".join(rest)) if rest else "",
+        title=alert_title(blocked),
+        rows=rows,
+        count=len(blocked),
+        at=fmt.hm(min(stamps)) if stamps else "",
+        rest=[b.project for b in blocked[len(shown):] if b.project],
         footer=footer,
-        clock=fmt.hm(head.since) if head.since else "",
-        blink=blink,
+        flood=flood,
     )
 
 
@@ -218,7 +266,7 @@ class Renderer:
                     self._empty_band(d, band_rect)
                 else:
                     self._band(d, band_rect, band, state)
-            d.rectangle(self.layout.divider, fill=theme.DIVIDER)
+            draw.fill_rect(d, self.layout.divider, theme.DIVIDER)
         return Frame(img)
 
     # -- czesci ------------------------------------------------------------
@@ -240,52 +288,261 @@ class Renderer:
             y += 22
 
     def _alert(self, d, a):
-        """Karta przejmujaca — WERSJA ROBOCZA.
+        """Karta przejmujaca ekran. Uklad wybiera LICZBA blokad — patrz AlertState."""
+        if a.rest:
+            self._alert_many(d, a)
+        elif len(a.rows) >= 3:
+            self._alert_list(d, a)
+        elif len(a.rows) == 2:
+            self._alert_pair(d, a)
+        else:
+            self._alert_solo(d, a)
 
-        Zbudowana wylacznie z istniejacego slownika: paleta z theme.py, czcionki
-        z draw.font, `ellipsize` na kazdym napisie o nieznanej dlugosci. Nic tu nie
-        jest nowym pomyslem wizualnym; ma dzialac i nie klocic sie z pasami, a nie
-        wygladac na skonczone.
+    def _alert_banner(self, d, a, x0, x1):
+        """Pasmo karty, wspolne dla wszystkich ukladow.
+
+        Zalanie akcentem (`flood`) jest cala animacja, jaka panel ma: przerysowuje sie
+        linia po linii, wiec klatek posrednich nie ma sensu liczyc — sa dwie, pusta
+        i pelna. Pasmo z railem to ~13% klatki, czyli miesci sie w ticku; pelnoekranowy
+        blysk bylby pelna klatka, a ta idzie na Turingu 1,87 s i wychodzi z niej powolne
+        zamalowanie zamiast blysku.
         """
-        L_ = self.layout.alert
-        f_banner = draw.font(L_.F_BANNER)
-        f_clock = draw.font(L_.F_CLOCK)
-        f_label = draw.font(L_.F_LABEL)
-        f_waited = draw.font(L_.F_WAITED)
-        f_others = draw.font(L_.F_OTHERS)
+        f_head = draw.font(L.F_BANNER)
+        f_at = draw.font(L.F_BANNER_AT)
+        draw.fill_rect(d, (0, 0, self.layout.width, L.BANNER_H),
+                       theme.ACCENT if a.flood else theme.ACCENT_800)
+        if a.flood:
+            draw.fill_rect(d, (0, L.BANNER_H, L.RAIL_W, self.layout.height),
+                           theme.ACCENT)
+        # W zalanym pasmie napis schodzi na tlo karty: 5,51:1 zamiast 2,69:1.
+        head_colour = theme.BG if a.flood else theme.ACCENT_100
+        at_colour = theme.BG if a.flood else theme.ACCENT_200
 
-        # Miga TYLKO baner, nie cały ekran. Pelnoekranowy blysk to z definicji pelna
-        # klatka, a Turing maluje ja 1,87 s progresywnie — wychodzi powolne zamalowanie,
-        # nie blysk. Baner to 17,5% klatki, czyli ~0,33 s, i miesci sie w ticku.
-        d.rectangle(L_.banner, fill=theme.DANGER if a.blink else theme.ACCENT_800)
-        tekst = theme.BG if a.blink else theme.ACCENT_100
-        zegar = theme.BG if a.blink else theme.ACCENT_200
-        right = L_.x1
-        if a.clock:
-            d.text((right, 17), a.clock, font=f_clock, fill=zegar, anchor="ra")
-            right -= draw.text_width(a.clock, f_clock) + 12
-        d.text((L_.x0, 17), draw.ellipsize(a.title, f_banner, right - L_.x0),
-               font=f_banner, fill=tekst)
+        base = L.BANNER_BASE
+        right = x1
+        if a.at:
+            d.text((right, base), a.at, font=f_at, fill=at_colour, anchor="rs")
+            right -= draw.text_width(a.at, f_at) + 12
+        draw.text_tracked(d, (x0, base),
+                          draw.ellipsize_tracked(a.title, f_head, right - x0,
+                                                 L.BANNER_TRACK),
+                          f_head, head_colour, tracking=L.BANNER_TRACK, anchor="ls")
+
+    def _alert_solo(self, d, a):
+        """1a — jedna blokada. Nazwa projektu jest bohaterem karty."""
+        L_ = self.layout.alert_solo
+        row = a.rows[0]
 
         room = L_.x1 - L_.x0
         # Ten sam mechanizm co F_SES_NUM -> F_SES_NUM_TIGHT w pasie: dluga nazwa schodzi
         # o stopien zamiast byc obcieta w polowie.
         f_project = draw.font(L_.F_PROJECT)
-        if draw.text_width(a.project, f_project) > room:
+        if draw.text_width(row.project, f_project) > room:
             f_project = draw.font(L_.F_PROJECT_TIGHT)
-        d.text((L_.x0, L_.project_y), draw.ellipsize(a.project, f_project, room),
-               font=f_project, fill=theme.TEXT)
+        d.text((L_.x0, L_.project_base), draw.ellipsize(row.project, f_project, room),
+               font=f_project, fill=theme.TEXT, anchor="ls")
 
-        if a.label:
-            d.text((L_.x0, L_.label_y), draw.ellipsize(a.label, f_label, room),
-                   font=f_label, fill=theme.TEXT_60)
-        d.text((L_.x0, L_.waited_y), a.waited, font=f_waited, fill=theme.ACCENT_200)
-        tail = a.others or ""
+        self._alert_meta(d, (L_.x0, L_.meta_base), row, draw.font(L_.F_META), room)
+        d.text((L_.x0, L_.waited_base), "czeka %s" % row.waited,
+               font=draw.font(L_.F_WAITED), fill=theme.ACCENT_200, anchor="ls")
+
+        if row.detail:
+            self._alert_detail(d, L_, row.detail)
+        mode = row.mode
         if a.footer:
-            tail = "%s · %s" % (tail, a.footer) if tail else a.footer
-        if tail:
-            d.text((L_.x0, L_.others_y), draw.ellipsize(tail, f_others, room),
-                   font=f_others, fill=theme.TEXT_50)
+            # Niezgodny kontrakt schodzi do listwy diagnostycznej — jest diagnostyka,
+            # a karta i tak bije wszystko inne.
+            mode = "%s · %s" % (mode, a.footer) if mode else a.footer
+        if mode:
+            self._alert_mode(d, L_, mode)
+
+        # Pasmo NA KONCU: w klatce pelnej rail schodzi po calej wysokosci, takze przez
+        # listwe trybu. Rysowane wczesniej, zostaloby przez nia zamalowane — w makiecie
+        # warstwa ruchu jest overlayem nad trescia, nie pod nia.
+        self._alert_banner(d, a, L_.x0, L_.x1)
+
+    def _alert_pair(self, d, a):
+        """1b — dwie blokady w dwoch rownych polowach."""
+        L_ = self.layout.alert_pair
+        for (top, _bottom), row in zip(L_.halves, a.rows):
+            self._alert_half(d, L_, top, row)
+        draw.fill_rect(d, L_.divider, theme.DIVIDER)
+        self._alert_banner(d, a, L_.x0, L_.x1)
+
+    def _alert_half(self, d, L_, top, row):
+        """Jedna polowa: powod i czas w jednym wierszu, pod nimi nazwa, opis i szczegol
+        skrocony do JEDNEJ linii — przy dwoch blokadach nie ma miejsca na wiecej, a dwie
+        linie w jednej polowie i jedna w drugiej czytalyby sie jako pierwszenstwo."""
+        f_short = draw.font(L_.F_SHORT)
+        f_waited = draw.font(L_.F_WAITED)
+        room = L_.x1 - L_.x0
+
+        base = top + L_.SHORT_BASE
+        left = room
+        if row.waited:
+            d.text((L_.x1, base), row.waited, font=f_waited, fill=theme.ACCENT_200,
+                   anchor="rs")
+            left -= draw.text_width(row.waited, f_waited) + L_.GAP
+        draw.text_tracked(d, (L_.x0, base),
+                          draw.ellipsize_tracked(row.short.upper(), f_short, left,
+                                                 L_.SHORT_TRACK),
+                          f_short, theme.ACCENT_200, tracking=L_.SHORT_TRACK,
+                          anchor="ls")
+
+        f_project = draw.font(L_.F_PROJECT)
+        d.text((L_.x0, top + L_.PROJECT_BASE),
+               draw.ellipsize(row.project, f_project, room), font=f_project,
+               fill=theme.TEXT, anchor="ls")
+
+        self._alert_meta(d, (L_.x0, top + L_.META_BASE), row, draw.font(L_.F_META),
+                         room)
+        if row.detail:
+            f_detail = draw.font(L_.F_DETAIL)
+            d.text((L_.x0, top + L_.DETAIL_BASE),
+                   draw.ellipsize(row.detail, f_detail, room), font=f_detail,
+                   fill=theme.TEXT_70, anchor="ls")
+
+    def _alert_list(self, d, a):
+        """1c — trzy blokady w liscie, szczegol najpilniejszej w stopce."""
+        L_ = self.layout.alert_list
+        detail = a.rows[0].detail
+        rects = L_.rows(footer=bool(detail))
+        for (top, bottom), row in zip(rects, a.rows):
+            self._alert_row(d, L_, top, row)
+            if bottom < rects[-1][1]:
+                draw.fill_rect(d, (0, bottom, L_.width, bottom + L.DIVIDER_H),
+                               theme.DIVIDER)
+        if detail:
+            self._alert_footer(d, L_, L_.FOOT_LABEL, detail)
+        self._alert_banner(d, a, L_.x0, L_.x1)
+
+    def _alert_many(self, d, a):
+        """1d — trzy najpilniejsze, reszta zliczona w stopce."""
+        L_ = self.layout.alert_many
+        rects = L_.rows(footer=True)
+        for (top, bottom), row in zip(rects, a.rows):
+            self._alert_row(d, L_, top, row, machine_only=True)
+            if bottom < rects[-1][1]:
+                draw.fill_rect(d, (0, bottom, L_.width, bottom + L.DIVIDER_H),
+                               theme.DIVIDER)
+        self._alert_rest(d, L_, a)
+        self._alert_banner(d, a, L_.x0, L_.x1)
+
+    def _alert_rest(self, d, L_, a):
+        """Stopka licznika: ile jeszcze czeka i jak sie nazywaja.
+
+        "+2 WIĘCEJ" jest nieodmienne, wiec dziala dla kazdej licznosci — inaczej niz
+        "2 inne" / "5 innych".
+        """
+        x0, y0, x1, y1 = L_.footer
+        draw.fill_rect(d, L_.footer, theme.SUNKEN)
+        f_label = draw.font(L_.F_FOOT_LABEL)
+        f_names = draw.font(L_.F_FOOT)
+        base = y0 + L_.FOOT_BASE
+        label = "+%d WIĘCEJ" % len(a.rest)
+        x = L_.x0 + draw.text_tracked(d, (L_.x0, base), label, f_label,
+                                      theme.ACCENT_200, tracking=1, anchor="ls")
+        x += L_.FOOT_GAP
+        d.text((x, base), draw.ellipsize(", ".join(a.rest), f_names, L_.x1 - x),
+               font=f_names, fill=theme.TEXT_60, anchor="ls")
+
+    def _alert_row(self, d, L_, top, row, machine_only=False):
+        """Jeden wiersz listy: powod w stalej kolumnie, nazwa z opisem, czas do prawej.
+
+        Kolumna powodu jest STALA, a nie dopasowana do napisu: przy trzech wierszach oko
+        czyta pionowa krawedz nazw, a nie kazdy wiersz osobno.
+        """
+        f_reason = draw.font(L_.F_REASON)
+        f_time = draw.font(L_.F_TIME)
+        draw.text_tracked(d, (L_.x0, top + L_.REASON_BASE),
+                          draw.ellipsize_tracked(row.short.upper(), f_reason,
+                                                 L_.REASON_W, L_.REASON_TRACK),
+                          f_reason, theme.ACCENT_200, tracking=L_.REASON_TRACK,
+                          anchor="ls")
+        if row.waited:
+            d.text((L_.x1, top + L_.TIME_BASE), row.waited, font=f_time,
+                   fill=theme.ACCENT_200, anchor="rs")
+
+        room = L_.name_x1 - L_.name_x
+        f_project = draw.font(L_.F_PROJECT)
+        d.text((L_.name_x, top + L_.PROJECT_BASE),
+               draw.ellipsize(row.project, f_project, room), font=f_project,
+               fill=theme.TEXT, anchor="ls")
+        if machine_only:
+            # Przy czterech blokadach narzedzie wypada: nazwa maszyny mowi, GDZIE isc,
+            # a narzedzie dopiero po dojsciu — na 480 px pierwsze bije drugie.
+            d.text((L_.name_x, top + L_.META_BASE),
+                   draw.ellipsize(row.machine, draw.font(L_.F_META), room),
+                   font=draw.font(L_.F_META), fill=theme.TEXT_50, anchor="ls")
+        else:
+            self._alert_meta(d, (L_.name_x, top + L_.META_BASE), row,
+                             draw.font(L_.F_META), room, colour=theme.TEXT_50,
+                             named=False)
+
+    def _alert_footer(self, d, L_, label, text):
+        """Stopka: jedna linia o najpilniejszej blokadzie albo licznik reszty."""
+        x0, y0, x1, y1 = L_.footer
+        draw.fill_rect(d, L_.footer, theme.SUNKEN)
+        f_label = draw.font(L_.F_FOOT_LABEL)
+        f_text = draw.font(L_.F_FOOT)
+        draw.text_tracked(d, (L_.x0, y0 + L_.FOOT_LABEL_BASE), label, f_label,
+                          theme.TEXT_45, tracking=1, anchor="ls")
+        d.text((L_.x0, y0 + L_.FOOT_TEXT_BASE),
+               draw.ellipsize(text, f_text, L_.x1 - L_.x0), font=f_text,
+               fill=theme.TEXT_70, anchor="ls")
+
+    def _alert_meta(self, d, xy, row, f, room, colour=theme.TEXT_60, named=True):
+        """Narzedzie i maszyna, na LINII BAZOWEJ podanej przez wolajacego. Kropka jest
+        ciemniejsza od obu czlonow, zeby czytalo sie to jako dwie informacje, a nie
+        jako jedno zdanie.
+
+        `named` przelacza "maszyna laptop" na samo "laptop": przy jednej i dwoch
+        blokadach jest miejsce na slowo, ktore mowi, co ta nazwa znaczy, a w liscie
+        nie ma — i tam kontekst niesie sama kolumna.
+        """
+        x, y = xy
+        if row.tool:
+            text = draw.ellipsize(row.tool, f, room)
+            d.text((x, y), text, font=f, fill=colour, anchor="ls")
+            x += draw.text_width(text, f)
+        if row.machine:
+            if row.tool:
+                d.text((x + 5, y), "·", font=f, fill=theme.TEXT_28, anchor="ls")
+                x += 5 + draw.text_width("·", f) + 5
+            name = "maszyna %s" % row.machine if named else row.machine
+            d.text((x, y), draw.ellipsize(name, f, xy[0] + room - x), font=f,
+                   fill=colour, anchor="ls")
+
+    def _alert_detail(self, d, L_, detail):
+        """Kafel `Szczegół` — to, o co Claude pyta, a nie tylko to, ze pyta."""
+        f_label = draw.font(L_.F_DETAIL_LABEL)
+        f_text = draw.font(L_.F_DETAIL)
+        inner = L_.x1 - L_.x0 - 2 * L_.DETAIL_PAD_X
+        lines = draw.wrap_lines(detail, f_text, inner, L_.DETAIL_LINES)
+        box = L_.detail_box(len(lines))
+        draw.rounded(d, box, L_.DETAIL_RADIUS, fill=theme.SURFACE)
+        x = box[0] + L_.DETAIL_PAD_X
+        draw.text_tracked(d, (x, box[1] + L_.DETAIL_LABEL_BASE), "SZCZEGÓŁ", f_label,
+                          theme.TEXT_45, tracking=1, anchor="ls")
+        y = box[1] + L_.DETAIL_TEXT_BASE
+        for line in lines:
+            d.text((x, y), line, font=f_text, fill=theme.TEXT_78, anchor="ls")
+            y += L_.DETAIL_LINE
+
+    def _alert_mode(self, d, L_, mode):
+        """Listwa diagnostyczna: dlaczego to w ogole jest pytanie."""
+        f_label = draw.font(L_.F_MODE_LABEL)
+        f_mode = draw.font(L_.F_MODE)
+        draw.fill_rect(d, L_.mode, theme.SUNKEN)
+        x = L.ALERT_PAD_X
+        # Etykieta i wartosc stoja na WSPOLNEJ linii bazowej, nie kazda wysrodkowana
+        # osobno: przy dwoch stopniach pisma srodek pudelka fontu wypada gdzie indziej
+        # niz srodek liter i wersaliki wygladaja, jakby sie osunely.
+        y = L_.MODE_BASE
+        x += draw.text_tracked(d, (x, y), "TRYB", f_label, theme.TEXT_45,
+                               tracking=1, anchor="ls") + 8
+        d.text((x, y), draw.ellipsize(mode, f_mode, L_.x1 - x), font=f_mode,
+               fill=theme.TEXT_70, anchor="ls")
 
     def _empty_band(self, d, b):
         f = draw.font(13)
@@ -293,6 +550,11 @@ class Renderer:
                font=f, fill=theme.TEXT_40, anchor="lm")
 
     def _band(self, d, b, band, state):
+        if band.alert:
+            # Pasek siedzi w polu marginesu (PAD_X 14), wiec uklad pasa nie drga ani
+            # o piksel — i ma PELNA wysokosc pasa, niezaleznie od tego, ile wierszy
+            # pas ma w srodku.
+            draw.fill_rect(d, (0, b.top, L.MARK_W, b.bottom), theme.ACCENT)
         self._header(d, b, band, state)
         self._window(d, b, band, kind="session")
         self._window(d, b, band, kind="week")
@@ -321,17 +583,22 @@ class Renderer:
             w = draw.tracked_width(band.plan.upper(), f_plan, 1)
             draw.text_tracked(d, (right - w, y + 5), band.plan.upper(), f_plan,
                               theme.TEXT_50, tracking=1)
+            right -= w + L.REASON_GAP
+
+        if band.alert:
+            # Powod stoi W LINII Z PLANEM, nie przy nazwie: nazwa bywa skracana, a ten
+            # napis nie moze zniknac razem z jej koncowka.
+            f_reason = draw.font(L.F_REASON)
+            word = band.alert.upper()
+            w = draw.tracked_width(word, f_reason, 1)
+            draw.text_tracked(d, (right - w, y + 5), word, f_reason,
+                              theme.ACCENT_200, tracking=1)
             right -= w + 8
 
-        room = max(20, right - b.x0 - ((L.WARN_W + L.WARN_GAP) if band.alert else 0))
+        room = max(20, right - b.x0)
         title = draw.ellipsize(band.title, f_name, room)
-        d.text((b.x0, y), title, font=f_name, fill=theme.TEXT)
-        if band.alert:
-            # Przyklejony do PRAWEJ KRAWEDZI NAZWY, nie do marginesu — inaczej przy
-            # krotkiej nazwie wisialby 300 px od niej i czytalby sie jako ozdoba pasa.
-            x = b.x0 + draw.text_width(title, f_name) + L.WARN_GAP
-            draw.warn_triangle(d, (x, y + 3, x + L.WARN_W, y + 3 + L.WARN_H),
-                               theme.DANGER)
+        d.text((b.x0, y), title, font=f_name,
+               fill=theme.ACCENT_100 if band.alert else theme.TEXT)
 
     def _link_mark(self, d, centre, link):
         """Kropka pelna = na zywo, pierscien = wznawiam, przekreslona = brak.

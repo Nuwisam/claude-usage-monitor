@@ -14,6 +14,16 @@ REASONS = {
     "plan": "PLAN DO ZATWIERDZENIA",
 }
 
+# Ten sam powod skrotem — do listy, gdzie na zdanie nie ma miejsca. Wersalikami
+# sklada je dopiero renderer, bo to samo slowo stoi tez w pasie konta po zwinieciu.
+SHORT = {
+    "permission": "zgoda",
+    "question": "pytanie",
+    "plan": "plan",
+}
+
+SHORT_UNKNOWN = "czeka"
+
 # Ktory powod idzie w naglowek karty, gdy blokad jest kilka. Plan przed pytaniem, pytanie
 # przed zgoda: im wiekszy kawalek pracy stoi za blokada, tym drozej kosztuje kazda minuta
 # czekania. Remis rozstrzyga NAJSTARSZE `since`.
@@ -26,11 +36,13 @@ class Blocked:
     """Jedna zablokowana sesja."""
 
     __slots__ = ("key", "machine", "reason", "project", "tool", "detail",
-                 "since", "account_uuid", "session_id", "agent_id")
+                 "since", "account_uuid", "session_id", "agent_id", "agent_type",
+                 "permission_mode")
 
     def __init__(self, key, machine=None, reason="permission", project=None,
                  tool=None, detail=None, since=None, account_uuid=None,
-                 session_id=None, agent_id=None):
+                 session_id=None, agent_id=None, agent_type=None,
+                 permission_mode=None):
         self.key = key
         self.machine = machine
         self.reason = reason
@@ -41,6 +53,8 @@ class Blocked:
         self.account_uuid = account_uuid
         self.session_id = session_id
         self.agent_id = agent_id
+        self.agent_type = agent_type
+        self.permission_mode = permission_mode
 
     @property
     def title(self):
@@ -49,15 +63,22 @@ class Blocked:
         return REASONS.get(self.reason, UNKNOWN)
 
     @property
-    def rank(self):
-        return RANK.get(self.reason, len(RANK))
+    def short(self):
+        """Powod w jednym slowie. Ta sama zasada co przy `title`: nieznany `reason`
+        dostaje slowo, ktore jest prawdziwe zawsze."""
+        return SHORT.get(self.reason, SHORT_UNKNOWN)
 
     @property
-    def label(self):
-        """Co widac w wierszu pod nazwa projektu: narzedzie i maszyna."""
-        bits = [b for b in (self.tool, self.machine and "maszyna: %s" % self.machine)
-                if b]
+    def mode_label(self):
+        """Listwa diagnostyczna: tryb uprawnien, a przy blokadzie w subagencie takze
+        jego typ. Bez tego "czemu on w ogole pyta" jest pytaniem bez odpowiedzi —
+        tryby auto-zatwierdzajace rozstrzygaja wywolanie PRZED warstwa promptu."""
+        bits = [b for b in (self.permission_mode, self.agent_type) if b]
         return " · ".join(bits)
+
+    @property
+    def rank(self):
+        return RANK.get(self.reason, len(RANK))
 
     def __repr__(self):
         return "<Blocked %s %s %s>" % (self.reason, self.project, self.machine)
@@ -84,6 +105,8 @@ def parse_entry(raw):
         account_uuid=_text(raw.get("accountUuid")),
         session_id=_text(raw.get("sessionId")),
         agent_id=_text(raw.get("agentId")),
+        agent_type=_text(raw.get("agentType")),
+        permission_mode=_text(raw.get("permissionMode")),
     )
 
 

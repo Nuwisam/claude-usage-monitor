@@ -24,7 +24,8 @@ def test_typowa_ramka():
     out = status.parse_frame(frame(entry()))
     assert len(out) == 1
     assert out[0].title == "CZEKA NA ZGODĘ"
-    assert out[0].label == "Bash · maszyna: laptop"
+    assert out[0].short == "zgoda"
+    assert (out[0].tool, out[0].machine) == ("Bash", "laptop")
 
 
 def test_uszkodzony_wpis_nie_zabija_reszty():
@@ -72,6 +73,25 @@ def test_duplikat_klucza_liczy_sie_raz():
     assert len(out) == 1
 
 
-def test_label_bez_maszyny():
+def test_brak_maszyny_nie_jest_bledem():
     out = status.parse_frame(frame(entry(machine=None)))
-    assert out[0].label == "Bash"
+    assert out[0].tool == "Bash" and out[0].machine is None
+
+
+def test_tryb_i_subagent_wchodza_do_listwy():
+    """`permissionMode` i `agentType` sa w kontrakcie od poczatku (docs/API.md § 3.2)
+    i to one odpowiadaja na pytanie 'czemu on w ogole pyta'."""
+    out = status.parse_frame(frame(entry(permissionMode="plan",
+                                         agentType="general-purpose")))
+    assert out[0].mode_label == "plan · general-purpose"
+
+
+def test_listwa_trybu_znosi_brak_obu_pol():
+    out = status.parse_frame(frame(entry()))
+    assert out[0].mode_label == ""
+
+
+def test_nieznany_reason_ma_skrot():
+    """Ta sama zasada co przy `title`: nieznany powod dostaje slowo prawdziwe zawsze."""
+    out = status.parse_frame(frame(entry(reason="cos-nowego")))
+    assert out[0].short == status.SHORT_UNKNOWN

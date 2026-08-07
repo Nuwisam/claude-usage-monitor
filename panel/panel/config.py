@@ -44,21 +44,23 @@ DEFAULTS = {
     "record_sse": False,
     # --- zablokowane sesje Claude Code (ramka `alert`) ---
     # Wylacznik calej funkcji. Przy `false` ramka jest ignorowana i panel zachowuje sie
-    # dokladnie jak przedtem — trojkat nie zapala sie ani razu.
+    # dokladnie jak przedtem — znacznik nie zapala sie ani razu.
     "session_alerts": True,
-    # Jak dlugo blokada ZAJMUJE ekran karta. Potem zwija sie do czerwonego trojkata
-    # obok nazwy konta; wpis zyje dalej, przestaje byc tylko przejmujacy. Liczone od
+    # Jak dlugo blokada ZAJMUJE ekran karta. Potem zwija sie do paska akcentu na lewej
+    # krawedzi pasa konta; wpis zyje dalej, przestaje byc tylko przejmujacy. Liczone od
     # `since` z serwera, wiec restart panelu nie wskrzesza starej karty.
     #
-    # Liczba sekund, 0 (od razu trojkat, bez karty) albo "infinity" — wtedy karta stoi,
+    # Liczba sekund, 0 (od razu znacznik, bez karty) albo "infinity" — wtedy karta stoi,
     # dopoki nie odpowiesz, i zuzycie jest przez ten czas niewidoczne.
     "alert_takeover_sec": 300,
-    # Jak dlugo baner karty miga na czerwono. Liczba sekund, 0 wylacza albo "infinity" —
-    # wtedy miga przez cale zycie karty, czyli do `alert_takeover_sec`.
+    # Jak dlugo karta MIGA, czyli podmienia klatke pusta na zalana akcentem. Liczba
+    # sekund, 0 wylacza albo "infinity" — wtedy miga przez cale zycie karty, czyli do
+    # `alert_takeover_sec`.
     #
-    # Miga sam baner (20% klatki, ~375 ms) — pelnoekranowy blysk to pelna klatka, czyli
-    # 1,87 s powolnego zamalowania zamiast blysku. Kazde mrugniecie kosztuje ~0,73 s na
-    # obu ekranach lacznie, wiec "infinity" zajmuje lacze przez caly czas trwania karty.
+    # Zalanie obejmuje pasmo i rail 6 px (~13% klatki, ok. 0,24 s na Turingu) — animacji
+    # w krokach nie ma i nie bedzie: panel przerysowuje sie linia po linii, wiec klatki
+    # posrednie rozjechalyby sie na przebiegu. Kazde mrugniecie kosztuje na AX206 pelna
+    # klatke (355 ms), wiec "infinity" zajmuje lacze przez caly czas trwania karty.
     # Zapala sie raz na KLUCZ blokady.
     "alert_flash_sec": 20,
     # Ile blokada musi trwac, zanim karta wejdzie. Chroni przed blyskiem przy zgodzie
