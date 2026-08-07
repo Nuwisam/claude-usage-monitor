@@ -534,6 +534,74 @@ def test_wiersze_listy_wypelniaja_ekran_bez_szpar(ze_stopka):
         assert rects[-1][1] == koniec, "ostatni wiersz nie dochodzi do stopki"
 
 
+def _dol_tuszu(px, x0, x1, y0, y1, tlo, prog=25):
+    """Ostatni wiersz, w ktorym w podanym prostokacie jest tusz. Dla napisu bez
+    zejsc ponizej linii bazowej to jest wlasnie linia bazowa minus jeden."""
+    ostatni = None
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            p = px[x, y]
+            if max(abs(p[i] - tlo[i]) for i in range(3)) > prog:
+                ostatni = y
+                break
+    return ostatni
+
+
+def test_tusz_pasma_i_listwy_stoi_tam_gdzie_makieta():
+    """Linie bazowe sa ZMIERZONE na wyrenderowanej makiecie, wiec test pilnuje pomiaru,
+    a nie wzoru.
+
+    Zmierzone na makiecie (`1a-alert`, render 3x, dol cyfr zegara i dol napisu w listwie
+    `Tryb`): pasmo 24,33 px, listwa 306,33 px. Pillow z anchor="ls" klazie dol tuszu na
+    `base - 1`, wiec przy poprawnych stalych ostatni zapisany wiersz to 23 i 305.
+    Wczesniej bylo 26 i 308 — o 1,67 px za nisko, w kazdym z czterech ukladow naraz.
+    """
+    from panel import layout as L
+
+    now_ms = fmt.ms(fmt.parse_utc(NOW))
+    # Z `permissionMode`, inaczej listwa `Tryb` w ogole sie nie rysuje i mierzylibysmy
+    # pusty pas.
+    stan = render.alert_state(
+        status.parse_frame(ramka(wpis(permissionMode="default"))), now_ms)
+    px = render.Renderer().frame(render.ScreenState(alert=stan)).image.load()
+
+    assert L.BANNER_BASE == 24, "pomiar makiety: dol cyfr zegara na 24,33 px"
+    assert L.AlertSolo.MODE_BASE == 306, "pomiar makiety: dol napisu `Tryb` na 306,33 px"
+
+    # Zegar w pasmie: cyfry nie schodza ponizej linii bazowej, wiec dol tuszu ja podaje.
+    assert _dol_tuszu(px, 380, 470, 0, L.BANNER_H, theme.ACCENT_800) == L.BANNER_BASE - 1
+    # Listwa `Tryb`: ani "TRYB", ani "default" nie ma zejscia.
+    assert _dol_tuszu(px, 18, 300, 320 - L.AlertSolo.MODE_H, 320,
+                      theme.SUNKEN) == L.AlertSolo.MODE_BASE - 1
+
+
+@pytest.mark.parametrize("ile", [1, 2, 3, 5])
+@pytest.mark.parametrize("zalane,kolor", [(False, "NEUTRAL_900"), (True, "ACCENT")])
+def test_rail_stoi_w_obu_klatkach_kazdego_ukladu(ile, zalane, kolor):
+    """Rail nie jest wlasnoscia klatki pelnej: stoi pod pasmem zawsze, a zalanie tylko
+    go przemalowuje. Pasek pojawiajacy sie z niczego bylby mocniejszym ruchem niz zmiana
+    koloru, a poza oknem `alert_flash_sec` karta zostawalaby bez lewej krawedzi.
+
+    Idzie przez CALA wysokosc pod pasmem, takze przez listwe `Tryb` w ukladzie 1a
+    i przez stopki w 1c/1d — dlatego pasmo rysuje sie na koncu, nad trescia.
+    """
+    from panel import layout as L
+
+    oczekiwany = getattr(theme, kolor)
+    now_ms = fmt.ms(fmt.parse_utc(NOW))
+    stan = render.alert_state(blokady(ile), now_ms, flood=zalane)
+    px = render.Renderer().frame(render.ScreenState(alert=stan)).image.load()
+
+    for y in range(L.BANNER_H, 320):
+        for x in range(L.RAIL_W):
+            assert px[x, y] == oczekiwany, \
+                "rail dziurawy w (%d, %d) przy %d blokadach" % (x, y, ile)
+        assert px[L.RAIL_W, y] != oczekiwany, \
+            "rail szerszy niz %d px w wierszu %d" % (L.RAIL_W, y)
+    assert px[0, L.BANNER_H - 1] != oczekiwany or zalane, \
+        "rail wchodzi w pasmo"
+
+
 @pytest.mark.parametrize("ile", [1, 2, 3, 5])
 def test_przejscie_do_karty_miesci_sie_pod_progiem_dla_kazdego_ukladu(ile):
     """`FULL_AT = 0.85` musi wytrzymac KAZDY uklad, nie tylko ten z jedna blokada:
@@ -550,14 +618,18 @@ def test_przejscie_do_karty_miesci_sie_pod_progiem_dla_kazdego_ukladu(ile):
     assert rects <= surface.MAX_RECTS
 
 
-def test_klatka_pelna_miesci_sie_w_ticku():
+@pytest.mark.parametrize("ile", [1, 2, 3, 5])
+def test_klatka_pelna_miesci_sie_w_ticku(ile):
     """Sedno warstwy ruchu: podmiana klatki pustej na pelna to pasmo plus rail, nie
     caly ekran. Pelnoekranowy blysk bylby pelna klatka, czyli 1,87 s powolnego
-    zamalowania zamiast blysku."""
+    zamalowania zamiast blysku.
+
+    Po jednym przebiegu na uklad, bo koszt zalania nie moze zalezec od tego, ile
+    blokad akurat czeka — pasmo i rail sa wspolne, wiec liczba ma wyjsc ta sama."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
-    pusta = render.ScreenState(alert=render.alert_state(blokady(1), now_ms))
+    pusta = render.ScreenState(alert=render.alert_state(blokady(ile), now_ms))
     pelna = render.ScreenState(
-        alert=render.alert_state(blokady(1), now_ms, flood=True))
+        alert=render.alert_state(blokady(ile), now_ms, flood=True))
     frakcja, _ = _frakcja(pusta, pelna)
     assert frakcja < 0.25, "klatka pelna brudzi %.1f%% klatki" % (frakcja * 100)
     assert frakcja * len(render.Renderer().frame(pusta).rgb565("be")) * 6.1e-6 < 0.5, \

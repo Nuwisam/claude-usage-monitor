@@ -210,14 +210,17 @@ Prezentacja jest dwustopniowa i to jest decyzja, nie etap:
    plus licznik reszty.
 
    Przez `alert_flash_sec` karta **miga**, czyli podmienia klatkę pustą na **zalaną
-   akcentem**: pasmo w `ACCENT` i rail 6 px na lewej krawędzi, napisy w paśmie na tle.
-   Bez tego karta wchodzi cicho, bo jest ciemna jak reszta ekranu. Wartość to liczba
+   akcentem**: pasmo i rail 6 px na lewej krawędzi przechodzą na `ACCENT`, napisy
+   w paśmie na tło. Rail stoi tam **w obu klatkach** — w spoczynkowej w `NEUTRAL_900`,
+   więc zalanie zmienia kolor, a nie układ, i karta ma stałą lewą krawędź także po
+   wygaśnięciu okna. Bez migania karta wchodzi cicho, bo jest ciemna jak reszta ekranu. Wartość to liczba
    sekund (domyślnie 20), `0` wyłącza, a `"infinity"` miga przez całe życie karty. Zapala
    się raz na **klucz** blokady, więc tyknięcie „czeka N min" niczym nie miga.
 
    **Migają dwie klatki, nie animacja w krokach.** Panel przerysowuje się linia po linii,
    więc klatki pośrednie rozjechałyby się na przebiegu. Zalanie to ~13 % klatki
-   (pasmo plus rail), czyli ok. 0,24 s na Turingu i 355 ms na AX206 — oba zdążą w ticku.
+   (pasmo plus przemalowany rail), czyli ok. 0,24 s na Turingu i 355 ms na AX206 — oba
+   zdążą w ticku.
    Pełnoekranowy błysk jest tu strukturalnie niemożliwy: to z definicji pełna klatka,
    a Turing maluje ją 1,87 s progresywnie (sprawdzone na sprzęcie).
 2. Potem zwija się do **paska akcentu 4 px na lewej krawędzi pasa** konta, które zgłosiło

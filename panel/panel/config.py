@@ -57,7 +57,8 @@ DEFAULTS = {
     # sekund, 0 wylacza albo "infinity" — wtedy miga przez cale zycie karty, czyli do
     # `alert_takeover_sec`.
     #
-    # Zalanie obejmuje pasmo i rail 6 px (~13% klatki, ok. 0,24 s na Turingu) — animacji
+    # Zalanie przemalowuje pasmo i rail 6 px (~13% klatki, ok. 0,24 s na Turingu) — rail
+    # stoi tam takze w spoczynku, w `NEUTRAL_900`, wiec zmienia sie kolor, nie uklad. Animacji
     # w krokach nie ma i nie bedzie: panel przerysowuje sie linia po linii, wiec klatki
     # posrednie rozjechalyby sie na przebiegu. Kazde mrugniecie kosztuje na AX206 pelna
     # klatke (355 ms), wiec "infinity" zajmuje lacze przez caly czas trwania karty.

@@ -306,14 +306,18 @@ class Renderer:
         i pelna. Pasmo z railem to ~13% klatki, czyli miesci sie w ticku; pelnoekranowy
         blysk bylby pelna klatka, a ta idzie na Turingu 1,87 s i wychodzi z niej powolne
         zamalowanie zamiast blysku.
+
+        Rail stoi w OBU klatkach — zalanie tylko go przemalowuje. Pasek, ktory pojawia
+        sie z niczego i znika, jest mocniejszym ruchem niz zmiana koloru, a karta ma
+        dzieki temu stala lewa krawedz przez cale swoje zycie, nie tylko przez
+        `alert_flash_sec`.
         """
         f_head = draw.font(L.F_BANNER)
         f_at = draw.font(L.F_BANNER_AT)
         draw.fill_rect(d, (0, 0, self.layout.width, L.BANNER_H),
                        theme.ACCENT if a.flood else theme.ACCENT_800)
-        if a.flood:
-            draw.fill_rect(d, (0, L.BANNER_H, L.RAIL_W, self.layout.height),
-                           theme.ACCENT)
+        draw.fill_rect(d, (0, L.BANNER_H, L.RAIL_W, self.layout.height),
+                       theme.ACCENT if a.flood else theme.NEUTRAL_900)
         # W zalanym pasmie napis schodzi na tlo karty: 5,51:1 zamiast 2,69:1.
         head_colour = theme.BG if a.flood else theme.ACCENT_100
         at_colour = theme.BG if a.flood else theme.ACCENT_200
@@ -342,7 +346,8 @@ class Renderer:
         d.text((L_.x0, L_.project_base), draw.ellipsize(row.project, f_project, room),
                font=f_project, fill=theme.TEXT, anchor="ls")
 
-        self._alert_meta(d, (L_.x0, L_.meta_base), row, draw.font(L_.F_META), room)
+        self._alert_meta(d, (L_.x0, L_.meta_base), row, draw.font(L_.F_META), room,
+                         dim_dot=True)
         d.text((L_.x0, L_.waited_base), "czeka %s" % row.waited,
                font=draw.font(L_.F_WAITED), fill=theme.ACCENT_200, anchor="ls")
 
@@ -356,9 +361,9 @@ class Renderer:
         if mode:
             self._alert_mode(d, L_, mode)
 
-        # Pasmo NA KONCU: w klatce pelnej rail schodzi po calej wysokosci, takze przez
-        # listwe trybu. Rysowane wczesniej, zostaloby przez nia zamalowane — w makiecie
-        # warstwa ruchu jest overlayem nad trescia, nie pod nia.
+        # Pasmo NA KONCU: rail schodzi po calej wysokosci, takze przez listwe trybu.
+        # Rysowany wczesniej, zostalby przez nia zamalowany — w makiecie rail jest
+        # `position: absolute`, wiec maluje sie nad blokami w przeplywie.
         self._alert_banner(d, a, L_.x0, L_.x1)
 
     def _alert_pair(self, d, a):
@@ -394,8 +399,10 @@ class Renderer:
                draw.ellipsize(row.project, f_project, room), font=f_project,
                fill=theme.TEXT, anchor="ls")
 
+        # 58%, nie 62% jak w 1a: polowka jest ciasniejsza, wiec wiersz wtorny cichnie
+        # o stopien, zeby nazwa projektu nie musiala z nim konkurowac.
         self._alert_meta(d, (L_.x0, top + L_.META_BASE), row, draw.font(L_.F_META),
-                         room)
+                         room, colour=theme.TEXT_58)
         if row.detail:
             f_detail = draw.font(L_.F_DETAIL)
             d.text((L_.x0, top + L_.DETAIL_BASE),
@@ -444,7 +451,7 @@ class Renderer:
                                       theme.ACCENT_200, tracking=1, anchor="ls")
         x += L_.FOOT_GAP
         d.text((x, base), draw.ellipsize(", ".join(a.rest), f_names, L_.x1 - x),
-               font=f_names, fill=theme.TEXT_60, anchor="ls")
+               font=f_names, fill=theme.TEXT_62_SUNKEN, anchor="ls")
 
     def _alert_row(self, d, L_, top, row, machine_only=False):
         """Jeden wiersz listy: powod w stalej kolumnie, nazwa z opisem, czas do prawej.
@@ -486,30 +493,44 @@ class Renderer:
         f_label = draw.font(L_.F_FOOT_LABEL)
         f_text = draw.font(L_.F_FOOT)
         draw.text_tracked(d, (L_.x0, y0 + L_.FOOT_LABEL_BASE), label, f_label,
-                          theme.TEXT_45, tracking=1, anchor="ls")
+                          theme.TEXT_45_SUNKEN, tracking=1, anchor="ls")
         d.text((L_.x0, y0 + L_.FOOT_TEXT_BASE),
                draw.ellipsize(text, f_text, L_.x1 - L_.x0), font=f_text,
-               fill=theme.TEXT_70, anchor="ls")
+               fill=theme.TEXT_72_SUNKEN, anchor="ls")
 
-    def _alert_meta(self, d, xy, row, f, room, colour=theme.TEXT_60, named=True):
-        """Narzedzie i maszyna, na LINII BAZOWEJ podanej przez wolajacego. Kropka jest
-        ciemniejsza od obu czlonow, zeby czytalo sie to jako dwie informacje, a nie
-        jako jedno zdanie.
+    def _alert_meta(self, d, xy, row, f, room, colour=theme.TEXT_62, named=True,
+                    dim_dot=False):
+        """Narzedzie i maszyna, na LINII BAZOWEJ podanej przez wolajacego.
 
         `named` przelacza "maszyna laptop" na samo "laptop": przy jednej i dwoch
         blokadach jest miejsce na slowo, ktore mowi, co ta nazwa znaczy, a w liscie
         nie ma — i tam kontekst niesie sama kolumna.
+
+        `dim_dot` to uklad 1a i tylko on. Makieta sklada tam ten wiersz z TRZECH pudelek
+        z `gap: 7px`, a kropce daje wlasny, ciemniejszy odcien — czyta sie to jako dwie
+        informacje, a nie jako jedno zdanie. Uklady 1b i 1c maja w tym samym miejscu
+        jeden przebieg tekstu ze zwyklymi spacjami, wiec kropka jest tam w kolorze
+        wiersza. Rysowanie wszedzie wersji z 1a gubilo kropke w liscie: `TEXT_28` na tle
+        karty to ~1,5:1.
         """
         x, y = xy
+        name = ("maszyna %s" % row.machine) if named else row.machine
+        if not dim_dot:
+            czlony = [c for c in (row.tool, name) if c]
+            if czlony:
+                d.text((x, y), draw.ellipsize(" · ".join(czlony), f, room), font=f,
+                       fill=colour, anchor="ls")
+            return
+
         if row.tool:
             text = draw.ellipsize(row.tool, f, room)
             d.text((x, y), text, font=f, fill=colour, anchor="ls")
             x += draw.text_width(text, f)
-        if row.machine:
+        if name:
             if row.tool:
-                d.text((x + 5, y), "·", font=f, fill=theme.TEXT_28, anchor="ls")
-                x += 5 + draw.text_width("·", f) + 5
-            name = "maszyna %s" % row.machine if named else row.machine
+                d.text((x + L.META_DOT_GAP, y), "·", font=f, fill=theme.TEXT_28,
+                       anchor="ls")
+                x += 2 * L.META_DOT_GAP + draw.text_width("·", f)
             d.text((x, y), draw.ellipsize(name, f, xy[0] + room - x), font=f,
                    fill=colour, anchor="ls")
 
@@ -522,11 +543,13 @@ class Renderer:
         box = L_.detail_box(len(lines))
         draw.rounded(d, box, L_.DETAIL_RADIUS, fill=theme.SURFACE)
         x = box[0] + L_.DETAIL_PAD_X
+        # Odcienie mieszane z tlem KAFLA, nie karty: w makiecie polprzezroczystosc
+        # laduje na tym, co pod spodem, a tu pod spodem jest `SURFACE`.
         draw.text_tracked(d, (x, box[1] + L_.DETAIL_LABEL_BASE), "SZCZEGÓŁ", f_label,
-                          theme.TEXT_45, tracking=1, anchor="ls")
+                          theme.TEXT_45_SURFACE, tracking=1, anchor="ls")
         y = box[1] + L_.DETAIL_TEXT_BASE
         for line in lines:
-            d.text((x, y), line, font=f_text, fill=theme.TEXT_78, anchor="ls")
+            d.text((x, y), line, font=f_text, fill=theme.TEXT_78_SURFACE, anchor="ls")
             y += L_.DETAIL_LINE
 
     def _alert_mode(self, d, L_, mode):
@@ -539,10 +562,13 @@ class Renderer:
         # osobno: przy dwoch stopniach pisma srodek pudelka fontu wypada gdzie indziej
         # niz srodek liter i wersaliki wygladaja, jakby sie osunely.
         y = L_.MODE_BASE
-        x += draw.text_tracked(d, (x, y), "TRYB", f_label, theme.TEXT_45,
-                               tracking=1, anchor="ls") + 8
+        # `+ 1` to odstep miedzyliterowy ZA ostatnia litera: CSS go zostawia, a
+        # `draw.text_tracked` odejmuje go od zwracanej szerokosci. Bez tego etykieta
+        # ma pudelko o piksel za waskie i wartosc podchodzi jej pod sam ogon.
+        x += draw.text_tracked(d, (x, y), "TRYB", f_label, theme.TEXT_45_SUNKEN,
+                               tracking=1, anchor="ls") + 1 + 8
         d.text((x, y), draw.ellipsize(mode, f_mode, L_.x1 - x), font=f_mode,
-               fill=theme.TEXT_70, anchor="ls")
+               fill=theme.TEXT_70_SUNKEN, anchor="ls")
 
     def _empty_band(self, d, b):
         f = draw.font(13)

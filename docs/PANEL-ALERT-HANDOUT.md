@@ -59,8 +59,15 @@ python tools/render-png.py --marker upper --zoom 3 --rgb565 --out znacznik.png
 | `ACCENT` / `ACCENT_500` | `#D97757` | paski, kropka łącza, **zalane pasmo, rail 6 px, znacznik 4 px** |
 | `ACCENT_800` | `#46281D` | tło pasma w klatce spoczynkowej |
 | `ACCENT_700` / `_300` / `_200` / `_100` | `#8A4A33` / `#E89477` / `#F0AB90` / `#F7CBB8` | `_200` = czas czekania i powody, `_100` = tytuł pasma i nazwa konta z blokadą |
-| `NEUTRAL_900…100` | `#322F2B` … `#D6D2C6` | tory pasków |
-| `TEXT_78…TEXT_10` | mieszanki `TEXT` z tłem | teksty wtórne |
+| `NEUTRAL_900…100` | `#322F2B` … `#D6D2C6` | tory pasków; `_900` **także rail w klatce spoczynkowej** |
+| `TEXT_78…TEXT_10` | mieszanki `TEXT` z tłem karty | teksty wtórne na tle `BG` |
+| `TEXT_*_SURFACE` / `TEXT_*_SUNKEN` | te same procenty, ale na tle kafla / listwy | napisy w kaflu `Szczegół`, w listwie `Tryb` i w stopkach list |
+
+Te dwa ostatnie wiersze to nie duplikaty. W CSS `color-mix(…, transparent)` miesza się
+z tym, co **akurat jest pod spodem**, więc ten sam procent nad kaflem i nad tłem karty
+to dwa różne kolory. Panel nie ma alfy — miesza z góry — więc każda para (procent, tło)
+musi być osobną stałą. Różnica teł to (5, 4, 4), czyli po kwantyzacji 5/6/5 słychać ją
+na kanale zielonym; audyt zgodności złapał ją na etykiecie w kaflu i w obu stopkach.
 
 **Czerwieni nie ma w projekcie.** `DANGER` i `draw.warn_triangle` zostały usunięte razem
 z trójkątem ostrzegawczym — cała sygnalizacja stoi na rampie akcentu. Panel ma dzięki temu
@@ -112,9 +119,16 @@ Pełny kontrakt w [`API.md` § 3.2](API.md). Wszystkie są używane:
 Panel przerysowuje się **linia po linii od góry**, więc animacja w krokach rozjechałaby się
 na przebiegu i wyglądała jak usterka. Ruch, który został, to podmiana **dwóch pełnych klatek**:
 
-- **pusta** — pasmo `ACCENT_800`, bez raila,
-- **pełna** — pasmo zalane `ACCENT`, rail 6 px na lewej krawędzi na całą wysokość,
+- **pusta** — pasmo `ACCENT_800`, rail 6 px w `NEUTRAL_900`,
+- **pełna** — pasmo zalane `ACCENT` i rail w `ACCENT`,
   a napisy w paśmie schodzą na `BG` (5,51:1 zamiast 2,69:1).
+
+**Rail stoi w obu klatkach** — zalanie go tylko przemalowuje. Pasek pojawiający się
+z niczego jest mocniejszym ruchem niż zmiana koloru, a poza oknem `alert_flash_sec` karta
+zostawałaby bez lewej krawędzi. Rail idzie na całą wysokość pod pasmem, także przez listwę
+`Tryb` i przez stopki list — w makiecie jest `position: absolute`, więc maluje się nad
+blokami w przepływie. Pilnuje tego `test_rail_stoi_w_obu_klatkach_kazdego_ukladu`, osobno
+dla każdego z czterech układów i obu klatek.
 
 Zalanie brudzi ~13 % klatki, czyli ok. 0,24 s na Turingu — mieści się w ticku. Pełnoekranowy
 błysk byłby pełną klatką (1,87 s), czyli powolnym zamalowaniem zamiast błysku. Pilnuje tego
@@ -125,6 +139,12 @@ się jako usterka. Makieta ma w zalanym paśmie napis o 2 px wyżej niż w spocz
 warstwa, inne zaokrąglenie sub-pikselowe); panel trzyma jedną linię bazową dla obu.
 
 Warstwa ruchu rysuje się **na końcu**, nad treścią: inaczej listwa `Tryb` zamalowałaby rail.
+
+**Świadome odstępstwo: godzina w zalanym paśmie.** Makieta jest tu sama ze sobą niezgodna —
+`1a-alert` maluje ją pełnym `BG`, a trzy ramki `-p` dają `color-mix(BG 76%, transparent)`,
+czyli `#493128`. Panel trzyma pełne `BG` we **wszystkich czterech** układach: to 5,51:1
+na akcencie, a wersja 76% daje 3,84:1 — poniżej AA dla tekstu 15 px. Godzina jest jedyną
+liczbą na tej karcie, a karta istnieje po to, żeby ktoś wstał od biurka.
 
 ---
 
@@ -175,6 +195,10 @@ jest jedyna rzecz na tym panelu, która wymaga, żebyś wstał od biurka.
 - **Linie bazowe zmierzone na wyrenderowanej makiecie**, nie policzone z pudełek CSS: krój
   panelu ma inne metryki pionowe niż font makiety, więc ten sam model pudełka kładzie tusz
   o 1–3 px gdzie indziej. Odstęp między pudełkami jest niewidzialny, położenie tuszu widać.
+  **Pomiar mierzy DÓŁ TUSZU**, nie środek pudełka — a `anchor="ls"` w Pillow kładzie go na
+  `base − 1`. `BANNER_BASE` i `MODE_BASE` stały przez to dwa piksele za nisko, aż audyt
+  zgodności zmierzył je ponownie (24,33 px i 306,33 px na makiecie renderowanej w 3×).
+  Pilnuje tego `test_tusz_pasma_i_listwy_stoi_tam_gdzie_makieta`.
 - **Prostokąty w konwencji pół-otwartej** (`draw.fill_rect`, `draw.rounded`): Pillow liczy
   granice włącznie, więc pasmo `(0, 0, 480, 38)` wychodzi u niego 39 px.
 - `draw.ellipsize` na **każdym** napisie o nieznanej długości; `draw.ellipsize_tracked` tam,

@@ -60,15 +60,25 @@ REASON_GAP = 6
 # wiec 14 px, ktore w pasie sa kompromisem, tutaj bylyby ciasnota bez powodu.
 ALERT_PAD_X = 18
 BANNER_H = 38
-BANNER_BASE = 26        # linia bazowa napisow w pasmie, zmierzona na makiecie
+# Linia bazowa napisow w pasmie, ZMIERZONA na wyrenderowanej makiecie: dol cyfr zegara
+# stoi tam na 24,33 px, a Pillow z anchor="ls" klazie dol tuszu na `base - 1`. Bylo 26,
+# czyli o 1,67 px za nisko w kazdym z czterech ukladow — nie szum kroju, tylko stala.
+BANNER_BASE = 24
 F_BANNER = 15
 BANNER_TRACK = 2        # 0,13em na 15 px
 F_BANNER_AT = 15
 
-# Rail klatki PELNEJ. Zjazd koloru zajmuje pasmo, a nizej juz tylko te 6 px —
-# tlo karty zostaje `theme.BG`, bo pelnoekranowe pole akcentu przy jasnosci 5
-# to blask w oczy i widoczne pasmowanie RGB565.
+# Rail na lewej krawedzi karty, pod pasmem. Stoi w OBU klatkach: `NEUTRAL_900`
+# w spoczynkowej, `ACCENT` w pelnej — zalanie go przemalowuje, nie powoluje.
+# Zjazd koloru zajmuje pasmo, a nizej juz tylko te 6 px — tlo karty zostaje
+# `theme.BG`, bo pelnoekranowe pole akcentu przy jasnosci 5 to blask w oczy
+# i widoczne pasmowanie RGB565.
 RAIL_W = 6
+
+# Odstep po obu stronach kropki w wierszu "narzedzie · maszyna" — ale TYLKO w ukladzie
+# 1a, gdzie makieta sklada ten wiersz z trzech pudelek z `gap: 7px` i przyciemniona
+# kropka. Uklady 1b i 1c maja tam JEDEN przebieg tekstu ze zwyklymi spacjami.
+META_DOT_GAP = 7
 
 # Znacznik przy koncie po zwinieciu karty. Siedzi w polu marginesu pasa (PAD_X 14),
 # wiec uklad pasow nie drga ani o piksel.
@@ -84,14 +94,14 @@ class AlertSolo:
     # Powod: kroj panelu (Segoe UI) ma inne metryki pionowe niz font makiety, wiec ten
     # sam model pudelka klazie tusz o 1-3 px gdzie indziej. Odstep miedzy pudelkami jest
     # niewidzialny, polozenie tuszu widac — wiec to ono jest kontraktem. Sprawdzane
-    # pomiarem w tests/test_alert.py::test_uklad_1a_stoi_tam_gdzie_makieta.
-    PROJECT_BASE = 88
-    META_BASE = 113
-    WAITED_BASE = 159
+    # pomiarem w tests/test_alert.py::test_tusz_pasma_i_listwy_stoi_tam_gdzie_makieta.
+    PROJECT_BASE = 87
+    META_BASE = 112
+    WAITED_BASE = 158
     DETAIL_TOP = 180
-    DETAIL_LABEL_BASE = 20  # obie od GORNEJ KRAWEDZI kafla, bo kafel jest kotwica
-    DETAIL_TEXT_BASE = 38
-    MODE_BASE = 308
+    DETAIL_LABEL_BASE = 19  # obie od GORNEJ KRAWEDZI kafla, bo kafel jest kotwica
+    DETAIL_TEXT_BASE = 37
+    MODE_BASE = 306         # zmierzone 306,33; gorna krawedz listwy zgadza sie co do px
 
     F_PROJECT = 34
     F_PROJECT_TIGHT = 26    # jak F_SES_NUM -> F_SES_NUM_TIGHT: stopien nizej, nie nowy mechanizm
@@ -129,12 +139,14 @@ class AlertSolo:
         """Kafel szczegolu rosnie z liczba linii, a nie odwrotnie: jednolinijkowy
         `detail` nie ma powodu zostawiac pustego pola pod soba.
 
-        Wysokosc bloku tekstu zaokraglana W GORE, bo tak robi przegladarka z
-        line-height 1,35: jedna linia to 16,2 px i zajmuje 17 wierszy, dwie to
-        32,4 px i zajmuja 33.
+        Wysokosc bloku tekstu obcinana W DOL. Przegladarka trzyma blok w ulamku —
+        jedna linia przy line-height 1,35 to 16,2 px — i dopiero KRAWEDZ kafla laduje
+        na siatce pikseli: 20 + 10 + 5 + 16,2 = 51,2 px maluje sie jako 51, nie 52.
+        Zaokraglanie w gore samego bloku dawalo kafel o piksel za wysoki (zmierzone
+        na wyrenderowanej makiecie: 51 px, panel rysowal 52).
         """
         n = max(1, lines)
-        block = -(-(162 * n) // 10)         # ceil(16,2 x n)
+        block = (162 * n) // 10             # floor(16,2 x n)
         h = 2 * self.DETAIL_PAD_Y + self.F_DETAIL_LABEL + self.DETAIL_GAP + block
         return (self.x0, self.detail_y, self.x1, self.detail_y + h)
 
@@ -174,10 +186,12 @@ class AlertPair:
         self.height = height
         self.x0 = ALERT_PAD_X
         self.x1 = width - ALERT_PAD_X
-        # 282 px na dwie polowy z jednym wlosem dzielnika: przegladarka daje 140,5 px
-        # kazdej, wiec gorna dostaje piksel wiecej. Tak samo tutaj.
+        # 282 px na dwie polowy z jednym wlosem dzielnika: 281 px tresci dzieli sie na
+        # 140,5 px kazdej, a przegladarka oddaje reszte DOLNEJ polowie — dzielnik laduje
+        # na wierszu 178, nie 179. Zmierzone na wyrenderowanej makiecie; wczesniejszy
+        # komentarz twierdzil odwrotnie i stad brala sie ta jedna linia roznicy.
         top = BANNER_H
-        self.divider_y = top + (height - top - DIVIDER_H + 1) // 2
+        self.divider_y = top + (height - top - DIVIDER_H) // 2
         self.divider = (0, self.divider_y, width, self.divider_y + DIVIDER_H)
         self.halves = ((top, self.divider_y),
                        (self.divider_y + DIVIDER_H, height))
@@ -205,13 +219,13 @@ class AlertList:
 
     # Linie bazowe od GORY WIERSZA, zmierzone na makiecie (srodkowy wiersz — blad
     # rozklada sie wtedy na oba skrajne zamiast kumulowac w jednym).
-    REASON_BASE = 43
+    REASON_BASE = 42
     PROJECT_BASE = 37
     META_BASE = 54
-    TIME_BASE = 44
+    TIME_BASE = 43
     # ... i od gory stopki.
-    FOOT_LABEL_BASE = 19
-    FOOT_TEXT_BASE = 34
+    FOOT_LABEL_BASE = 18
+    FOOT_TEXT_BASE = 35
 
     FOOT_LABEL = "SZCZEGÓŁ NAJPILNIEJSZEJ"
 
