@@ -54,6 +54,11 @@ def alert_scene(kind, now_ms, flood=False):
         items = [blocked(**cum), blocked(**kb), blocked(**gps),
                  blocked("d", "permission", "cms-migracja", "Edit", "laptop", 150),
                  blocked("e", "question", "notes-sync", "AskUserQuestion", "desktop", 98)]
+    # Ta sama kolejnosc co w produkcji (`status.parse_frame`): od najmlodszej. Scena
+    # omija parser, wiec bez tego PNG-i uczylyby porzadku, ktorego panel nie rysuje.
+    items.sort(key=lambda b: (b.since is None,
+                              -b.since.timestamp() if b.since else 0.0,
+                              b.key))
     return render.alert_state(items, now_ms, flood=flood)
 
 

@@ -161,7 +161,7 @@ class App:
 
         Nie sam zbior indeksow, bo pas pisze przy nazwie planu, NA CO czeka. Przy kilku
         blokadach na jednym koncie zostaje pierwsza — kolejnosc ustala `status.parse_frame`,
-        wiec pierwsza jest tez najpilniejsza.
+        wiec pierwsza jest tez najnowsza.
 
         Alert bez dopasowania do zadnego skonfigurowanego konta laduje na pasie GORNYM.
         Regula jest prosta i celowo taka zostaje: statyczne mapowanie maszyna -> pas

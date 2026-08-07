@@ -58,14 +58,30 @@ def test_smieci_zamiast_ramki():
         assert status.parse_frame(junk) == []
 
 
-def test_kolejnosc_plan_pytanie_zgoda_potem_najstarsze():
+def test_kolejnosc_od_najmlodszej_bez_wzgledu_na_powod():
+    """Powod nie ma wplywu na kolejnosc — decyduje sam wiek.
+
+    Karta obcina sie do trzech wierszy, a kazda blokada byla juz pokazana solo, gdy
+    wchodzila. Warte pokazania sa wiec te, ktorych jeszcze nie widziales. Dawna ranga
+    (plan, pytanie, zgoda) wypychala z wierszy blokade, ktora wlasnie przejela ekran.
+    """
     out = status.parse_frame(frame(
         entry(key="perm-stary", reason="permission", since="2026-08-05T20:00:00Z"),
         entry(key="pyt", reason="question", since="2026-08-05T21:00:00Z"),
         entry(key="plan", reason="plan", since="2026-08-05T21:06:00Z"),
         entry(key="perm-nowy", reason="permission", since="2026-08-05T21:05:00Z"),
     ))
-    assert [b.key for b in out] == ["plan", "pyt", "perm-stary", "perm-nowy"]
+    assert [b.key for b in out] == ["plan", "perm-nowy", "pyt", "perm-stary"]
+
+
+def test_wpis_bez_stempla_laduje_na_koncu():
+    """Brak wiedzy o wieku nie moze udawac ani swiezosci, ani starosci."""
+    out = status.parse_frame(frame(
+        entry(key="bez", reason="plan", since=None),
+        entry(key="stary", reason="permission", since="2026-08-05T20:00:00Z"),
+        entry(key="nowy", reason="permission", since="2026-08-05T21:05:00Z"),
+    ))
+    assert [b.key for b in out] == ["nowy", "stary", "bez"]
 
 
 def test_duplikat_klucza_liczy_sie_raz():

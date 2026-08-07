@@ -200,7 +200,7 @@ class AlertPair:
 class AlertList:
     """Trzy blokady — trzy rowne wiersze. Prog jest wlasnie tutaj: trzy nazwy
     projektow w 34 px nie istnieja, wiec nazwa schodzi do 19 px, a powod przenosi sie
-    do stalej kolumny po lewej. Szczegol NAJPILNIEJSZEJ ladauje w stopce — jeden,
+    do stalej kolumny po lewej. Szczegol NAJNOWSZEJ ladauje w stopce — jeden,
     bo trzy nie zmieszcza sie w zadnym czytelnym stopniu."""
 
     ROWS = 3
@@ -227,7 +227,7 @@ class AlertList:
     FOOT_LABEL_BASE = 18
     FOOT_TEXT_BASE = 35
 
-    FOOT_LABEL = "SZCZEGÓŁ NAJPILNIEJSZEJ"
+    FOOT_LABEL = "SZCZEGÓŁ NAJNOWSZEJ"
 
     def __init__(self, width, height):
         self.width = width

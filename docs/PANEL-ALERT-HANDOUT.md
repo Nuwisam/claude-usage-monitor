@@ -12,7 +12,7 @@ i przepuszczone przez jego własną kwantyzację, czyli **dokładnie to, co poka
 |---|---|
 | [`karta-solo.png`](handout/karta-solo.png) | jedna blokada — nazwa projektu bohaterem, kafel `Szczegół`, listwa `Tryb` |
 | [`karta-pair.png`](handout/karta-pair.png) | dwie blokady — dwie równe połowy po 140 px |
-| [`karta-list.png`](handout/karta-list.png) | trzy blokady — lista 3 × 77 px, szczegół najpilniejszej w stopce |
+| [`karta-list.png`](handout/karta-list.png) | trzy blokady — lista 3 × 77 px, szczegół najnowszej w stopce |
 | [`karta-many.png`](handout/karta-many.png) | pięć blokad — trzy wiersze i licznik reszty |
 | [`karta-zalana.png`](handout/karta-zalana.png) | klatka **pełna** warstwy ruchu: pasmo w akcencie plus rail 6 px |
 | [`pasy-znacznik-gorny.png`](handout/pasy-znacznik-gorny.png) | stan po zwinięciu — pasek 4 px przy koncie górnym |
@@ -90,13 +90,18 @@ jak wejść na ekran — dwie blokady musiałyby zacząć się w tym samym pięc
 |---|---|---|
 | 1 | `AlertSolo` | nazwa 34 px (26 px, gdy nie wchodzi), narzędzie i maszyna, „czeka N", kafel `Szczegół` do dwóch linii, listwa `Tryb` |
 | 2 | `AlertPair` | dwie równe połowy, nazwa 30 px, szczegół skrócony do jednej linii, bez listwy |
-| 3 | `AlertList` | powód w stałej kolumnie 58 px, nazwa 19 px, czas do prawej, szczegół najpilniejszej w stopce |
-| 4+ | `AlertMany` | trzy najpilniejsze z nazwą 17 px i samą maszyną, reszta zliczona w stopce („+2 WIĘCEJ" i nazwy) |
+| 3 | `AlertList` | powód w stałej kolumnie 58 px, nazwa 19 px, czas do prawej, szczegół najnowszej w stopce |
+| 4+ | `AlertMany` | trzy najnowsze z nazwą 17 px i samą maszyną, reszta zliczona w stopce („+2 WIĘCEJ" i nazwy) |
 
-Kolejność zawsze z `panel/panel/status.py`: `plan`, potem `question`, potem `permission`,
-a w remisie najstarsze `since`. **Godzina w pasmie to początek najstarszego czekania na
-ekranie**, nie `since` nagłówka — sortowanie idzie po powodzie, więc pierwszy wiersz nie musi
-być najstarszy.
+Kolejność zawsze z `panel/panel/status.py`: **od najmłodszej**, wpis bez `since` na końcu.
+Powód na nią nie wpływa. Wcześniej rządziła ranga (`plan`, `question`, `permission`) i było
+to nieszkodliwe tylko dopóki wszystko na karcie miało poniżej pięciu minut; odkąd okno należy
+do zbioru, ranga wypychała z wierszy właśnie tę blokadę, która przejęła ekran. Uzasadnienie
+nowej kolejności: **każda blokada była już pokazana solo, gdy wchodziła** — przy obcięciu do
+trzech wierszy warte pokazania są te, których jeszcze nie widziałeś.
+**Godzina w pasmie to początek najstarszego czekania na
+ekranie**, nie `since` nagłówka — wiersze idą od najmłodszej, więc pierwszy z nich jest
+z założenia najnowszy, a pasmo mówi, jak długo to wszystko już stoi.
 
 Pasmo przy wielu blokadach pisze `CZEKAJĄ · 3`, a nie „3 czekają": przy pięciu ta druga forma
 jest błędem („5 czekają"), a gołe „czekają" bez związanego liczebnika jest poprawne dla każdej
@@ -113,7 +118,7 @@ Pełny kontrakt w [`API.md` § 3.2](API.md). Wszystkie są używane:
 | `tool` | wiersz pod nazwą (nie w układzie 4+, gdzie zostaje sama maszyna) |
 | `machine` | tam samo; sesja może chodzić zdalnie, to mówi, gdzie iść |
 | `detail` | kafel `Szczegół` (2 linie), jedna linia w układzie 2, stopka w układzie 3 |
-| `since` | „czeka N", godzina w pasmie, oraz otwarcie okna dla zbioru |
+| `since` | „czeka N", godzina w pasmie, kolejność wierszy, oraz otwarcie okna dla zbioru |
 | `accountUuid` | przy którym pasie stanie znacznik po zwinięciu |
 | `agentType`, `permissionMode` | listwa `Tryb` — odpowiedź na „czemu on w ogóle pyta" |
 

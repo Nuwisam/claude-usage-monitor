@@ -135,8 +135,8 @@ def alert_state(blocked, now_ms=0.0, footer=None, flood=False):
         mode=b.mode_label,
     ) for b in shown]
     # Godzina w pasmie to poczatek NAJSTARSZEGO czekania na ekranie, nie `since`
-    # naglowka: kolejnosc sortuje najpierw po powodzie, wiec pierwszy wpis nie musi
-    # byc najstarszy.
+    # naglowka: wiersze ida od najmlodszej, wiec pierwszy wpis jest z zalozenia
+    # najnowszy — a pasmo ma mowic, jak dlugo to wszystko juz stoi.
     stamps = [b.since for b in shown if b.since is not None]
     return AlertState(
         title=alert_title(blocked),
@@ -410,7 +410,7 @@ class Renderer:
                    fill=theme.TEXT_70, anchor="ls")
 
     def _alert_list(self, d, a):
-        """1c — trzy blokady w liscie, szczegol najpilniejszej w stopce."""
+        """1c — trzy blokady w liscie, szczegol najnowszej w stopce."""
         L_ = self.layout.alert_list
         detail = a.rows[0].detail
         rects = L_.rows(footer=bool(detail))
@@ -424,7 +424,7 @@ class Renderer:
         self._alert_banner(d, a, L_.x0, L_.x1)
 
     def _alert_many(self, d, a):
-        """1d — trzy najpilniejsze, reszta zliczona w stopce."""
+        """1d — trzy najnowsze, reszta zliczona w stopce."""
         L_ = self.layout.alert_many
         rects = L_.rows(footer=True)
         for (top, bottom), row in zip(rects, a.rows):
@@ -487,7 +487,7 @@ class Renderer:
                              named=False)
 
     def _alert_footer(self, d, L_, label, text):
-        """Stopka: jedna linia o najpilniejszej blokadzie albo licznik reszty."""
+        """Stopka: jedna linia o najnowszej blokadzie albo licznik reszty."""
         x0, y0, x1, y1 = L_.footer
         draw.fill_rect(d, L_.footer, theme.SUNKEN)
         f_label = draw.font(L_.F_FOOT_LABEL)

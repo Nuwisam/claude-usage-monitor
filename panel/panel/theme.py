@@ -62,7 +62,7 @@ GHOST = mix(TEXT, 45)       # kreska ostatniego pomiaru
 # (5, 4, 4), czyli po kwantyzacji 5/6/5 slychac ja na kanale zielonym.
 TEXT_78_SURFACE = mix(TEXT, 78, SURFACE)    # tresc w kaflu `Szczegół`
 TEXT_45_SURFACE = mix(TEXT, 45, SURFACE)    # etykieta w tym kaflu
-TEXT_72_SUNKEN = mix(TEXT, 72, SUNKEN)      # szczegol najpilniejszej w stopce listy
+TEXT_72_SUNKEN = mix(TEXT, 72, SUNKEN)      # szczegol najnowszej w stopce listy
 TEXT_70_SUNKEN = mix(TEXT, 70, SUNKEN)      # wartosc w listwie `Tryb`
 TEXT_62_SUNKEN = mix(TEXT, 62, SUNKEN)      # nazwy reszty w stopce ukladu 1d
 TEXT_45_SUNKEN = mix(TEXT, 45, SUNKEN)      # etykiety w listwie i w stopce

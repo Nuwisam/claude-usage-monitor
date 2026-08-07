@@ -207,7 +207,7 @@ Prezentacja jest dwustopniowa i to jest decyzja, nie etap:
    odpowiesz, i zużycie jest przez ten czas niewidoczne). Układ wybiera **liczba blokad
    czekających**: jedna — nazwa projektu bohaterem, kafel `Szczegół` i listwa `Tryb`;
    dwie — dwie równe połowy; trzy — lista z powodem w stałej kolumnie; cztery i więcej —
-   trzy najpilniejsze plus licznik reszty.
+   trzy najnowsze plus licznik reszty.
 
    Przez `alert_flash_sec` karta **miga**, czyli podmienia klatkę pustą na **zalaną
    akcentem**: pasmo i rail 6 px na lewej krawędzi przechodzą na `ACCENT`, napisy
@@ -240,8 +240,11 @@ układy z czterech były martwe: dwie blokady musiałyby zacząć się w tym sam
 pięciominutowym oknie, a przy pracy sekwencyjnej to się nie zdarza. Czasu karty na ekranie
 to nie wydłuża — predykat „karta stoi" jest ten sam, zmienia się jej zawartość.
 
-Po restarcie panelu obowiązuje to samo w drugą stronę: sam restart karty nie wskrzesza,
-ale pierwsza świeża blokada wciągnie na nią także wpisy sprzed godzin.
+Wiersze idą **od najmłodszej**; powód nie ma na to wpływu, a wpis bez `since` ląduje na
+końcu. Każda blokada była już pokazana solo, gdy wchodziła, więc przy obcięciu do trzech
+wierszy warte pokazania są te, których jeszcze nie widziałeś. Po restarcie panelu obowiązuje
+to samo w drugą stronę: sam restart karty nie wskrzesza, ale pierwsza świeża blokada wciągnie
+na nią także wpisy sprzed godzin.
 
 - **`blocked_debounce_sec` (2 s)** — ile blokada musi trwać, zanim karta wejdzie.
   Bez tego zgoda udzielona od razu dawałaby błysk pełnego ekranu.
@@ -262,8 +265,10 @@ z `oauthAccount.accountUuid` odczytanego na maszynie z sesją — zasada 7 proje
 Czas czekania jest **gruboziarnisty** („chwilę" / „4 min" / „1 h 05 min" / „2 d 3 h")
 i to nie jest kwestia gustu: AX206 nie umie wycinków, więc każda zmiana napisu to
 pełne 355 ms, a sekundy zamieniłyby ~2,5 % obciążenia USB w ~35 % na cały czas
-trwania karty. Żywego zegara na karcie nie ma — godzina w banerze to statyczny
-moment pojawienia się promptu.
+trwania karty. Żywego zegara na karcie nie ma — godzina w banerze to statyczny moment
+pojawienia się promptu, a dokładniej początek **najstarszego czekania na ekranie**.
+Że wiersze idą od najmłodszej, zwykle nie jest to moment tej blokady, która właśnie weszła:
+pasmo mówi, jak długo to wszystko już stoi, a pierwszy wiersz — co doszło ostatnio.
 
 Projekt karty i wszystkie cztery układy opisuje `docs/PANEL-ALERT-HANDOUT.md`,
 z obrazami przepuszczonymi przez kwantyzację panelu. Podgląd bez sprzętu:

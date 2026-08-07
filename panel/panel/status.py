@@ -24,11 +24,6 @@ SHORT = {
 
 SHORT_UNKNOWN = "czeka"
 
-# Ktory powod idzie w naglowek karty, gdy blokad jest kilka. Plan przed pytaniem, pytanie
-# przed zgoda: im wiekszy kawalek pracy stoi za blokada, tym drozej kosztuje kazda minuta
-# czekania. Remis rozstrzyga NAJSTARSZE `since`.
-RANK = {"plan": 0, "question": 1, "permission": 2}
-
 UNKNOWN = "CLAUDE CZEKA"
 
 
@@ -76,10 +71,6 @@ class Blocked:
         bits = [b for b in (self.permission_mode, self.agent_type) if b]
         return " · ".join(bits)
 
-    @property
-    def rank(self):
-        return RANK.get(self.reason, len(RANK))
-
     def __repr__(self):
         return "<Blocked %s %s %s>" % (self.reason, self.project, self.machine)
 
@@ -113,9 +104,16 @@ def parse_entry(raw):
 def parse_frame(payload):
     """Ladunek ramki `alert` -> lista Blocked, uporzadkowana do wyswietlenia.
 
-    Kolejnosc: najpierw priorytet powodu, potem najstarsze `since`. Wpis bez stempla
-    laduje na koncu swojej grupy — brak wiedzy o wieku nie moze udawac swiezosci ani
-    starosci.
+    Kolejnosc: NAJMLODSZE PIERWSZE. Powod nie ma na nia wplywu — kazda blokada byla
+    juz pokazana solo, gdy wchodzila (otworzyla wtedy wlasne okno przejecia), wiec
+    przy obcieciu karty do trzech wierszy warte pokazania sa te, ktorych jeszcze nie
+    widziales. Wczesniej rzadzila ranga powodu (plan, pytanie, zgoda) i to bylo
+    nieszkodliwe tylko dopoki wszystko na karcie mialo ponizej pieciu minut; odkad
+    okno nalezy do ZBIORU, ranga wypychala z wierszy wlasnie te blokade, ktora
+    przejela ekran.
+
+    Wpis bez stempla laduje na koncu — brak wiedzy o wieku nie moze udawac swiezosci
+    ani starosci. Remis rozstrzyga `key`, zeby kolejnosc byla deterministyczna.
     """
     if not isinstance(payload, dict):
         return []
@@ -130,8 +128,9 @@ def parse_frame(payload):
             continue
         seen.add(entry.key)
         out.append(entry)
-    out.sort(key=lambda b: (b.rank, b.since is None,
-                            b.since.timestamp() if b.since else 0.0))
+    out.sort(key=lambda b: (b.since is None,
+                            -b.since.timestamp() if b.since else 0.0,
+                            b.key))
     return out
 
 

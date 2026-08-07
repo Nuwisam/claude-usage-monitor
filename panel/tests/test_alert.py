@@ -157,6 +157,7 @@ def test_swieza_blokada_wciaga_wypalona_na_ta_sama_karte():
     karta = a.screen().alert
     assert len(karta.rows) == 2 and karta.count == 2
     assert "2" in karta.title, "pasmo liczy obie, nie tylko swieza"
+    assert karta.rows[0].project == "nowa", "najmlodsza w pierwszym wierszu"
 
 
 def test_wypalony_zbior_gasnie_w_calosci():
@@ -537,7 +538,8 @@ def blokady(n):
 
 
 @pytest.mark.parametrize("ile,metoda", [
-    (1, "_alert_solo"), (2, "_alert_pair"), (3, "_alert_list"), (5, "_alert_many"),
+    (1, "_alert_solo"), (2, "_alert_pair"), (3, "_alert_list"),
+    (4, "_alert_many"), (5, "_alert_many"),
 ])
 def test_uklad_wybiera_liczba_blokad(ile, metoda, monkeypatch):
     """Prog jest przy trzech: do dwoch nazwa projektu zostaje bohaterem, od trzech
@@ -563,15 +565,29 @@ def test_lista_pokazuje_trzy_a_liczy_wszystkie():
 
 
 def test_pasmo_podaje_najstarsze_czekanie_a_nie_naglowek():
-    """Kolejnosc sortuje najpierw po POWODZIE, wiec pierwszy wiersz nie musi byc
-    najstarszy — a godzina w pasmie ma byc poczatkiem najstarszego czekania."""
+    """Pierwszy wiersz to NAJMLODSZA blokada, a godzina w pasmie to poczatek
+    NAJSTARSZEGO czekania na ekranie. To dwie rozne rzeczy i musza sie rozjezdzac."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
     stan = render.alert_state(status.parse_frame(ramka(
         wpis(key="plan", reason="plan", since="2026-08-05T21:06:00Z"),
         wpis(key="zgoda", reason="permission", since="2026-08-05T21:01:00Z"),
     )), now_ms)
-    assert stan.rows[0].short == "plan", "plan idzie pierwszy"
+    assert stan.rows[0].short == "plan", "najmlodsza idzie pierwsza"
     assert stan.at == fmt.hm(fmt.parse_utc("2026-08-05T21:01:00Z"))
+
+
+def test_swieza_blokada_jest_widoczna_mimo_trzech_starszych():
+    """Regresja: przy oknie nalezacym do ZBIORU ranga powodu wypychala z wierszy
+    wlasnie te blokade, ktora przejela ekran — zostawala sama nazwa w stopce."""
+    now_ms = fmt.ms(fmt.parse_utc(NOW))
+    stan = render.alert_state(status.parse_frame(ramka(
+        wpis(key="s1", reason="plan", project="stary-1", since="2026-08-05T19:07:00Z"),
+        wpis(key="s2", reason="plan", project="stary-2", since="2026-08-05T19:10:00Z"),
+        wpis(key="s3", reason="question", project="stary-3", since="2026-08-05T19:13:00Z"),
+        wpis(key="f", reason="permission", project="SWIEZY", since="2026-08-05T21:06:50Z"),
+    )), now_ms)
+    assert stan.rows[0].project == "SWIEZY", "blokada, ktora przejela ekran, ma byc widoczna"
+    assert stan.rest == ["stary-1"], "do stopki schodzi najstarsza, nie najnowsza"
 
 
 def test_kafel_szczegolu_nie_wchodzi_na_listwe_trybu():
