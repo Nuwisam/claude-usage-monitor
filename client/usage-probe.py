@@ -62,7 +62,7 @@ Celowo plik lokalny, a nie repo — token maszyny nie ma prawa trafic do gita.
 """
 import sys, os, json, time, re
 
-SCRIPT_VERSION = 10
+SCRIPT_VERSION = 11
 
 # Znacznik dziedziczony przez proces potomny. `claude -p "/usage"` to normalna sesja
 # Claude Code — odpali hook Stop, ktory odpali sonde, ktora odpalilaby kolejnego
@@ -892,7 +892,10 @@ def sweep_ttl(ttl_s, now):
     decyduje panel (`alert_takeover_sec`), nie ten prog. Ale okno przejecia nalezy tam do
     zbioru, wiec stary wpis wraca na karte przy kazdej nowej blokadzie i to dopiero ten
     prog konczy jego zycie. Wartosc pochodzi z recznie edytowanego config.json, wiec
-    smieci znacza domyslna, a nie wyjatek."""
+    smieci znacza domyslna, a nie wyjatek.
+
+    Sama nie publikuje i nie musi: `alert_dispatch` wola ja tuz przed `sweep_session`, ktore
+    publikuje bezwarunkowo i tam nastepuje porownanie ze znacznikiem."""
     try:
         ttl_s = float(ttl_s)
     except (TypeError, ValueError):
@@ -1430,16 +1433,25 @@ def sweep_session(cfg, hook):
     session_id = hook.get("session_id")
     all_entries = entries()
     if not all_entries:
+        # Pusty katalog nie znaczy "nie ma nic do roboty": moze wlasnie ktos uzyl furtki
+        # `del session-status\*`, moze TTL zdjal ostatni wpis (`sweep_ttl` nie publikuje
+        # nigdy). Wtedy serwer trzyma zbior, ktorego na dysku nie ma, a panel maluje karte
+        # po blokadzie, ktorej nie ma. `publish()` sam sprawdzi znacznik i zamilknie, gdy
+        # zbior sie zgadza — czyli w zdecydowanej wiekszosci przebiegow.
+        #
+        # Brak PLIKU znacznika znaczy "nigdy nic nie oglaszalismy", a wtedy nie ma czego
+        # korygowac: maszyna bez ani jednej blokady w zyciu nie dotyka tego endpointu wcale.
+        if os.path.exists(POSTED):
+            return publish(cfg)
         return
     prefix = ("%s__" % session_id) if session_id else None
     event = hook.get("hook_event_name")
     live, powod = registry_view(event, session_id)
-    hit = False
     tails = {}                       # transcript_path -> ogon, czytany RAZ na plik
     wstrzymane = 0
     for name, _mtime in all_entries:
         if prefix and name.startswith(prefix):
-            hit = drop(name) or hit
+            drop(name)
             continue
         data = read_entry(name)
         if data is None:
@@ -1449,13 +1461,13 @@ def sweep_session(cfg, hook):
                 wstrzymane += 1
             elif registry_dead(name, live):
                 # Sesja tego wpisu juz nie istnieje, a wpis powstal, gdy BYLA w rejestrze.
-                hit = drop(name) or hit
+                drop(name)
                 continue
         # Cudzy wpis zyjacej sesji, ale jego wlasny transkrypt moze juz nosic
         # rozstrzygniecie — i wtedy tylko MY mozemy go zdjac, bo tamta sesja moze
         # nie odpalic juz nic.
         if _safe(closed_by_transcript, name, data, tails):
-            hit = drop(name) or hit
+            drop(name)
     if wstrzymane and powod:
         # Bez tej linii "mechanizm umarl po zmianie u Anthropic" i "nie ma czego zbierac" sa
         # nierozroznialne, a objawem jest dokladnie ten blad, ktory ta sekcja naprawia.
@@ -1463,8 +1475,14 @@ def sweep_session(cfg, hook):
         # liczy tam co innego. Logujemy tylko, gdy realnie bylo co wstrzymac.
         log_local({"t": round(time.time(), 3), "alert_skip": powod,
                    "event": event, "wpisy": wstrzymane})
-    if hit:
-        publish(cfg)
+    # BEZWARUNKOWO, nie `if hit`: kasowania, ktore nie przeszly tedy, zostawialy serwer ze
+    # zbiorem, ktorego na dysku nie ma (`sweep_ttl` kasuje i nie publikuje, furtka `del`
+    # kasuje spoza sondy). `publish()` porownuje snapshot ze znacznikiem, wiec POST leci
+    # dopiero przy realnym rozjezdzie, a nie na kazdym zdarzeniu.
+    #
+    # Tylko w galezi ZAMIATANIA (cztery zdarzenia). `leave()` zostaje na `if not entries()`,
+    # bo `PostToolUse` odpala sie przy KAZDYM wywolaniu narzedzia i to jest sciezka goraca.
+    publish(cfg)
 
 
 def alert_shutdown(cfg):

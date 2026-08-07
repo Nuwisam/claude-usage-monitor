@@ -80,8 +80,14 @@ def bye_frame(reason: str) -> str:
 # --------------------------------------------------------------------------- alerts
 # Sesje, ktore stanely i czekaja na czlowieka. IN-PROCESS, bez bazy — stan z definicji
 # chwilowy, a tabela oznaczalaby migracje i cykl zycia wierszy dla czegos, co gasnie,
-# gdy ktos kliknie "tak". Restart backendu czysci mape swiadomie: alerty wracaja przy
-# najblizszym zdarzeniu z maszyny.
+# gdy ktos kliknie "tak".
+#
+# UWAGA, restart procesu NIE jest tu przezroczysty i wczesniej stalo tu zdanie, ze jest.
+# Mapa idzie do zera, ale sonda o tym nie wie: ona porownuje swoj znacznik z WLASNYM
+# katalogiem stanu, a te sie zgadzaja, wiec nie ma powodu wysylac czegokolwiek. Zywa blokada
+# nie zostaje wiec ogloszona ponownie — az do najblizszej ZMIANY zbioru na maszynie.
+# Zeby to naprawic, serwer musialby powiedziec sondzie, co ma (np. w odpowiedzi na POST
+# pomiaru, ktory i tak leci co minute) — dopoki tego nie ma, jest to znane ograniczenie.
 #
 # Klucz to NAZWA MASZYNY z tokenu ingestu, a wartoscia jest CALY biezacy zbior tej
 # maszyny. Kazdy POST zastepuje wpis maszyny w calosci, wiec nie ma tu stanu do

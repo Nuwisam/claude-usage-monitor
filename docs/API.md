@@ -222,8 +222,15 @@ kartę i znacznik przy koncie. Wyłącznik: `"session_status": false` w `config.
 **Sesja może chodzić na maszynie zdalnej, a panel stoi lokalnie** — dlatego zdarzenia idą
 przez backend jako proxy. Ale **nie ma ich w bazie**: żyją wyłącznie w pamięci procesu.
 Blokada gaśnie, gdy ktoś kliknie „tak", więc tabela oznaczałaby migrację i cykl życia
-wierszy dla stanu, po którym nie ma zostać żaden ślad. Restart backendu czyści mapę
-świadomie; alerty wracają przy najbliższym zdarzeniu z maszyny.
+wierszy dla stanu, po którym nie ma zostać żaden ślad.
+
+**Restart backendu czyści mapę i alerty NIE wracają same** — wcześniej stało tu, że wracają,
+i to była nieprawda. Sonda wysyła zbiór, gdy rozjedzie się on z jej własnym znacznikiem
+ostatniej wysyłki; restart serwera tego znacznika nie zmienia, więc z punktu widzenia sondy
+wszystko jest już ogłoszone. Trwająca blokada wróci na panel dopiero przy **zmianie zbioru**
+na tej maszynie (nowa blokada albo zniknięcie którejś z obecnych). Domknięcie tego wymaga,
+żeby serwer podał sondzie swój stan — np. w odpowiedzi na POST pomiaru, który leci co minutę —
+i jest osobnym tematem, nie właściwością obecnego kontraktu.
 
 ```
 POST /api/session-alert
@@ -235,7 +242,7 @@ X-Ingest-Key: <INGEST_EDGE_KEY>
    "project": "claude-usage-monitor", "tool": "Bash", "detail": "git status",
    "since": "2026-08-05T21:00:00Z", "account_uuid": "…", "session_id": "…",
    "agent_id": null, "agent_type": null, "permission_mode": "default"}],
- "sent_at": "2026-08-05T21:00:01Z", "script_version": 10}
+ "sent_at": "2026-08-05T21:00:01Z", "script_version": 11}
 
 200 {"ok": true, "machine": "desktop", "accepted": 1, "subscribers": 1}
 ```

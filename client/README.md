@@ -381,6 +381,10 @@ jest naprawdę pytany.
    się druga sesja, karta zostanie — z obiema blokadami — dopóki i ta druga się nie wypali.
 
 Furtka awaryjna, gdyby coś się zawiesiło: `del %LOCALAPPDATA%\claude-usage-monitor\session-status\*`.
+Panel gaśnie przy najbliższym zdarzeniu zamiatania — sonda porównuje wtedy zbiór na dysku ze
+znacznikiem ostatniej wysyłki i przy rozjeździe wysyła korektę, także wtedy, gdy sama niczego
+nie skasowała. Tą samą drogą dochodzi wygaśnięcie po `blocked_ttl_sec`, które wcześniej kasowało
+pliki, ale nie mówiło o tym serwerowi.
 
 ## Zasady, których nie wolno złamać
 

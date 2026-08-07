@@ -633,6 +633,81 @@ def test_post_tylko_przy_zmianie_zbioru(ss):
     assert ss.wyslane[-1]["entries"] == [], "opustoszenie zbioru MUSI dojsc do panelu"
 
 
+def test_reczne_usuniecie_plikow_dochodzi_do_panelu(ss):
+    """Furtka awaryjna z RUNBOOK-a: `del %LOCALAPPDATA%\\...\\session-status\\*`. Kasowanie
+    idzie SPOZA sondy, wiec nic tego nie publikowalo i panel trzymal karte po blokadzie,
+    ktorej nie ma. Zamiatanie porownuje teraz zbior ze znacznikiem bezwarunkowo."""
+    ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
+                                tool_input={"command": "ls"}))
+    assert len(ss.wyslane) == 1 and ss.wyslane[-1]["entries"]
+    for n in names(ss):                              # to robi `del`
+        os.remove(os.path.join(ss.STATEDIR, n))
+    ss.alert_dispatch(CFG, hook("Stop", session_id="inna-sesja"))
+    assert ss.wyslane[-1]["entries"] == [], "panel zostalby z nieaktualna karta"
+
+
+def test_wygasniecie_ttl_dochodzi_do_panelu(ss):
+    """`sweep_ttl` kasuje i nie publikuje nigdy — to jest ten sam korzen co furtka `del`.
+    Objaw: wracasz po dwoch dniach, blokady dawno nie ma, a trojkat wisi."""
+    ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
+                                tool_input={"command": "ls"}))
+    nazwa = names(ss)[0]
+    stary = time.time() - 2 * ss.DEFAULT_TTL_S
+    os.utime(os.path.join(ss.STATEDIR, nazwa), (stary, stary))
+    ss.alert_dispatch(CFG, hook("Stop", session_id="inna-sesja"))
+    assert names(ss) == []
+    assert ss.wyslane[-1]["entries"] == []
+
+
+def test_wygasniecie_jednego_z_dwoch_wpisow_dochodzi_do_panelu(ss):
+    """Ta sama awaria przy NIEPUSTYM katalogu: TTL zdejmuje jeden wpis z dwoch, w tym
+    przebiegu sonda niczego nie kasuje, a serwer trzyma dalej oba. Dlatego uzgadnianie nie
+    moze stac za `if hit`."""
+    for cmd in ("ls", "pwd"):
+        ss.alert_dispatch(CFG, hook("PermissionRequest", session_id="sesja-%s" % cmd,
+                                    tool_name="Bash", tool_input={"command": cmd}))
+    rejestr(ss, "sesja-ls", "sesja-pwd", SID)       # obie sesje ZYJA, wiec nic ich nie zbiera
+    assert len(ss.wyslane[-1]["entries"]) == 2
+    stary = time.time() - 2 * ss.DEFAULT_TTL_S
+    p = os.path.join(ss.STATEDIR, names(ss)[0])
+    os.utime(p, (stary, stary))
+    ss.alert_dispatch(CFG, hook("Stop"))
+    assert len(names(ss)) == 1
+    assert len(ss.wyslane[-1]["entries"]) == 1, "serwer trzymalby wpis, ktorego nie ma"
+
+
+def test_zbior_bez_zmian_nie_generuje_post_ow(ss):
+    """Bezwarunkowe `publish()` nie moze znaczyc "wysylaj przy kazdym zdarzeniu" — o tym
+    decyduje znacznik. Inaczej idle maszyna gadalaby do serwera co ture."""
+    ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
+                                tool_input={"command": "ls"}))
+    ile = len(ss.wyslane)
+    for _ in range(5):
+        ss.alert_dispatch(CFG, hook("Stop", session_id="inna-sesja"))
+    assert len(ss.wyslane) == ile
+
+
+def test_pusty_katalog_i_pusty_znacznik_milcza(ss):
+    """Najczestszy przebieg na maszynie bez blokady: nie ma czego uzgadniac i nic nie leci."""
+    for _ in range(5):
+        ss.alert_dispatch(CFG, hook("Stop"))
+        ss.alert_dispatch(CFG, hook("UserPromptSubmit"))
+    assert ss.wyslane == []
+
+
+def test_sciezka_goraca_nie_uzgadnia(ss):
+    """`PostToolUse` odpala sie przy KAZDYM wywolaniu narzedzia. Uzgadnianie tam byloby
+    odczytem katalogu i znacznika na najgestszym zdarzeniu, jakie ta sonda widzi."""
+    ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
+                                tool_input={"command": "ls"}))
+    for n in names(ss):
+        os.remove(os.path.join(ss.STATEDIR, n))
+    ile = len(ss.wyslane)
+    ss.alert_dispatch(CFG, hook("PostToolUse", tool_name="Read", tool_input={},
+                                tool_use_id="toolu_x"))
+    assert len(ss.wyslane) == ile, "galaz zamykajaca zaczela chodzic do serwera"
+
+
 def test_nieudany_post_nie_zapisuje_znacznika(ss, monkeypatch):
     monkeypatch.setattr(ss, "post", lambda *a, **kw: None)
     h = hook("PermissionRequest", tool_name="Bash", tool_input={"command": "ls"})
@@ -768,6 +843,49 @@ def test_wylaczone_przy_pustym_katalogu_nie_gada_do_serwera(ss):
     for _ in range(5):
         ss.alert_dispatch(dict(CFG, session_status=False), hook("PostToolUse"))
     assert ss.wyslane == []
+
+
+def test_wylaczone_nie_uzgadnia_nawet_przy_rozjezdzie(ss):
+    """Uzgadnianie zbioru ze znacznikiem NIE MOZE obchodzic wylacznika. Znacznik zostaje
+    rozjechany z dyskiem, ale wylaczona funkcja ma milczec — porzadki robi sie wlaczajac ja
+    z powrotem albo recznie."""
+    ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
+                                tool_input={"command": "ls"}))
+    for n in names(ss):
+        os.remove(os.path.join(ss.STATEDIR, n))     # rozjazd: dysk pusty, znacznik nie
+    ile = len(ss.wyslane)
+    for event in ("Stop", "UserPromptSubmit", "SessionEnd", "SessionStart"):
+        ss.alert_dispatch(dict(CFG, session_status=False), hook(event))
+    assert len(ss.wyslane) == ile
+
+
+def test_tryb_lokalny_nie_wychodzi_do_sieci_przy_uzgadnianiu(ss):
+    """Bez `alert_url` sygnalizator pracuje tylko lokalnie. Uzgadnianie liczy snapshot
+    i czyta znacznik, ale nie ma prawa niczego wyslac."""
+    lokalny = {"toast": False}
+    ss.alert_dispatch(lokalny, hook("PermissionRequest", tool_name="Bash",
+                                    tool_input={"command": "ls"}))
+    assert len(names(ss)) == 1 and ss.wyslane == []
+    for n in names(ss):
+        os.remove(os.path.join(ss.STATEDIR, n))
+    for event in ("Stop", "UserPromptSubmit", "SessionStart"):
+        ss.alert_dispatch(lokalny, hook(event))
+    assert ss.wyslane == []
+    assert not os.path.exists(ss.POSTED), "tryb lokalny nie zapisuje znacznika"
+
+
+def test_wlasny_ttl_z_konfiguracji_jest_respektowany(ss):
+    """`blocked_ttl_sec` z `config.json` dziala dalej, a jego skutek dochodzi teraz do panelu."""
+    ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
+                                tool_input={"command": "ls"}))
+    nazwa = names(ss)[0]
+    stary = time.time() - 120
+    os.utime(os.path.join(ss.STATEDIR, nazwa), (stary, stary))
+    ss.alert_dispatch(dict(CFG, blocked_ttl_sec=3600), hook("Stop", session_id="inna"))
+    assert names(ss) == [nazwa], "wpis zginal przed swoim wlasnym TTL"
+    ss.alert_dispatch(dict(CFG, blocked_ttl_sec=60), hook("Stop", session_id="inna"))
+    assert names(ss) == []
+    assert ss.wyslane[-1]["entries"] == []
 
 
 # --------------------------------------------------------------------- scalenie z sonda
