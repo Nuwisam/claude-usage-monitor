@@ -147,7 +147,7 @@ frontend/   React 18 + Vite + TypeScript, bez Tailwinda i bez biblioteki wykres�
   src/lib/time.ts        stamp/atStamp — JEDYNE miejsce decyzji „czy dopisać dzień"
   src/mocks/             VITE_MOCKS=1: stany, których w produkcji nie da się wywołać
 docs/       API.md (kontrakt), RUNBOOK.md (obsługa i diagnostyka)
-              PANEL-ALERT-HANDOUT.md + handout/ — materiał do przeprojektowania karty alertu
+              PANEL-ALERT-HANDOUT.md + handout/ — zbudowany projekt karty alertu
 deploy/     szablon vhosta Apache; sekret podstawiany przy deployu, NIE w repo
 ```
 

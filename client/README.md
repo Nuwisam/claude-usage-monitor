@@ -353,8 +353,9 @@ jest naprawdę pytany.
 2. Odpowiedz „tak" — plik znika.
 3. Odpowiedz „nie" albo naciśnij Esc — plik **zostaje** (odmowa nie generuje żadnego
    zdarzenia, to zmierzone) i znika dopiero, gdy napiszesz kolejną wiadomość.
-4. Panel: karta na pełnym ekranie, po `alert_takeover_sec` (domyślnie 5 min) czerwony
-   znacznik przy nazwie konta.
+4. Panel: karta na pełnym ekranie, po `alert_takeover_sec` (domyślnie 5 min) znacznik
+   akcentu przy nazwie konta. Okno należy do **zbioru**: jeśli w międzyczasie zablokuje
+   się druga sesja, karta zostanie — z obiema blokadami — dopóki i ta druga się nie wypali.
 
 Furtka awaryjna, gdyby coś się zawiesiło: `del %LOCALAPPDATA%\claude-usage-monitor\session-status\*`.
 

@@ -204,10 +204,10 @@ Prezentacja jest dwustopniowa i to jest decyzja, nie etap:
 
 1. Karta **przejmuje cały ekran** przez `alert_takeover_sec` — liczba sekund (domyślnie
    300), `0` (od razu znacznik, bez karty) albo `"infinity"` (karta stoi, dopóki nie
-   odpowiesz, i zużycie jest przez ten czas niewidoczne). Układ wybiera **liczba blokad**:
-   jedna — nazwa projektu bohaterem, kafel `Szczegół` i listwa `Tryb`; dwie — dwie równe
-   połowy; trzy — lista z powodem w stałej kolumnie; cztery i więcej — trzy najpilniejsze
-   plus licznik reszty.
+   odpowiesz, i zużycie jest przez ten czas niewidoczne). Układ wybiera **liczba blokad
+   czekających**: jedna — nazwa projektu bohaterem, kafel `Szczegół` i listwa `Tryb`;
+   dwie — dwie równe połowy; trzy — lista z powodem w stałej kolumnie; cztery i więcej —
+   trzy najpilniejsze plus licznik reszty.
 
    Przez `alert_flash_sec` karta **miga**, czyli podmienia klatkę pustą na **zalaną
    akcentem**: pasmo i rail 6 px na lewej krawędzi przechodzą na `ACCENT`, napisy
@@ -231,8 +231,17 @@ Prezentacja jest dwustopniowa i to jest decyzja, nie etap:
    **Czerwieni w projekcie nie ma**: cała sygnalizacja stoi na rampie akcentu.
 
 Okno liczy się od `since` z serwera, nie od chwili, w której panel zobaczył wpis:
-inaczej restart panelu wskrzeszałby kartę dla blokady sprzed godziny. Nowa blokada
-to nowy klucz, czyli nowe okno.
+inaczej restart panelu wskrzeszałby kartę dla blokady sprzed godziny.
+
+**Okno należy do zbioru, nie do wpisu.** Dopóki którakolwiek czekająca blokada mieści się
+w oknie, karta wypisuje **wszystkie** — także te, które wypaliły się na własnym liczniku.
+Nowa blokada otwiera więc okno dla całego zbioru, a nie tylko dla siebie. Bez tego trzy
+układy z czterech były martwe: dwie blokady musiałyby zacząć się w tym samym
+pięciominutowym oknie, a przy pracy sekwencyjnej to się nie zdarza. Czasu karty na ekranie
+to nie wydłuża — predykat „karta stoi" jest ten sam, zmienia się jej zawartość.
+
+Po restarcie panelu obowiązuje to samo w drugą stronę: sam restart karty nie wskrzesza,
+ale pierwsza świeża blokada wciągnie na nią także wpisy sprzed godzin.
 
 - **`blocked_debounce_sec` (2 s)** — ile blokada musi trwać, zanim karta wejdzie.
   Bez tego zgoda udzielona od razu dawałaby błysk pełnego ekranu.

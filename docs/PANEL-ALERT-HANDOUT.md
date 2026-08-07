@@ -81,6 +81,11 @@ Wybiera je **liczba blokad**, nie flaga (`render.Renderer._alert`). Próg jest p
 do dwóch nazwa projektu zostaje bohaterem, bo do konkretnego okna trzeba wrócić i trzeba
 wiedzieć, do którego; od trzech nazwy schodzą do listy, bo trzy nazwy w 34 px nie istnieją.
 
+Liczy się liczba blokad **czekających**, nie tych z ostatnich pięciu minut: okno przejęcia
+należy do **zbioru**, więc dopóki którakolwiek jest w oknie, karta wypisuje wszystkie.
+Dopóki okno było liczone osobno dla każdego wpisu, trzy z tych czterech układów nie miały
+jak wejść na ekran — dwie blokady musiałyby zacząć się w tym samym pięciominutowym oknie.
+
 | Blokad | Układ | Co widać |
 |---|---|---|
 | 1 | `AlertSolo` | nazwa 34 px (26 px, gdy nie wchodzi), narzędzie i maszyna, „czeka N", kafel `Szczegół` do dwóch linii, listwa `Tryb` |
@@ -108,7 +113,7 @@ Pełny kontrakt w [`API.md` § 3.2](API.md). Wszystkie są używane:
 | `tool` | wiersz pod nazwą (nie w układzie 4+, gdzie zostaje sama maszyna) |
 | `machine` | tam samo; sesja może chodzić zdalnie, to mówi, gdzie iść |
 | `detail` | kafel `Szczegół` (2 linie), jedna linia w układzie 2, stopka w układzie 3 |
-| `since` | „czeka N" i godzina w pasmie, oraz wypalenie okna |
+| `since` | „czeka N", godzina w pasmie, oraz otwarcie okna dla zbioru |
 | `accountUuid` | przy którym pasie stanie znacznik po zwinięciu |
 | `agentType`, `permissionMode` | listwa `Tryb` — odpowiedź na „czemu on w ogóle pyta" |
 
@@ -170,9 +175,11 @@ karty**. Stąd `fmt.waited()`: „chwilę" / „4 min" / „1 h 05 min" / „2 d
 **Żywego zegara na karcie nie ma** — godzina w paśmie to statyczny moment. Każdy element,
 który tyka szybciej niż raz na minutę, jest zakazany.
 
-**4. Karta oddaje ekran po 5 minutach.** `alert_takeover_sec` (domyślnie 300 s, liczone od
-`since` **z serwera**) zwija ją do paska 4 px przy nazwie konta. Ten stan widać dłużej niż
-samą kartę.
+**4. Karta oddaje ekran po 5 minutach od OSTATNIEJ blokady.** `alert_takeover_sec`
+(domyślnie 300 s, liczone od `since` **z serwera**) zwija ją do paska 4 px przy nazwie konta.
+Okno należy do zbioru, więc odmierza je najmłodsza blokada, a nie każda z osobna — czas karty
+na ekranie jest przez to taki sam jak przy liczeniu per wpis, zmienia się tylko jej zawartość.
+Ten stan widać dłużej niż samą kartę.
 
 **5. Znacznik mieści się w pasie bez ruszania układu.** Pasek 4 px siedzi w polu marginesu
 (`PAD_X` 14) i ma **pełną wysokość pasa**, niezależnie od liczby wierszy w środku — konto

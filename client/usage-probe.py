@@ -861,9 +861,11 @@ def drop(name):
 
 
 def sweep_ttl(ttl_s, now):
-    """Granica smieci. Kasuje, NIGDY nie ukrywa — o tym, jak dlugo alert zajmuje ekran,
-    decyduje panel (`alert_takeover_sec`), nie ten prog. Wartosc pochodzi z recznie
-    edytowanego config.json, wiec smieci znacza domyslna, a nie wyjatek."""
+    """Granica smieci. Kasuje, NIGDY nie ukrywa — o tym, kiedy alert PRZEJMUJE ekran,
+    decyduje panel (`alert_takeover_sec`), nie ten prog. Ale okno przejecia nalezy tam do
+    zbioru, wiec stary wpis wraca na karte przy kazdej nowej blokadzie i to dopiero ten
+    prog konczy jego zycie. Wartosc pochodzi z recznie edytowanego config.json, wiec
+    smieci znacza domyslna, a nie wyjatek."""
     try:
         ttl_s = float(ttl_s)
     except (TypeError, ValueError):

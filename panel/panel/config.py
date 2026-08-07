@@ -46,9 +46,13 @@ DEFAULTS = {
     # Wylacznik calej funkcji. Przy `false` ramka jest ignorowana i panel zachowuje sie
     # dokladnie jak przedtem — znacznik nie zapala sie ani razu.
     "session_alerts": True,
-    # Jak dlugo blokada ZAJMUJE ekran karta. Potem zwija sie do paska akcentu na lewej
-    # krawedzi pasa konta; wpis zyje dalej, przestaje byc tylko przejmujacy. Liczone od
+    # Jak dlugo blokady ZAJMUJA ekran karta. Potem zwija sie do paska akcentu na lewej
+    # krawedzi pasa konta; wpisy zyja dalej, przestaja byc tylko przejmujace. Liczone od
     # `since` z serwera, wiec restart panelu nie wskrzesza starej karty.
+    #
+    # Okno nalezy do ZBIORU: otwiera je NAJMLODSZA blokada, a karta pokazuje wtedy
+    # wszystkie czekajace, takze te z wypalonym wlasnym oknem. Wpis bez `since` liczy
+    # sie jak swiezy zawsze. Czasu karty na ekranie to nie wydluza — zmienia zawartosc.
     #
     # Liczba sekund, 0 (od razu znacznik, bez karty) albo "infinity" — wtedy karta stoi,
     # dopoki nie odpowiesz, i zuzycie jest przez ten czas niewidoczne.

@@ -178,23 +178,36 @@ class App:
         return out
 
     def _card_alerts(self, mono, now_ms):
-        """Blokady, ktore maja prawo ZAJAC EKRAN — po debounce i przed wypaleniem okna.
+        """Blokady, ktore maja prawo ZAJAC EKRAN — po debounce, gdy KTORAKOLWIEK jest w oknie.
 
-        Okno `alert_takeover_sec` liczy sie od `since` z serwera, nie od chwili, w
-        ktorej panel zobaczyl wpis: inaczej restart panelu wskrzeszalby karte dla
-        blokady sprzed godziny. Debounce liczy sie lokalnie, bo dotyczy migotania.
+        Okno `alert_takeover_sec` nalezy do ZBIORU, nie do wpisu: dopoki jakakolwiek
+        blokada miesci sie w oknie, karta wypisuje WSZYSTKIE czekajace, takze te
+        z wypalonym wlasnym licznikiem. Przy filtrowaniu per wpis trzy uklady z czterech
+        byly martwe — dwie blokady musialyby zaczac sie w tym samym pieciominutowym
+        oknie, a przy pracy sekwencyjnej to sie nie zdarza.
+
+        Czas karty na ekranie sie przez to NIE wydluza: predykat "karta stoi" to nadal
+        "istnieje wpis po debounce mlodszy niz okno". Zmienia sie tylko ZAWARTOSC.
+
+        Okno liczy sie od `since` z serwera, nie od chwili, w ktorej panel zobaczyl
+        wpis: inaczej restart panelu wskrzeszalby karte dla blokady sprzed godziny.
+        Debounce liczy sie lokalnie, bo dotyczy migotania, i zostaje PER WPIS — wpis
+        w debounce nie wchodzi na karte i nie otwiera okna.
         """
-        out = []
+        okno = seconds(self.cfg.alert_takeover_sec, 300.0)
+        gotowe, swieza = [], False
         for b in self.alerts:
             seen = self._seen_at.get(b.key)
             if seen is None or mono - seen < self.cfg.blocked_debounce_sec:
                 continue
-            if b.since is not None:
-                age = (now_ms - fmt.ms(b.since)) / 1000.0
-                if age >= seconds(self.cfg.alert_takeover_sec, 300.0):
-                    continue        # stan przestal byc PRZEJMUJACY, nie przestal byc prawdziwy
-            out.append(b)
-        return out
+            gotowe.append(b)
+            # `okno > 0` na zewnatrz, bo wpis bez `since` omija porownanie wieku: bez tego
+            # `alert_takeover_sec: 0` dawaloby mu karte wbrew wlasnej dokumentacji.
+            if okno > 0 and (b.since is None
+                             or (now_ms - fmt.ms(b.since)) / 1000.0 < okno):
+                swieza = True
+        # stan przestal byc PRZEJMUJACY, nie przestal byc prawdziwy
+        return gotowe if swieza else []
 
     def screen(self):
         mono = self.monotonic()

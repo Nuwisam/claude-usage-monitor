@@ -135,7 +135,69 @@ def test_nowa_blokada_dostaje_nowe_okno():
     a.on_event("alert", ramka(wpis(key="stary", since="2026-08-05T21:00:00Z"),
                               wpis(key="nowy", since=NOW)))
     z.skok(5)
-    assert a.screen().alert is not None
+    karta = a.screen().alert
+    assert karta is not None
+    assert len(karta.rows) == 2, "swieza blokada wciaga wypalona na te sama karte"
+
+
+def test_swieza_blokada_wciaga_wypalona_na_ta_sama_karte():
+    """Regresja na trzy martwe uklady z czterech.
+
+    Okno nalezy do ZBIORU: dopoki cokolwiek jest swieze, karta wypisuje wszystkie
+    czekajace. Przy filtrowaniu per wpis dwie blokady musialyby zaczac sie w tym samym
+    pieciominutowym oknie — przy pracy sekwencyjnej to sie nie zdarza, wiec `AlertPair`,
+    `AlertList` i `AlertMany` nie mialy jak wejsc na ekran.
+    """
+    z = Zegar()
+    a = app(z, alert_takeover_sec=30)
+    a.on_event("alert", ramka(wpis(key="wypalona", project="stara",
+                                   since="2026-08-05T21:00:00Z"),
+                              wpis(key="swieza", project="nowa", since=NOW)))
+    z.skok(5)
+    karta = a.screen().alert
+    assert len(karta.rows) == 2 and karta.count == 2
+    assert "2" in karta.title, "pasmo liczy obie, nie tylko swieza"
+
+
+def test_wypalony_zbior_gasnie_w_calosci():
+    """Gdy wypali sie OSTATNIA swieza blokada, karta oddaje ekran razem z reszta.
+
+    Uczciwie: to jest guard PRZED NADMIAROWA POPRAWKA, nie dowod na nia. Zdaje sie
+    tak samo na starym kodzie i tak ma byc — pilnuje, ze okno nalezace do zbioru nie
+    zaczelo trzymac karty w nieskonczonosc. Test rozstrzygajacy o samej zmianie to
+    `test_swieza_blokada_wciaga_wypalona_na_ta_sama_karte`.
+
+    Obie blokady musza wejsc swieze: zbior stary od poczatku nie zbuduje karty w ogole,
+    wiec nie byloby czego gasic.
+    """
+    z = Zegar()
+    a = app(z, alert_takeover_sec=30)
+    a.on_event("alert", ramka(
+        wpis(key="a", since="2026-08-05T21:06:50Z", accountUuid="konto-a"),
+        wpis(key="b", since="2026-08-05T21:06:40Z", accountUuid="konto-b")))
+    z.skok(5)
+    a.first_data_at = z.t
+    assert len(a.screen().alert.rows) == 2
+    # Zegar SERWERA, bo okno liczy sie od `since`, nie od monotonic.
+    a.clock.anchor("2026-08-05T21:09:00Z")
+    a.screen()                      # okno wypalone dla obu: karta wchodzi w linger
+    z.skok(a.cfg.blocked_linger_sec + 1)
+    ekran = a.screen()
+    assert ekran.alert is None, "wypalony zbior gasnie w calosci"
+    assert ekran.bands[0].alert and ekran.bands[1].alert, "oba wpisy zyja jako znaczniki"
+
+
+def test_zero_wylacza_karte_takze_bez_since():
+    """`alert_takeover_sec: 0` to "od razu znacznik, bez karty" — takze dla wpisu bez
+    stempla, ktory wczesniej omijal porownanie wieku i karte jednak dostawal."""
+    z = Zegar()
+    a = app(z, alert_takeover_sec=0)
+    a.on_event("alert", ramka(wpis(since=None)))
+    z.skok(5)
+    a.first_data_at = z.t
+    ekran = a.screen()
+    assert ekran.alert is None
+    assert ekran.bands[0].alert, "wpis zyje dalej jako znacznik"
 
 
 # --- blysk ------------------------------------------------------------------
