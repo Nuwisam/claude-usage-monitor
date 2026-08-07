@@ -12,6 +12,7 @@ procesu. Testy pilnuja wiec czterech rzeczy, ktore w tej konstrukcji psuja sie p
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 import pytest_asyncio
@@ -37,9 +38,13 @@ async def clean_alerts():
 
 
 def entry(**kw):
+    # `since` MUSI byc liczone teraz, nie wpisane na sztywno: `current_alerts()` odsiewa
+    # wpisy starsze niz ALERT_MAX_AGE_SEC (24 h), wiec staly stempel zamienia kazdy test
+    # zbioru w bombe zegarowa — przechodzi dobe od napisania i pada na zawsze potem.
+    # Test filtra wieku podaje swoja wlasna date i tej domyslnej nie uzywa.
     base = {"key": "sesja__main__abc", "reason": "permission", "project": "proj",
             "tool": "Bash", "detail": "git status",
-            "since": "2026-08-05T21:00:00Z"}
+            "since": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     base.update(kw)
     return base
 
