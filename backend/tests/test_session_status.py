@@ -12,6 +12,7 @@ Kazdy przypadek odpowiada zmierzonemu zachowaniu harnessu, nie wyobrazeniu o nim
 Metodyka pomiaru siedzi w docstringu samego skryptu.
 """
 import importlib.util
+import io
 import json
 import os
 import time
@@ -378,7 +379,10 @@ def _uruchom(ss, monkeypatch, payload, throttle_swiezy=True):
     if throttle_swiezy:
         with open(ss.THROTTLE_FILE, "w") as f:
             f.write(str(time.time()))
-    monkeypatch.setattr("sys.stdin", _Stdin(json.dumps(payload)))
+    # `ensure_ascii=False` jest tu NOSNE, nie kosmetyczne: domyslne escapowanie dawaloby
+    # payload w czystym ASCII, wiec zaden dekoder nie mialby czego zepsuc i test kodowania
+    # przechodzilby zawsze. Claude Code wysyla surowe znaki.
+    monkeypatch.setattr("sys.stdin", _Stdin(json.dumps(payload, ensure_ascii=False)))
     return ss.main()
 
 
@@ -409,9 +413,53 @@ def test_zapora_przed_rekurencja_ucina_takze_alert(ss, monkeypatch):
     assert names(ss) == []
 
 
+def test_stdin_hooka_czytany_jako_utf8(ss, monkeypatch):
+    """Payload hooka to UTF-8, ale `sys.stdin` w trybie tekstowym dekodowal go
+    kodowaniem locale — na ekranie i w toascie wychodzilo 'umieraÄ‡' zamiast
+    'umierac' z ogonkami. Asercja idzie przez `snapshot()`, bo on ma jawne utf-8;
+    gole `open()` przeczytaloby poprawny plik jako cp1250 i dalo czerwien na dobrym
+    kodzie."""
+    assert _uruchom(ss, monkeypatch,
+                    hook("PermissionRequest", tool_name="Bash",
+                         tool_input={"command": "echo zażółć gęślą jaźń"})) == 0
+    assert "zażółć gęślą jaźń" in ss.snapshot()[0]["detail"]
+
+
+def test_stdin_z_bajtem_spoza_cp1250_nie_gubi_alertu(ss, monkeypatch):
+    """Twardszy tryb tej samej awarii, i to on boli bardziej. cp1250 nie ma
+    odpowiednika dla 0x81/0x83/0x88/0x90/0x98, a `sys.stdin` ma
+    `errors=surrogateescape` — wiec 'Ł' (C5 81) nie psul sie na ekranie, tylko
+    stawal sie samotnym surogatem. Ten wywracal `write_excl` na `.encode("utf-8")`
+    ("surrogates not allowed"), a tam stoi `except Exception: pass`: plik wpisu
+    powstawal PUSTY. Skutek: toast leci, `read_entry` nie parsuje, `snapshot()`
+    pomija, alert nigdy nie dociera na panel — a klucz jest juz zajety, wiec
+    ponowienie tez nic nie da."""
+    assert _uruchom(ss, monkeypatch,
+                    hook("PermissionRequest", tool_name="Edit",
+                         tool_input={"file_path": r"C:\Łukasz\gęś.py"})) == 0
+    assert len(ss.snapshot()) == 1
+    assert "Łukasz" in ss.snapshot()[0]["detail"]
+
+
 class _Stdin:
+    """Atrapa musi ZLE dekodowac, inaczej nie ma czego zlapac.
+
+    Prawdziwy `sys.stdin` w procesie hooka dostaje bajty UTF-8 i rozkodowuje je
+    kodowaniem locale (na maszynie deweloperskiej cp1250) — `.read()` odtwarza
+    wlasnie to, a `.buffer` niesie prawde. Atrapa zwracajaca gotowy `str` byla
+    wygodna fikcja: przechodzila tak samo przed poprawka i po niej.
+
+    `surrogateescape`, nie `strict`: zmierzone na procesie potomnym uruchomionym
+    tak, jak hooki uruchamia Claude Code — `sys.stdin.errors` to wlasnie
+    `surrogateescape`. Bajty bez odpowiednika w cp1250 nie rzucaja wiec od razu,
+    tylko zamieniaja sie w samotne surogaty, ktore wywracaja dopiero `.encode()`
+    warstwe dalej. Atrapa ze `strict` byla by ostrzejsza od rzeczywistosci i
+    kazalaby szukac awarii nie tam, gdzie jest.
+    """
+
     def __init__(self, text):
-        self.text = text
+        self.raw = text.encode("utf-8")
+        self.buffer = io.BytesIO(self.raw)
 
     def read(self):
-        return self.text
+        return self.raw.decode("cp1250", "surrogateescape")     # jak prawdziwy stdin

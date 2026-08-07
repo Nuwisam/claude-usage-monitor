@@ -227,6 +227,15 @@ maszyna chodzi na którym kodzie. Bez podbicia dwie różne sondy są nierozró�
   staje się `claude -p "C:/Program Files/Git/usage"` (konwersja ścieżek MSYS) i zamiast
   komendy lokalnej dostajesz płatny turn modelu. Testuj z PowerShella albo ustaw
   `MSYS_NO_PATHCONV=1`. Kosztowało to dwa przypadkowe wywołania po ~$0,10.
+- **Payload hooka to UTF-8, ale `sys.stdin` dekoduje go kodowaniem locale.** W procesie
+  hooka zmierzone `sys.stdin.encoding = cp1250`, `errors = surrogateescape` — czyli
+  `sys.stdin.read()` cicho psuje polskie znaki (dwa znaki na jeden: `ć` → `Ä‡`), a bajty
+  bez odpowiednika w cp1250 (`0x81 0x83 0x88 0x90 0x98`, m.in. `Ł` i apostrof typograficzny)
+  zamienia w samotne surogaty. Te wywracają się dopiero warstwę dalej, na `.encode("utf-8")`
+  w `write_excl` — a że tam stoi `except: pass`, wpis blokady powstawał **pusty** i alert
+  ginął bez śladu. Czytaj `sys.stdin.buffer` i dekoduj jawnie. Cała reszta ścieżki ma jawne
+  utf-8, więc wiernie niosła to, co weszło: jedno miejsce psuło toast, panel i backend naraz.
+  Objawem bywa **brak zdarzenia**, nie krzaki.
 - **PowerShell 5.1 czyta `.ps1` bez BOM jako ANSI** — i wtedy myślnik `—` (U+2014, trzy bajty
   w UTF-8) rozpada się na trzy znaki, z których `0x94` to **cudzysłów zamykający** U+201D.
   Parser uznaje go za koniec stringa i przewraca się kilkadziesiąt linii dalej, w miejscu bez

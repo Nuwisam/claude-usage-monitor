@@ -62,7 +62,7 @@ Celowo plik lokalny, a nie repo — token maszyny nie ma prawa trafic do gita.
 """
 import sys, os, json, time, re
 
-SCRIPT_VERSION = 8
+SCRIPT_VERSION = 9
 
 # Znacznik dziedziczony przez proces potomny. `claude -p "/usage"` to normalna sesja
 # Claude Code — odpali hook Stop, ktory odpali sonde, ktora odpalilaby kolejnego
@@ -1157,7 +1157,17 @@ def main():
     if os.environ.get(CHILD_ENV):
         return 0
 
-    hook = _safe(json.loads, sys.stdin.read() or "{}") or {}
+    # Payload hooka przychodzi w UTF-8, ale `sys.stdin` w trybie tekstowym rozkodowuje
+    # go kodowaniem locale (tu cp1250) z `errors=surrogateescape`. Skutki byly dwa,
+    # oba ciche: polskie znaki wychodzily na toast i na panel jako dwa znaki na jeden,
+    # a bajty bez odpowiednika w cp1250 (0x81 0x83 0x88 0x90 0x98 — czyli m.in. "L"
+    # z kreska i apostrof typograficzny) stawaly sie samotnymi surogatami, ktore
+    # wywracaly `write_excl` na `.encode("utf-8")`. Wpis blokady powstawal wtedy PUSTY,
+    # wiec alert nie docieral nigdzie, a klucz byl juz zajety. Reszta sciezki ma jawne
+    # utf-8, wiec wiernie niosla to, co tu weszlo — jedno miejsce psulo wszystkie.
+    # `lambda`, bo `_safe` osloni wtedy takze siegniecie po atrybut (stdin bywa None).
+    data = _safe(lambda: sys.stdin.buffer.read().decode("utf-8", "replace")) or "{}"
+    hook = _safe(json.loads, data) or {}
     cfg = load_config()
 
     # PRZED throttlem. Alert ma dojsc natychmiast, a throttle sondy to 60 s — za tym

@@ -235,7 +235,7 @@ X-Ingest-Key: <INGEST_EDGE_KEY>
    "project": "claude-usage-monitor", "tool": "Bash", "detail": "git status",
    "since": "2026-08-05T21:00:00Z", "account_uuid": "…", "session_id": "…",
    "agent_id": null, "agent_type": null, "permission_mode": "default"}],
- "sent_at": "2026-08-05T21:00:01Z", "script_version": 8}
+ "sent_at": "2026-08-05T21:00:01Z", "script_version": 9}
 
 200 {"ok": true, "machine": "desktop", "accepted": 1, "subscribers": 1}
 ```
