@@ -217,7 +217,7 @@ w `/status`; strumień niczego przed nikim nie zamyka.
 Sesja, która stanęła na pytaniu do człowieka — prośbie o zgodę na narzędzie,
 `AskUserQuestion` albo `ExitPlanMode`. Sygnalizuje to `client/usage-probe.py` (ta sama sonda,
 sekcja „alert" — mierzone 1,7 ms wobec 41,9 ms za osobny proces), a panel na biurku pokazuje
-kartę i czerwony trójkąt. Wyłącznik: `"session_status": false` w `config.json`.
+kartę i znacznik przy koncie. Wyłącznik: `"session_status": false` w `config.json`.
 
 **Sesja może chodzić na maszynie zdalnej, a panel stoi lokalnie** — dlatego zdarzenia idą
 przez backend jako proxy. Ale **nie ma ich w bazie**: żyją wyłącznie w pamięci procesu.

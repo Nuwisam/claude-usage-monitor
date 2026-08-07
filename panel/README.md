@@ -203,23 +203,29 @@ panel widzi wyłącznie to, co przyszło strumieniem.
 Prezentacja jest dwustopniowa i to jest decyzja, nie etap:
 
 1. Karta **przejmuje cały ekran** przez `alert_takeover_sec` — liczba sekund (domyślnie
-   300), `0` (od razu trójkąt, bez karty) albo `"infinity"` (karta stoi, dopóki nie
-   odpowiesz, i zużycie jest przez ten czas niewidoczne). Jej
-   **baner miga na czerwono** przez `alert_flash_sec` — bez tego karta wchodzi cicho,
-   bo jest ciemna jak reszta ekranu, i przy kilku ekranach na biurku łatwo ją przegapić.
-   Wartość to liczba sekund (domyślnie 20), `0` wyłącza, a `"infinity"` miga przez całe
-   życie karty. Zapala się raz na **klucz** blokady, więc tyknięcie „czeka N min" nie
-   miga. Każde mrugnięcie to ~0,73 s łącza na obu ekranach — przy `"infinity"` karta
-   zajmuje je przez cały czas, gdy stoi.
+   300), `0` (od razu znacznik, bez karty) albo `"infinity"` (karta stoi, dopóki nie
+   odpowiesz, i zużycie jest przez ten czas niewidoczne). Układ wybiera **liczba blokad**:
+   jedna — nazwa projektu bohaterem, kafel `Szczegół` i listwa `Tryb`; dwie — dwie równe
+   połowy; trzy — lista z powodem w stałej kolumnie; cztery i więcej — trzy najpilniejsze
+   plus licznik reszty.
 
-   **Miga sam baner, nie ekran.** Pełnoekranowy błysk jest tu strukturalnie niemożliwy:
-   to z definicji pełna klatka, a Turing maluje ją 1,87 s progresywnie, więc na szkle
-   wychodzi powolne zamalowanie, a nie błysk (sprawdzone na sprzęcie — pierwsza wersja
-   robiła dokładnie to). Baner to 20% klatki: jeden wycinek, 61 kB, ~375 ms na Turingu
-   i 355 ms na AX206, czyli oba zdążą w ticku.
-2. Potem zwija się do **czerwonego trójkąta obok nazwy konta**. Stan przestaje być
-   *przejmujący*, nie przestaje być *prawdziwy* — zużycie wraca na ekran, a to, że
-   coś czeka, dalej widać.
+   Przez `alert_flash_sec` karta **miga**, czyli podmienia klatkę pustą na **zalaną
+   akcentem**: pasmo w `ACCENT` i rail 6 px na lewej krawędzi, napisy w paśmie na tle.
+   Bez tego karta wchodzi cicho, bo jest ciemna jak reszta ekranu. Wartość to liczba
+   sekund (domyślnie 20), `0` wyłącza, a `"infinity"` miga przez całe życie karty. Zapala
+   się raz na **klucz** blokady, więc tyknięcie „czeka N min" niczym nie miga.
+
+   **Migają dwie klatki, nie animacja w krokach.** Panel przerysowuje się linia po linii,
+   więc klatki pośrednie rozjechałyby się na przebiegu. Zalanie to ~13 % klatki
+   (pasmo plus rail), czyli ok. 0,24 s na Turingu i 355 ms na AX206 — oba zdążą w ticku.
+   Pełnoekranowy błysk jest tu strukturalnie niemożliwy: to z definicji pełna klatka,
+   a Turing maluje ją 1,87 s progresywnie (sprawdzone na sprzęcie).
+2. Potem zwija się do **paska akcentu 4 px na lewej krawędzi pasa** konta, które zgłosiło
+   blokadę; nazwa konta przechodzi na `ACCENT_100`, a powód dochodzi wersalikami w linii
+   z nazwą planu. Pasek siedzi w polu marginesu, więc układ pasa nie drga ani o piksel,
+   i ma pełną wysokość pasa. Stan przestaje być *przejmujący*, nie przestaje być
+   *prawdziwy* — zużycie wraca na ekran, a to, że coś czeka, dalej widać.
+   **Czerwieni w projekcie nie ma**: cała sygnalizacja stoi na rampie akcentu.
 
 Okno liczy się od `since` z serwera, nie od chwili, w której panel zobaczył wpis:
 inaczej restart panelu wskrzeszałby kartę dla blokady sprzed godziny. Nowa blokada
@@ -247,13 +253,14 @@ pełne 355 ms, a sekundy zamieniłyby ~2,5 % obciążenia USB w ~35 % na cały c
 trwania karty. Żywego zegara na karcie nie ma — godzina w banerze to statyczny
 moment pojawienia się promptu.
 
-Karta jest **wersją roboczą**: zbudowana wyłącznie z istniejącej palety, czcionek
-i idiomów, żeby mechanika działała, zanim ktoś ją zaprojektuje. Podgląd bez sprzętu:
+Projekt karty i wszystkie cztery układy opisuje `docs/PANEL-ALERT-HANDOUT.md`,
+z obrazami przepuszczonymi przez kwantyzację panelu. Podgląd bez sprzętu:
 
 ```
-python tools/render-png.py --alert permission --zoom 3 --rgb565 --out alert.png
-python tools/render-png.py --alert multi --zoom 3 --rgb565 --out alert-multi.png
-python tools/render-png.py --triangle --zoom 3 --rgb565 --out trojkat.png
+python tools/render-png.py --alert solo --zoom 3 --rgb565 --out karta.png
+python tools/render-png.py --alert list --zoom 3 --rgb565 --out karta-lista.png
+python tools/render-png.py --alert solo --flood --zoom 3 --rgb565 --out zalana.png
+python tools/render-png.py --marker upper --zoom 3 --rgb565 --out znacznik.png
 ```
 
 Gdyby alert się zawiesił, furtka jest na maszynie z sesją, nie tutaj:

@@ -297,7 +297,7 @@ sekcja „Wyłączenie zbierania".
 
 Sonda wykrywa też moment, w którym Claude Code stanął i **czeka na Ciebie**: prośba o zgodę
 na narzędzie, `AskUserQuestion`, `ExitPlanMode`. Podnosi wtedy toast na tej maszynie i wysyła
-alert do monitora, żeby panel na biurku pokazał kartę i czerwony trójkąt.
+alert do monitora, żeby panel na biurku pokazał kartę i znacznik przy koncie.
 
 Nie ma osobnego skryptu ani drugiego przekierowania — to ta sama sonda, ten sam proces.
 
@@ -315,7 +315,7 @@ Nie ma osobnego skryptu ani drugiego przekierowania — to ta sama sonda, ten sa
 
 - **`session_status`** — wyłącznik całości, domyślnie włączony. `false` gasi pliki stanu,
   toast i wysyłkę; pomiar limitów działa dalej. Wyłączenie **gasi też to, co akurat wisi**:
-  przy pierwszym zdarzeniu kasuje wpisy i wysyła jeden pusty zbiór, więc trójkąt na panelu
+  przy pierwszym zdarzeniu kasuje wpisy i wysyła jeden pusty zbiór, więc znacznik na panelu
   znika od razu, a nie po dobie.
 - Bez **`alert_url`** sygnalizator pracuje **tylko lokalnie**: pisze pliki stanu i podnosi
   toast, nic nie wysyła. To legalny stan i przy okazji kanał awaryjny — toast dociera nawet
@@ -354,7 +354,7 @@ jest naprawdę pytany.
 3. Odpowiedz „nie" albo naciśnij Esc — plik **zostaje** (odmowa nie generuje żadnego
    zdarzenia, to zmierzone) i znika dopiero, gdy napiszesz kolejną wiadomość.
 4. Panel: karta na pełnym ekranie, po `alert_takeover_sec` (domyślnie 5 min) czerwony
-   trójkąt obok nazwy konta.
+   znacznik przy nazwie konta.
 
 Furtka awaryjna, gdyby coś się zawiesiło: `del %LOCALAPPDATA%\claude-usage-monitor\session-status\*`.
 

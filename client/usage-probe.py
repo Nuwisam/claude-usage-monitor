@@ -145,7 +145,7 @@ def _extract_block(text, key):
     ~/.claude.json REALNIE takie ma, json.load() na calosci sie na nim wywraca.
 
     Dwoch wolajacych: `read_claude_json` (tozsamosc konta i cache pomiaru) oraz
-    `account_uuid` z sekcji alertu (do ktorego pasa panelu nalezy trojkat). Przed
+    `account_uuid` z sekcji alertu (przy ktorym pasie panelu stanie znacznik). Przed
     scaleniem obu skryptow ta funkcja istniala w DWOCH kopiach."""
     i = text.find('"%s"' % key)
     if i < 0:
@@ -687,7 +687,7 @@ def account_uuid():
 
     Czytane WYLACZNIE na sciezce wejscia (rzadkiej), wiec nie zastepuje
     `read_claude_json` — ta czyta ten sam plik po throttlu i po znacznie wiecej.
-    Panel maluje trojkat obok konkretnej nazwy konta, wiec musi wiedziec, do ktorego
+    Panel stawia znacznik przy konkretnym pasie konta, wiec musi wiedziec, do ktorego
     pasa alert nalezy; zasada 7 mowi, ze tozsamosc bierze sie stad i tylko stad.
     """
     path = _find(".claude.json")

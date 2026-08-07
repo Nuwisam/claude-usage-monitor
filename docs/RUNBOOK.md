@@ -85,7 +85,7 @@ i porównaj status z wierszami o 401/403 w „Typowe problemy" niżej.
 | Historia daje **500**, w logu `can't subtract offset-naive and offset-aware datetimes` | Parametr `from`/`to` przyszedł ze strefą (przeglądarka wysyła `toISOString()`), a backend liczy na naiwnym UTC. Parametry dat muszą mieć typ `NaiveUtcDt` z `app/schemas.py`, nie `datetime` |
 | **Liczba próbek rośnie przy każdym pomiarze** mimo braku zmian | Zepsuty dedup. Sprawdź, czy porównanie `resets_at` idzie przez `same_reset_window` (tolerancja), a nie na równość — granica okna kołysze się o ~2 s i porównanie dosłowne wyłącza dedup, guard monotoniczności i granice resetu naraz |
 | `POST /api/session-alert` daje **403** (HTML od Apache) | W vhoście brakuje bloku `<Location /claude-usage/api/session-alert>` z filtrem `X-Ingest-Key`. Ingest działa, bo ma własny blok — te dwie ścieżki mają osobne reguły. Wzorzec: `deploy/apache/claude-usage-monitor-include.conf.example` |
-| **Karta albo trójkąt nie gasną** na panelu | Zawieszony wpis stanu: sesja padła w blokadzie, a odmowa i Esc nie generują żadnego zdarzenia. Gaśnie sam przy najbliższej wiadomości w tej sesji (`UserPromptSubmit`). Na żądanie: `del %LOCALAPPDATA%\claude-usage-monitor\session-status\*` albo `"session_status": false` w `config.json`, co przy okazji wysyła pusty zbiór |
+| **Karta albo znacznik nie gasną** na panelu | Zawieszony wpis stanu: sesja padła w blokadzie, a odmowa i Esc nie generują żadnego zdarzenia. Gaśnie sam przy najbliższej wiadomości w tej sesji (`UserPromptSubmit`). Na żądanie: `del %LOCALAPPDATA%\claude-usage-monitor\session-status\*` albo `"session_status": false` w `config.json`, co przy okazji wysyła pusty zbiór |
 | **Toasty wyskakują na świeżo postawionej maszynie**, choć nic nie skonfigurowano | Zamierzone: sygnalizator działa też bez `config.json` — pisze pliki stanu i podnosi powiadomienia, milknie tylko wysyłka. Wyłącza go `"session_status": false`, sam toast `"toast": false` |
 | **Alert nie dociera, choć pomiar tak** | Sprawdź kolejno: `alert_url` w `config.json`, blok Apache (wiersz wyżej), a potem czy panel ma `"session_alerts": true` w `panel.json`. To dwie osobne flagi na dwóch maszynach: `session_status` gasi ŹRÓDŁO, `session_alerts` WYŚWIETLANIE |
 
@@ -150,7 +150,7 @@ wysyłka. Żeby zgasić sam alert, nie ruszając pomiaru:
 ```
 
 Wyłączenie **gasi też to, co akurat wisi** — przy pierwszym zdarzeniu kasuje wpisy i wysyła
-jeden pusty zbiór, więc trójkąt znika z panelu od razu, a nie po dobie.
+jeden pusty zbiór, więc znacznik znika z panelu od razu, a nie po dobie.
 
 Po stronie serwera unieważnienie pojedynczej maszyny to usunięcie jej wpisu z `INGEST_TOKENS`
 w `.env` + `docker compose up -d`. **Nie `restart`** — `INGEST_TOKENS` czytane jest przy

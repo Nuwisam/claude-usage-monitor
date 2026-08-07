@@ -22,7 +22,7 @@ konta — rotacji jednorazowego refresh tokenu.
 | API odczytu, kontrakt v3 | działa |
 | UI — **Live** i **Historia** | działa |
 | Panele biurkowe przez SSE — AX206 i Turing rev A | działa |
-| Alert „Claude czeka na Ciebie" — toast + karta i trójkąt na panelu | działa; karta czeka na przeprojektowanie |
+| Alert „Claude czeka na Ciebie" — toast + karta i znacznik na panelu | działa; cztery układy karty zależne od liczby blokad |
 
 Diagnostyka (zdarzenia, batche, maszyny, surowe payloady) została świadomie przy `curl` —
 patrz [docs/API.md](docs/API.md) § 10.
