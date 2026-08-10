@@ -23,8 +23,8 @@ def entry(**kw):
 def test_typowa_ramka():
     out = status.parse_frame(frame(entry()))
     assert len(out) == 1
-    assert out[0].title == "CZEKA NA ZGODĘ"
-    assert out[0].short == "zgoda"
+    assert out[0].title == "NEEDS PERMISSION"
+    assert out[0].short == "allow"
     assert (out[0].tool, out[0].machine) == ("Bash", "laptop")
 
 
@@ -35,7 +35,7 @@ def test_uszkodzony_wpis_nie_zabija_reszty():
 
 
 def test_nieznany_reason_nie_jest_bledem():
-    """Writer moze byc nowszy niz panel. 'CLAUDE CZEKA' jest prawda w kazdym
+    """Writer moze byc nowszy niz panel. 'CLAUDE IS WAITING' jest prawda w kazdym
     takim przypadku, a pusty ekran nie."""
     out = status.parse_frame(frame(entry(reason="cos-nowego")))
     assert out[0].title == status.UNKNOWN

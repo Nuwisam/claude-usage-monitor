@@ -1,9 +1,9 @@
-/** Czas: kotwiczenie w `serverNow` i formaty z makiety.
+/** Time: anchoring on `serverNow` and the formats from the mockup.
  *
- *  Countdownow nie liczymy z zegara przegladarki — bywa rozjechany, a `resets_at`
- *  przychodzi z zegara Anthropic. Kotwica to `serverNow`, lokalnie tylko tykamy. */
+ *  Countdowns are not computed from the browser clock — it drifts, and `resets_at`
+ *  comes from Anthropic's clock. The anchor is `serverNow`; locally we only tick. */
 
-/** Bez strefy dopinamy 'Z': `new Date("2026-07-26T19:07:37")` to w JS czas LOKALNY. */
+/** With no zone we append 'Z': `new Date("2026-07-26T19:07:37")` is LOCAL time in JS. */
 export function parseUtc(iso: string | null): Date | null {
   if (!iso) return null;
   const hasZone = /(Z|[+-]\d{2}:?\d{2})$/.test(iso);
@@ -11,22 +11,22 @@ export function parseUtc(iso: string | null): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-/** Przesuniecie zegara przegladarki wzgledem serwera, w ms. */
+/** Browser clock offset relative to the server, in ms. */
 export function serverOffsetMs(serverNow: string, receivedAt = Date.now()): number {
   const s = parseUtc(serverNow);
   return s ? s.getTime() - receivedAt : 0;
 }
 
-/** "Teraz" widziane oczami serwera. */
+/** "Now" seen through the server's eyes. */
 export function serverClock(offsetMs: number): number {
   return Date.now() + offsetMs;
 }
 
 const p2 = (n: number) => String(n).padStart(2, "0");
 
-/** Formaty w STREFIE PRZEGLADARKI — dane jada w UTC, ale „odczyt o 06:35" przy zegarze
- *  8:35 jest nieczytelny. Tam, gdzie widac surowe godziny, strefa jest podpisana
- *  (`tzLabel`); konwersje robi `Date`, wiec DST wychodzi samo. */
+/** Formats in the BROWSER'S ZONE — the data travels in UTC, but "read at 06:35" next to a
+ *  clock showing 8:35 is unreadable. Wherever raw hours are visible, the zone is labelled
+ *  (`tzLabel`); `Date` does the conversion, so DST falls out on its own. */
 export function hm(d: Date | null): string {
   return d ? `${p2(d.getHours())}:${p2(d.getMinutes())}` : "—";
 }
@@ -39,35 +39,35 @@ export function dm(d: Date | null): string {
   return d ? `${p2(d.getDate())}.${p2(d.getMonth() + 1)}` : "—";
 }
 
-/** Skroty dni indeksowane `getDay()` — 0 to NIEDZIELA. W Pythonie `weekday()` liczy od
- *  poniedzialku, wiec port do panelu NIE moze przepisac tej tablicy w tej kolejnosci. */
-const DAYS = ["ndz.", "pon.", "wt.", "śr.", "czw.", "pt.", "sob."];
+/** Day abbreviations indexed by `getDay()` — 0 is SUNDAY. In Python `weekday()` counts from
+ *  Monday, so the port to the panel MUST NOT copy this table in this order. */
+const DAYS = ["Sun.", "Mon.", "Tue.", "Wed.", "Thu.", "Fri.", "Sat."];
 
-/** Roznica w DNIACH KALENDARZOWYCH, liczona po lokalnych polnocach.
+/** Difference in CALENDAR DAYS, measured across local midnights.
  *
- *  Nigdy `Math.round(delta_ms / 86_400_000)`: doba przy zmianie czasu ma 23 albo 25 h,
- *  a para chwil po dwoch stronach polnocy rozni sie o dzien niezaleznie od tego, ile ms
- *  je dzieli. Czlowiek czyta „wczoraj o 23:50", nie „26 godzin temu". */
+ *  Never `Math.round(delta_ms / 86_400_000)`: a day at a clock change has 23 or 25 h, and a
+ *  pair of instants on two sides of midnight differ by a day no matter how many ms separate
+ *  them. A person reads "yesterday at 23:50", not "26 hours ago". */
 function dayDiff(d: Date, now: Date): number {
   const a = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const b = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   return Math.round((a - b) / 86_400_000);
 }
 
-/** Stempel chwili czytanej WZGLEDEM TERAZ — jedyne miejsce, w ktorym zapada decyzja
- *  „czy dopisac dzien". Kazdy podpis czasu stojacy obok wieku odczytu albo odliczania
- *  idzie przez to albo przez `atStamp`; dzieki temu wariant dobowy dochodzi wszedzie
- *  naraz, a nie w dziesieciu miejscach osobno.
+/** Stamp of an instant read RELATIVE TO NOW — the only place where the decision "do we add
+ *  the day" is made. Every time label standing next to a reading's age or next to a
+ *  countdown goes through this or through `atStamp`; that way the day variant reaches
+ *  everywhere at once, and not in ten places separately.
  *
- *    dzis, `precise`, < 1 h  ->  "11:58:07"
- *    dzis                    ->  "11:58"
- *    +/- 1 dzien             ->  "wczoraj 23:50" / "jutro 20:00"
- *    +/- 2..6 dni            ->  "śr. 11:58"      (w tym oknie skrot jest jednoznaczny)
- *    dalej                   ->  "26.07 11:58"    (7 dni wstecz to znowu ten sam skrot)
- *    dalej, inny rok         ->  "26.07.2025 11:58"
+ *    today, `precise`, < 1 h  ->  "11:58:07"
+ *    today                    ->  "11:58"
+ *    +/- 1 day                ->  "yesterday 23:50" / "tomorrow 20:00"
+ *    +/- 2..6 days            ->  "Wed. 11:58"     (in that window the abbreviation is unambiguous)
+ *    further                  ->  "26.07 11:58"    (7 days back is the same abbreviation again)
+ *    further, other year      ->  "26.07.2025 11:58"
  *
- *  `now` bierzemy z `nowMs`, nigdy z `Date.now()` — countdowny kotwicza sie na `serverNow`
- *  i rozjechany zegar przegladarki przewracalby sam podpis dnia. */
+ *  `now` comes from `nowMs`, never from `Date.now()` — countdowns anchor on `serverNow`
+ *  and a drifting browser clock would flip the day label itself. */
 export function stamp(d: Date | null, nowMs: number, precise = false): string {
   if (!d) return "—";
   const now = new Date(nowMs);
@@ -75,46 +75,42 @@ export function stamp(d: Date | null, nowMs: number, precise = false): string {
   if (diff === 0) {
     return precise && nowMs - d.getTime() < 3_600_000 ? hms(d) : hm(d);
   }
-  if (diff === -1) return `wczoraj ${hm(d)}`;
-  if (diff === 1) return `jutro ${hm(d)}`;
+  if (diff === -1) return `yesterday ${hm(d)}`;
+  if (diff === 1) return `tomorrow ${hm(d)}`;
   if (Math.abs(diff) <= 6) return `${DAYS[d.getDay()]} ${hm(d)}`;
   const year = d.getFullYear() === now.getFullYear() ? "" : `.${d.getFullYear()}`;
   return `${dm(d)}${year} ${hm(d)}`;
 }
 
-/** `stamp()` z przyimkiem. Przyimek MUSI byc tutaj, bo polszczyzna zmienia go razem
- *  z formatem — „o 11:58", ale „w śr. o 11:58" — a wolajacy nie ma prawa wiedziec, ktory
- *  wariant wyszedl.
+/** `stamp()` with a preposition. The preposition MUST be here, because the format is what
+ *  picks it — "at 11:58", but "on Wed. at 11:58" — and the caller has no right to know
+ *  which variant came out.
  *
- *    dzis          ->  "o 11:58"  /  "o 11:58:07"
- *    +/- 1 dzien   ->  "wczoraj o 23:50" / "jutro o 20:00"
- *    +/- 2..6 dni  ->  "w śr. o 11:58"   ALE  "we wt. o 11:58"
- *    dalej         ->  "26.07 o 11:58"   („w 26.07" nie jest polszczyzna)
+ *    today         ->  "at 11:58"  /  "at 11:58:07"
+ *    +/- 1 day     ->  "yesterday at 23:50" / "tomorrow at 20:00"
+ *    +/- 2..6 days ->  "on Wed. at 11:58"
+ *    further       ->  "26.07 at 11:58"  (a numeric date takes no preposition)
  */
 export function atStamp(d: Date | null, nowMs: number, precise = false): string {
   if (!d) return "—";
   const now = new Date(nowMs);
   const diff = dayDiff(d, now);
   if (diff === 0) {
-    return `o ${precise && nowMs - d.getTime() < 3_600_000 ? hms(d) : hm(d)}`;
+    return `at ${precise && nowMs - d.getTime() < 3_600_000 ? hms(d) : hm(d)}`;
   }
-  if (diff === -1) return `wczoraj o ${hm(d)}`;
-  if (diff === 1) return `jutro o ${hm(d)}`;
-  if (Math.abs(diff) <= 6) {
-    // „we wtorek", nie „w wtorek" — jedyny wyjatek i dlatego stoi tu, a nie w wolaniu.
-    const prep = d.getDay() === 2 ? "we" : "w";
-    return `${prep} ${DAYS[d.getDay()]} o ${hm(d)}`;
-  }
+  if (diff === -1) return `yesterday at ${hm(d)}`;
+  if (diff === 1) return `tomorrow at ${hm(d)}`;
+  if (Math.abs(diff) <= 6) return `on ${DAYS[d.getDay()]} at ${hm(d)}`;
   const year = d.getFullYear() === now.getFullYear() ? "" : `.${d.getFullYear()}`;
-  return `${dm(d)}${year} o ${hm(d)}`;
+  return `${dm(d)}${year} at ${hm(d)}`;
 }
 
-/** Zakres dwoch chwil — dla dziur w historii. `stamp()` tu nie pasuje, bo zadnego z koncow
- *  nie czyta sie wzgledem „teraz".
+/** A range of two instants — for gaps in the history. `stamp()` does not fit here, because
+ *  neither end is read relative to "now".
  *
- *  Odstepy wokol pauzy TYLKO w wariancie z datami: „26.07 21:57–27.07 17:49" czyta sie jak
- *  jeden zlepek. Dwudziestogodzinna cisza klienta jest tu norma, wiec zakres regularnie
- *  przekracza polnoc i same godziny wygladaja jak podroz w czasie. */
+ *  Spaces around the dash ONLY in the variant with dates: "26.07 21:57–27.07 17:49" reads as
+ *  one blob. Twenty hours of client silence is the norm here, so the range regularly crosses
+ *  midnight and bare hours look like time travel. */
 export function stampRange(from: Date | null, to: Date | null): string {
   if (!from || !to) return "—";
   const sameDay = dayDiff(from, to) === 0;
@@ -123,8 +119,8 @@ export function stampRange(from: Date | null, to: Date | null): string {
     : `${dm(from)} ${hm(from)} – ${dm(to)} ${hm(to)}`;
 }
 
-/** "UTC+2" / "UTC+5:30" / "UTC" dla DANEJ chwili — przy zakresie 30 d konce moga wypasc
- *  po dwoch stronach zmiany czasu i jedna etykieta na oba klamalaby o godzine. */
+/** "UTC+2" / "UTC+5:30" / "UTC" for a GIVEN instant — over a 30 d range the ends can fall on
+ *  two sides of a clock change and one label for both would lie by an hour. */
 export function tzLabel(d: Date = new Date()): string {
   const min = -d.getTimezoneOffset();
   if (min === 0) return "UTC";
@@ -133,11 +129,11 @@ export function tzLabel(d: Date = new Date()): string {
   return `UTC${min < 0 ? "−" : "+"}${Math.floor(abs / 60)}${rest ? `:${p2(rest)}` : ""}`;
 }
 
-/** "2 d 4 h" / "3 h 05 min" / "12 min 34 s" / "po resecie" — dokladnie jak w makiecie. */
+/** "2 d 4 h" / "3 h 05 min" / "12 min 34 s" / "past reset" — exactly as in the mockup. */
 export function countdown(target: Date | null, nowMs: number): string {
-  if (!target) return "bez resetu";
+  if (!target) return "no reset";
   const s = Math.round((target.getTime() - nowMs) / 1000);
-  if (s <= 0) return "po resecie";
+  if (s <= 0) return "past reset";
   const d = Math.floor(s / 86400);
   const h = Math.floor((s % 86400) / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -146,18 +142,18 @@ export function countdown(target: Date | null, nowMs: number): string {
   return `${m} min ${p2(s % 60)} s`;
 }
 
-/** "3 s temu" / "5 min temu" / "1 h 25 min temu" / "3 d 4 h temu".
+/** "3 s ago" / "5 min ago" / "1 h 25 min ago" / "3 d 4 h ago".
  *
- *  Szczebel dobowy w ksztalcie `countdown()`, bo odkad swiezosc niesie sama etykieta,
- *  trzydniowa cisza musi czytac sie od razu — "76 h 00 min temu" wymaga dzielenia w glowie.
- *  Granica dokladnie na 24 h daje "1 d 0 h temu"; `countdown()` drukuje "1 d 0 h" dla tego
- *  samego wejscia, wiec to spojne, a nie przeoczone. */
+ *  A day rung shaped like `countdown()`, because ever since freshness is carried by the label
+ *  itself, three days of silence must read at once — "76 h 00 min ago" needs division in the
+ *  head. The boundary exactly at 24 h gives "1 d 0 h ago"; `countdown()` prints "1 d 0 h" for
+ *  the same input, so that is consistent, not overlooked. */
 export function ago(sinceMs: number, nowMs: number): string {
   const s = Math.max(0, Math.round((nowMs - sinceMs) / 1000));
-  if (s < 60) return `${s} s temu`;
+  if (s < 60) return `${s} s ago`;
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m} min temu`;
+  if (m < 60) return `${m} min ago`;
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h} h ${p2(m % 60)} min temu`;
-  return `${Math.floor(h / 24)} d ${h % 24} h temu`;
+  if (h < 24) return `${h} h ${p2(m % 60)} min ago`;
+  return `${Math.floor(h / 24)} d ${h % 24} h ago`;
 }

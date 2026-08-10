@@ -1,37 +1,37 @@
-/** Stan swiezosci -> wyglad. JEDYNE miejsce, w ktorym ta decyzja zapada.
+/** Freshness state -> appearance. THE ONLY place where this decision is made.
  *
- *  SWIEZOSC NIESIE ETYKIETA WIEKU ODCZYTU, NIE RYSUNEK TORU. `live`, `stale` i `unknown`
- *  wygladaja identycznie: pelny tor z ostatnia PRAWDZIWA wartoscia. O tym, ile ta liczba
- *  jest warta, mowi stojace obok „potwierdzone w śr. o 11:58 · 3 d 4 h temu".
+ *  FRESHNESS IS CARRIED BY THE READING-AGE LABEL, NOT BY THE TRACK DRAWING. `live`, `stale`
+ *  and `unknown` look identical: a full track with the last TRUE value. How much that number
+ *  is worth is told by the "confirmed on Wed. at 11:58 · 3 d 4 h ago" standing next to it.
  *
- *  Zasada 4 z AGENTS.md („unknown nigdy nie jest zerem") wychodzi z tego MOCNIEJSZA, nie
- *  slabsza: przy braku swiezego pomiaru pokazujemy ostatni ZMIERZONY, a nie zero. Kreskowany
- *  tor i slowa `nie wiem` zostaja wylacznie tam, gdzie pomiaru nie bylo NIGDY — tam pusty tor
- *  czytaloby sie jako zero, a zero byloby klamstwem.
+ *  Rule 4 from AGENTS.md ("unknown is never zero") comes out of this STRONGER, not weaker:
+ *  with no fresh measurement we show the last MEASURED value, not zero. The dashed track and
+ *  the words `unknown` stay only where there has NEVER been a measurement — there an empty
+ *  track would read as zero, and zero would be a lie.
  *
- *  Ten sam model chodzi na panelu AX206 od poczatku (`panel/panel/view.py`) — to jest port
- *  jego decyzji do WWW, nie trzeci wariant. */
+ *  The same model has run on the AX206 panel from the start (`panel/panel/view.py`) — this is
+ *  a port of its decision to the web, not a third variant. */
 import type { SeriesStatus } from "../api/types";
 import { clampPct, pct } from "./format";
 import { ago, atStamp, countdown, parseUtc, stamp } from "./time";
 
 export interface SeriesView {
-  /** Tor z tlem i wypelnieniem — dla kazdego realnego pomiaru, niezaleznie od wieku. */
+  /** Track with a background and a fill — for every real measurement, regardless of age. */
   measured: boolean;
-  /** Kontur przerywany zamiast wypelnienia: ksztalt bez masy. */
+  /** Dashed outline instead of a fill: shape without mass. */
   outline: boolean;
-  /** Skos w konturze — pomiaru nie bylo NIGDY, nie ma czego narysowac. */
+  /** Hatching in the outline — there has NEVER been a measurement, nothing to draw. */
   hatch: boolean;
-  /** Kikut przy zerze dla wywnioskowanego resetu. */
+  /** Stub at zero for an inferred reset. */
   stub: boolean;
   barPct: number;
   full: boolean;
-  /** Liczba do kolumny procentow. null => zamiast liczby idzie `words`. */
+  /** Number for the percent column. null => `words` goes in place of the number. */
   number: string | null;
   words: string | null;
-  /** Podpis pod wierszem serii. */
+  /** Caption under the series row. */
   note: string;
-  /** Podpis w naglowku hero (sekundy przy swiezym odczycie). */
+  /** Caption in the hero header (seconds on a fresh reading). */
   heroNote: string;
 }
 
@@ -40,20 +40,20 @@ export function describeSeries(
   nowMs: number,
   extraNote?: string | null,
 ): SeriesView {
-  // Czas bierzemy z POTWIERDZENIA, nie z zapisu probki: dedup nie zapisuje probki przy
-  // niezmienionej wartosci, wiec `capturedAt` bywa o godziny starsze niz ostatni pomiar.
+  // Time comes from the CONFIRMATION, not from the sample write: dedup writes no sample when
+  // the value is unchanged, so `capturedAt` is sometimes hours older than the last measurement.
   const confirmed = parseUtc(s.confirmedAt ?? s.capturedAt);
   const stable = parseUtc(s.valueSince);
   const suffix = extraNote ? ` · ${extraNote}` : "";
-  // Prog 2 min, inaczej „bez zmian od" wisialoby przy kazdym wierszu. Po „od" przyimek sie
-  // nie zmienia, wiec idzie goly `stamp()`.
+  // A 2 min threshold, otherwise "unchanged since" would hang on every row. After "since" the
+  // preposition does not change, so a bare `stamp()` goes in.
   const held =
     stable && confirmed && confirmed.getTime() - stable.getTime() >= 120_000
-      ? ` · bez zmian od ${stamp(stable, nowMs)}`
+      ? ` · unchanged since ${stamp(stable, nowMs)}`
       : "";
 
-  // Wartosc: pomiar biezacy, a gdy backend go nie podal (stan `unknown`) — OSTATNI ZMIERZONY.
-  // `??`, nie `||`: przy `inferred_reset` utilization to 0.0 i ma nim zostac.
+  // The value: the current measurement, and when the backend did not supply one (`unknown`
+  // state) — the LAST MEASURED. `??`, not `||`: on `inferred_reset` utilization is 0.0 and stays.
   const value = s.utilization ?? s.rawUtilization;
 
   if (value === null) return missingView(suffix, s.unavailableReason);
@@ -66,20 +66,20 @@ export function describeSeries(
       stub: true,
       barPct: 0,
       full: false,
-      // Tylda odroznia wnioskowanie od pomiaru. Swiadomie BEZ stempla ostatniego pomiaru:
-      // tamten nalezy do POPRZEDNIEGO okna, a `~0` mowi o biezacym.
+      // The tilde tells inference apart from measurement. Deliberately WITHOUT the stamp of the
+      // last measurement: that one belongs to the PREVIOUS window, and `~0` speaks of this one.
       number: "~0",
       words: null,
-      note: `wyliczone ~0%, nie zmierzone${suffix}`,
-      heroNote: "okno się zresetowało, klient milczał",
+      note: `inferred ~0%, not measured${suffix}`,
+      heroNote: "window reset, client was silent",
     };
   }
 
   const age = confirmed ? ` · ${ago(confirmed.getTime(), nowMs)}` : "";
-  // Przy wycofanym mierniku wiersz wyglada TAK SAMO jak zwykly: liczba, kwoty i „potwierdzone
-  // …" ze stemplem ostatniego pomiaru. Nie ma tu osobnego napisu o wycofaniu, bo backend
-  // podmienia znaczniki na czas TAMTEGO pomiaru — podpis mowi wiec prawde sam z siebie,
-  // a wiek odczytu robi reszte. O tym, ze bramy nie otworzysz, mowi twardy blok w kaskadzie.
+  // With a withdrawn meter the row looks EXACTLY like a normal one: number, amounts and the
+  // "confirmed …" stamp of the last measurement. No separate withdrawal caption here: the
+  // backend swaps the markers to the time of THAT measurement, so the caption tells the truth by
+  // itself, the reading age does the rest, and the hard block in the cascade says the gate is shut.
   return {
     measured: true,
     outline: false,
@@ -89,24 +89,24 @@ export function describeSeries(
     full: value >= 100,
     number: pct(value),
     words: null,
-    note: `potwierdzone ${atStamp(confirmed, nowMs)}${age}${held}${suffix}`,
-    heroNote: `potwierdzone ${atStamp(confirmed, nowMs, true)}${age}${held}`,
+    note: `confirmed ${atStamp(confirmed, nowMs)}${age}${held}${suffix}`,
+    heroNote: `confirmed ${atStamp(confirmed, nowMs, true)}${age}${held}`,
   };
 }
 
-/** Brak liczby dla tej serii. Pusty tor czytaloby sie jako zero, wiec tor jest kreskowany
- *  ze skosem, a zamiast liczby stoja slowa.
+/** No number for this series. An empty track would read as zero, so the track is dashed
+ *  with hatching, and words stand in place of the number.
  *
- *  Dwa rozne powody, ten sam RYSUNEK i dwa rozne slowa:
- *    - pomiaru nie bylo NIGDY — „nie wiem", jedyne miejsce, w ktorym UI tak mowi, i jedyne,
- *      w ktorym naprawde nie wie;
- *    - miernik zostal WYCOFANY (`unavailableReason`) — wtedy wiemy dokladnie, dlaczego
- *      liczby nie ma, i „nie wiem" byloby przyznaniem sie do niewiedzy, ktorej nie ma.
- *      Anthropic w tym stanie podaje `percent: 0`; gdybysmy je narysowali, obiecalibysmy
- *      caly wolny limit w chwili twardej blokady.
+ *  Two different reasons, the same DRAWING and two different words:
+ *    - there has NEVER been a measurement — "unknown", the only place where the UI says so,
+ *      and the only one where it really does not know;
+ *    - the meter has been WITHDRAWN (`unavailableReason`) — then we know exactly why the
+ *      number is missing, and "unknown" would admit to an ignorance that is not there.
+ *      Anthropic reports `percent: 0` in this state; had we drawn it, we would be promising
+ *      the whole free limit at the moment of a hard block.
  *
- *  Tresci powodu nie tlumaczymy (zasada 5): zbior jest otwarty, wiec rozgałezia nas samo
- *  jego istnienie, a nie jego brzmienie. */
+ *  We do not spell the reason out (rule 5): the set is open, so what branches us is its
+ *  existence, not its wording. */
 function missingView(suffix: string, reason?: string | null): SeriesView {
   return {
     measured: false,
@@ -116,41 +116,41 @@ function missingView(suffix: string, reason?: string | null): SeriesView {
     barPct: 0,
     full: false,
     number: null,
-    words: reason ? "bez licznika" : "nie wiem",
+    words: reason ? "no meter" : "unknown",
     note: reason
-      ? `licznik wycofany przez organizację${suffix}`
-      : `brak pomiaru dla tej serii${suffix}`,
-    heroNote: reason ? "licznik wycofany przez organizację" : "brak pomiaru dla tej serii",
+      ? `meter withdrawn by the organization${suffix}`
+      : `no measurement for this series${suffix}`,
+    heroNote: reason ? "meter withdrawn by the organization" : "no measurement for this series",
   };
 }
 
-/** Podpis odliczania w hero, w dwoch czesciach: `at` idzie do spana, ktory waski uklad chowa,
- *  wiec `lead` musi bronic sie sam.
+/** Countdown caption in the hero, in two parts: `at` goes into a span that a narrow layout
+ *  hides, so `lead` has to stand on its own.
  *
- *  `at` NIESIE JUZ PRZYIMEK — bo przy resecie za piec dni sama godzina klamie, a dzien zmienia
- *  polszczyzne („o 20:00", ale „w pt. o 20:00"). Wolajacy nie ma prawa wiedziec, ktory wariant
- *  wyszedl, wiec nie dokleja wlasnego „o".
+ *  `at` ALREADY CARRIES THE PREPOSITION — because with a reset five days out the bare time
+ *  lies, and the day changes the wording ("at 20:00", but "on Fri. at 20:00"). The caller has
+ *  no right to know which variant came out, so it does not glue on an "at" of its own.
  *
- *  `resetsAt: null` ma DWA powody i „bez resetu" zlewalo je w napis czytany jak „to okno sie
- *  nie resetuje": (a) Anthropic nie podaje granicy dla okna z 0% zuzycia, (b) sonda zeruje
- *  przedawniona granice z cache (`reset-w-toku`, do ~5 min). */
+ *  `resetsAt: null` has TWO reasons, and "no reset" merged them into a caption read as "this
+ *  window does not reset": (a) Anthropic gives no boundary for a window at 0% usage, (b) the
+ *  probe zeroes a stale boundary from the cache (`reset-in-progress`, up to ~5 min). */
 export function resetNote(s: SeriesStatus, nowMs: number): { lead: string; at: string | null } {
-  // `source` to enum kontraktu; nazwa bucketu byla by zlamaniem zasady 5.
-  if (s.source === "spend" || s.source === "extra_usage") return { lead: "bez resetu", at: null };
+  // `source` is a contract enum; a bucket name here would break rule 5.
+  if (s.source === "spend" || s.source === "extra_usage") return { lead: "no reset", at: null };
   const r = parseUtc(s.resetsAt);
   if (r) {
-    // Prog zaokraglenia TEN SAM co w countdown(), inaczej przy roznicy 300 ms wychodzi
-    // sklejka „reset za po resecie".
+    // Rounding threshold THE SAME as in countdown(), otherwise a 300 ms difference produces
+    // the splice "reset in past reset".
     const secs = Math.round((r.getTime() - nowMs) / 1000);
     return secs > 0
-      ? { lead: `reset za ${countdown(r, nowMs)}`, at: atStamp(r, nowMs) }
-      : { lead: "reset minął", at: atStamp(r, nowMs) };
+      ? { lead: `reset in ${countdown(r, nowMs)}`, at: atStamp(r, nowMs) }
+      : { lead: "reset has passed", at: atStamp(r, nowMs) };
   }
-  if (s.utilization === 0) return { lead: "okno nie wystartowało", at: null };
-  return { lead: "czas resetu nieznany", at: null };
+  if (s.utilization === 0) return { lead: "window has not started", at: null };
+  return { lead: "reset time unknown", at: null };
 }
 
-/** Kwoty z `extra` serii wydatkow. Jedyne pole kontraktu bez schematu — czytamy defensywnie. */
+/** Amounts from the spend series `extra`. The only schema-less contract field — read defensively. */
 export function spendNote(s: SeriesStatus): string | null {
   if (s.source !== "spend" || !s.extra) return null;
   const m = (v: unknown): [number, string | null, number] | null => {
@@ -166,11 +166,11 @@ export function spendNote(s: SeriesStatus): string | null {
   const used = m(s.extra.used);
   const limit = m(s.extra.limit) ?? m(s.extra.cap);
   const fmt = (x: [number, string | null, number]) =>
-    (x[0] / 10 ** x[2]).toFixed(x[2]).replace(".", ",");
+    (x[0] / 10 ** x[2]).toFixed(x[2]);
 
-  if (used && limit) return `kredyty ${fmt(used)} / ${fmt(limit)} ${limit[1] ?? ""}`.trim();
+  if (used && limit) return `credits ${fmt(used)} / ${fmt(limit)} ${limit[1] ?? ""}`.trim();
   if (s.extra.enabled === false) {
-    return used ? `kredyty wyłączone · ${fmt(used)} ${used[1] ?? ""}`.trim() : "kredyty wyłączone";
+    return used ? `credits off · ${fmt(used)} ${used[1] ?? ""}`.trim() : "credits off";
   }
   return used ? `${fmt(used)} ${used[1] ?? ""}`.trim() : null;
 }

@@ -1,8 +1,8 @@
-"""view.py — stan na wyglad. Tu pilnujemy zasady 4 z AGENTS.md.
+"""view.py — state to appearance. Here we guard rule 4 from AGENTS.md.
 
-Najwazniejszy test w tym pliku to `test_unknown_nigdy_nie_jest_zerem`. Falszywe,
-pewnie wygladajace zero jest najgorszym trybem awarii tego narzedzia: uzytkownik
-odpala duze zadanie i trafia w sciane.
+The most important test in this file is `test_unknown_nigdy_nie_jest_zerem`. A false,
+confident-looking zero is the worst failure mode of this tool: the user fires off a
+big job and hits a wall.
 """
 import pytest
 
@@ -19,40 +19,42 @@ def series(**kw):
     return model.SeriesStatus(d)
 
 
-# --- zasada 4 ---------------------------------------------------------------
+# --- rule 4 -----------------------------------------------------------------
 
 def test_unknown_pokazuje_ostatni_pomiar_nie_zero():
-    """Zasada 4 w wersji panelowej: gdy backend nie zna biezacej wartosci,
-    pokazujemy OSTATNIA ZMIERZONA, nigdy zero. O tym, ile ta liczba jest warta,
-    mowi wiek odczytu obok — panel nie ma osobnych stanow swiezosci w rysunku."""
+    """Rule 4 in its panel form: when the backend does not know the current value
+    we show the LAST MEASURED one, never zero. How much that number is worth is
+    told by the reading age next to it — the panel has no separate freshness
+    states in the drawing."""
     v = view.describe_series(series(freshness="unknown", utilization=None,
                                     rawUtilization=42))
-    assert v.number == "42", "ostatni pomiar, a nie slowo i nie zero"
+    assert v.number == "42", "the last measurement, not a word and not zero"
     assert v.bar_pct == 42 and v.measured is True
     assert v.words is None
 
 
 def test_unknown_na_setce_nie_gubi_setki():
-    """Przypadek z produkcji: konto milczy 12 h, tydzien byl na 100%. Pokazanie
-    zera albo pustego toru bylo by tu najgorszym mozliwym klamstwem."""
+    """A real case: an account goes silent for 12 h, the week was at 100%. Showing
+    zero or an empty track would be the worst possible lie here."""
     v = view.describe_series(series(freshness="unknown", utilization=None,
                                     rawUtilization=100))
     assert v.number == "100" and v.full is True and v.bar_pct == 100
 
 
 def test_brak_jakiegokolwiek_pomiaru_to_slowa_nie_zero():
-    """Jedyny przypadek, w ktorym naprawde nie ma czego narysowac."""
+    """The only case in which there really is nothing to draw."""
     for v in (view.missing_view(),
               view.describe_series(series(freshness="unknown", utilization=None,
                                           rawUtilization=None)),
               view.describe_series(None)):
-        assert v.number is None and v.words == "nie wiem"
+        assert v.number is None and v.words == "unknown"
         assert v.bar_pct == 0 and v.measured is False and v.hatch is True
 
 
 def test_inferred_reset_ma_tylde():
-    """Tylda odroznia wnioskowanie od pomiaru (freshness.ts:84) — to jedyne
-    miejsce, gdzie liczba nie pochodzi z pomiaru, tylko z rozumowania serwera."""
+    """The tilde tells inference apart from measurement (freshness.ts:84) — the
+    only place where the number comes not from a measurement but from the
+    server's reasoning."""
     v = view.describe_series(series(freshness="inferred_reset", utilization=0,
                                     rawUtilization=97))
     assert v.number == "~0" and v.bar_pct == 0
@@ -60,23 +62,28 @@ def test_inferred_reset_ma_tylde():
 
 @pytest.mark.parametrize("freshness", ["live", "stale"])
 def test_live_i_stale_wygladaja_tak_samo(freshness):
-    """SWIADOME odstepstwo od WWW: obok stoi wiek odczytu, ktory mowi to samo
-    dokladniej. Drugi kanal na te sama informacje bylby szumem."""
+    """A DELIBERATE departure from the web: the reading age stands next to it and
+    says the same thing more precisely. A second channel for the same information
+    would be noise."""
     v = view.describe_series(series(freshness=freshness, utilization=31))
     assert v.measured is True and v.number == "31" and v.hatch is False
 
 
 def test_setka_to_koniec():
-    # Jedyny prog w calym UI. 100% to nie "prawie koniec" — to koniec szczebla.
+    # The only threshold in the whole UI. 100% is not "almost the end" — it is the
+    # end of the rung.
     assert view.describe_series(series(utilization=100)).full is True
     assert view.describe_series(series(utilization=99)).full is False
 
 
-# --- podpisy resetu ---------------------------------------------------------
+# --- reset captions ---------------------------------------------------------
 
 def test_cztery_powody_braku_granicy_daja_cztery_napisy():
-    """resetsAt: null ma kilka przyczyn i sklejenie ich w jeden napis bylo bledem
-    juz raz (freshness.ts:105-125)."""
+    """resetsAt: null has several causes and merging them into one caption was a bug
+    once already (freshness.ts:105-125). The count is asserted separately, because
+    a set with a duplicate dedupes in silence: two captions shortened to the same
+    words would give a 3-element set matching a 3-element literal, and the four
+    reasons would render identically on the glass again."""
     napisy = {
         view.reset_note(series(source="spend", utilization=41), NOW)[0],
         view.reset_note(series(utilization=0), NOW)[0],
@@ -84,35 +91,37 @@ def test_cztery_powody_braku_granicy_daja_cztery_napisy():
         view.reset_note(series(utilization=44,
                                resetsAt="2026-07-26T19:00:00Z"), NOW)[0],
     }
-    assert napisy == {"bez resetu", "okno nie wystartowało",
-                      "czas resetu nieznany", "reset minął"}
+    assert len(napisy) == 4, "four distinct sentences, not one and not three"
+    assert napisy == {"no reset", "window has not started",
+                      "reset time unknown", "reset has passed"}
 
 
 def test_reset_w_przyszlosci_ma_odliczanie_i_godzine():
     lead, at = view.reset_note(series(utilization=31,
                                       resetsAt="2026-07-26T20:00:00Z"), NOW)
-    assert lead.startswith("reset za ") and at is not None
-    assert "po resecie" not in lead, "prog zaokraglenia musi byc ten sam co w countdown()"
+    assert lead.startswith("reset in ") and at is not None
+    assert "past reset" not in lead, "the rounding threshold must be the same as in countdown()"
 
 
 def test_tydzien_dostaje_dzien_tygodnia():
-    """Reset za 6 dni: sama godzina klamie, bo nie mowi ktorego dnia. Decyduje
-    o tym `at_stamp`, ten sam co w WWW — przyimek jest w srodku stempla."""
+    """A reset 6 days out: the bare time lies, because it does not say which day.
+    `at_stamp` decides that, the same one as in the web — the preposition is
+    inside the stamp."""
     _, at = view.reset_note(series(resetsAt="2026-08-01T16:00:00Z", utilization=30),
                             NOW)
     przyimek, dzien = at.split()[:2]
-    assert przyimek in ("w", "we") and dzien in fmt.DAYS
+    assert przyimek == "on" and dzien in fmt.DAYS
 
 
 def test_brak_serii_nie_wybucha():
-    assert view.reset_note(None, NOW) == ("brak danych", None)
+    assert view.reset_note(None, NOW) == ("no data", None)
 
 
-# --- wybor serii ------------------------------------------------------------
+# --- series pickers ---------------------------------------------------------
 
 def test_hero_stoi_na_sesji_nie_na_isActive():
-    """Gdyby hero szedl za isActive, ten sam ekran znaczylby co innego
-    w zaleznosci od pory tygodnia (HeroSession.tsx:20-22)."""
+    """Were the hero to follow isActive, the same screen would mean something else
+    depending on the day of the week (HeroSession.tsx:20-22)."""
     tydzien = series(seriesKey="limit:weekly_all|weekly|-|-", kind="weekly_all",
                      bucketKey="seven_day", isActive=True, utilization=99)
     sesja = series(isActive=False, utilization=3)
@@ -120,8 +129,8 @@ def test_hero_stoi_na_sesji_nie_na_isActive():
 
 
 def test_pickery_pomijaja_duplikaty():
-    """Renderujemy tylko serie primary — bucket i limit to ta sama liczba
-    podana dwa razy (status.py:96-120)."""
+    """We render only primary series — bucket and limit are the same number
+    reported twice (status.py:96-120)."""
     duplikat = series(seriesKey="bucket:five_hour", primary=False, kind=None,
                       utilization=2)
     prawdziwa = series(utilization=2)
@@ -135,7 +144,8 @@ def test_pickery_pomijaja_duplikaty():
 
 
 def test_tydzien_bierze_zbiorczy_nie_zawezony():
-    """Swiadoma decyzja: wiersz ma znaczyc to samo w kazdy dzien tygodnia."""
+    """A deliberate decision: the row has to mean the same thing on every day of
+    the week."""
     scoped = series(seriesKey="limit:weekly_scoped|weekly|fable|-",
                     kind="weekly_scoped", bucketKey="seven_day_fable",
                     utilization=99)
@@ -149,33 +159,34 @@ def test_brak_pasujacej_serii_daje_none():
     assert view.pick_weekly([]) is None
 
 
-# --- kredyty ----------------------------------------------------------------
+# --- credits ----------------------------------------------------------------
 
 def test_kredyty_maja_trzy_stany():
-    """"wylaczone" i "nie wiem" to DWIE ROZNE rzeczy (cascade.py:11-13)."""
+    """"off" and "unknown" are TWO DIFFERENT things (cascade.py:11-13)."""
     on = view.credits(model.CascadeRung({"key": "credits", "state": "on",
                                          "usedMinor": 3820, "limitMinor": 9000,
                                          "currency": "USD", "exponent": 2,
                                          "isCurrent": True}))
-    assert (on.state, on.used, on.limit, on.currency) == ("on", "38,20", "90,00", "USD")
+    assert (on.state, on.used, on.limit, on.currency) == ("on", "38.20", "90.00", "USD")
     assert on.bar_pct == pytest.approx(42.44, abs=0.01) and on.is_current
 
     assert view.credits(model.CascadeRung({"key": "credits", "state": "off"})).state == "off"
     assert view.credits(model.CascadeRung({"key": "credits", "state": "unknown"})).state == "unknown"
-    assert view.credits(None).state == "unknown", "brak szczebla to brak wiedzy"
+    assert view.credits(None).state == "unknown", "no rung is no knowledge"
 
 
 def test_wycofane_kredyty_pokazuja_kwoty_zamiast_znikac():
-    """Gdy organizacja odetnie kredyty, szczebel jest `off`, ale kwoty z OSTATNIEGO
-    pomiaru zostaja — i to jedyne, co na 480x320 ma sens. Wiersz, ktory znika, to strata
-    liczby, ktora panel wczesniej pokazywal; powodu wycofania panel nie pisze wcale."""
+    """When the organization cuts credits off, the rung is `off`, but the amounts from
+    the LAST measurement stay — the only thing that makes sense on 480x320. A row that
+    vanishes loses a number the panel showed before; the panel never writes the reason
+    for the withdrawal at all."""
     c = view.credits(model.CascadeRung({"key": "credits", "state": "off",
                                         "reason": "org_level_disabled_until",
                                         "usedMinor": 30004, "limitMinor": 30000,
                                         "currency": "EUR", "exponent": 2}))
-    assert (c.used, c.limit, c.currency) == ("300,04", "300,00", "EUR")
-    assert c.bar_pct == 100.0, "nadwyzka nie moze rozepchnac paska"
-    assert c.state == "off", "stan zostaje `off` — kwoty go nie zmieniaja"
+    assert (c.used, c.limit, c.currency) == ("300.04", "300.00", "EUR")
+    assert c.bar_pct == 100.0, "an overage must not push the bar apart"
+    assert c.state == "off", "the state stays `off` — the amounts do not change it"
 
 
 def test_kredyty_wylaczone_bez_kwot_nadal_nie_maja_czego_pokazac():
@@ -184,13 +195,13 @@ def test_kredyty_wylaczone_bez_kwot_nadal_nie_maja_czego_pokazac():
 
 
 def test_konto_bez_kredytow_nie_dostaje_wiersza_z_zerem():
-    """Konto, ktore kredytow nigdy nie mialo, ma `usedMinor: 0` i ZADNEGO limitu —
-    Anthropic podaje tam wyzerowane `spend.used`. Wiersz "0,00 / —" zajalby miejsce
-    i nie powiedzialby nic; wczesniej tego wiersza nie bylo i ma go nie byc dalej."""
+    """An account that never had credits has `usedMinor: 0` and NO limit at all —
+    Anthropic reports a zeroed `spend.used` there. A "0.00 / —" row would take room
+    and say nothing; the row was not there before and is not to be there now."""
     c = view.credits(model.CascadeRung({"key": "credits", "state": "off",
                                         "usedMinor": 0, "currency": "USD",
                                         "exponent": 2}))
-    assert c.used is None, "polowa pary kwot to nie sa kwoty"
+    assert c.used is None, "half a pair of amounts is not amounts"
 
 
 def test_kredyty_bez_limitu_nie_dziela_przez_zero():
@@ -211,9 +222,9 @@ def test_plan_z_tokenu(tier, want):
 
 
 def test_nieznany_tier_pokazuje_sie_surowo():
-    """Zasada 5: nowy token ma zadzialac bez migracji. Pusta etykieta lamalaby
-    zasade 1 prezentacji — plan MUSI byc widoczny, bo 40% znaczy co innego
-    na Max 20x niz na miejscu Team."""
+    """Rule 5: a new token has to work without a migration. An empty label would
+    break presentation rule 1 — the plan MUST be visible, because 40% means
+    something else on Max 20x than on a Team seat."""
     a = model.AccountStatus({"rateLimitTier": "raven"})
     assert view.plan_label(a) == "Raven"
 

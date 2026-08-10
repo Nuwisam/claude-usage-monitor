@@ -76,7 +76,7 @@ def test_karta_niesie_projekt_narzedzie_i_maszyne():
     card = a.screen().alert
     row = card.rows[0]
     assert (row.project, row.tool, row.machine) == ("proj", "Bash", "laptop")
-    assert card.title == "CZEKA NA ZGODĘ"
+    assert card.title == "NEEDS PERMISSION"
 
 
 def test_pusty_zbior_gasi_karte_dopiero_po_lingerze():
@@ -409,7 +409,7 @@ def test_powod_nie_wypycha_tytulu_poza_pas():
              "@poddomena.przyklad.example.pl")
     f = draw.font(L.F_NAME)
     dlugosci = []
-    for alert in (None, "pytanie"):
+    for alert in (None, "question"):
         img, d = draw.new_canvas((480, 320))
         state = render.BandState(title=dluga, plan="MAX 5×", show_clock=True,
                                  alert=alert)
@@ -446,7 +446,7 @@ def test_znacznik_pasa_ma_pelna_wysokosc_i_siedzi_w_marginesie():
     for b in lay.bands:
         img, d = draw.new_canvas((480, 320))
         render.Renderer()._band(d, b, render.BandState(title="konto",
-                                                       alert="zgoda"),
+                                                       alert="allow"),
                                 render.ScreenState())
         px = img.load()
         assert all(px[x, y] == theme.ACCENT
@@ -503,7 +503,7 @@ def test_sam_znacznik_jest_tani():
     ze_znacznikiem = scena_pasy(now_ms)
     for band in ze_znacznikiem.bands:
         if band is not None:
-            band.alert = "zgoda"
+            band.alert = "allow"
     frakcja, rects = _frakcja(pasy, ze_znacznikiem)
     assert frakcja < 0.08, "znacznik zmienia %.2f%% klatki" % (frakcja * 100)
     assert rects <= 12
@@ -512,7 +512,7 @@ def test_sam_znacznik_jest_tani():
 # --- format czasu -----------------------------------------------------------
 
 @pytest.mark.parametrize("sekundy,oczekiwane", [
-    (0, "chwilę"), (59, "chwilę"), (60, "1 min"), (245, "4 min"),
+    (0, "a moment"), (59, "a moment"), (60, "1 min"), (245, "4 min"),
     (3600, "1 h 00 min"), (3900, "1 h 05 min"), (86400, "1 d 0 h"),
     (183600, "2 d 3 h"),
 ])
@@ -522,7 +522,7 @@ def test_waited(sekundy, oczekiwane):
 
 def test_waited_nie_schodzi_ponizej_zera():
     """Zegary maszyn sie rozjezdzaja, wiec `since` z przyszlosci jest realne."""
-    assert fmt.waited(10_000.0, 0.0) == "chwilę"
+    assert fmt.waited(10_000.0, 0.0) == "a moment"
     assert fmt.waited(None, 0.0) == "—"
 
 

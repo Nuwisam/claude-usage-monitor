@@ -1,15 +1,15 @@
 /** Number and amount formatting. Dot decimal separator, tabular figures everywhere. */
 import { stamp } from "./time";
 
-/** 31 -> "31", 30.5 -> "30,5". null zostaje nullem — o tym, co pokazac zamiast liczby,
- *  decyduje komponent, bo w stanie `unknown` odpowiedzia jest slowo, nie zero. */
+/** 31 -> "31", 30.5 -> "30.5". null stays null — what to show instead of a number is the
+ *  component's decision, because in the `unknown` state the answer is a word, not a zero. */
 export function pct(v: number | null): string | null {
   if (v === null || Number.isNaN(v)) return null;
-  return (Number.isInteger(v) ? String(v) : v.toFixed(1)).replace(".", ",");
+  return Number.isInteger(v) ? String(v) : v.toFixed(1);
 }
 
-/** Kwota z jednostek mniejszych: (3820, "USD", 2) -> "38,20 USD".
- *  Backend nigdy nie splaszcza kwot do floata i my ich tez nie splaszczamy w drodze. */
+/** Amount from minor units: (3820, "USD", 2) -> "38.20 USD".
+ *  The backend never flattens amounts to a float and neither do we on the way. */
 export function money(
   minor: number | null,
   currency: string | null,
@@ -18,33 +18,33 @@ export function money(
   if (minor === null) return null;
   const exp = exponent ?? 2;
   const value = minor / 10 ** exp;
-  const text = value.toFixed(exp).replace(".", ",");
+  const text = value.toFixed(exp);
   return currency ? `${text} ${currency}` : text;
 }
 
-/** Powyzej tego progu wolno napisac „w ciągu godziny" — sonda melduje sie co <= 60 s. */
+/** Above this threshold we may write "in the last hour" — the probe reports every <= 60 s. */
 const HOURISH_MS = 45 * 60_000;
 
-/** "+2 pp w ciągu godziny" / "−1,5 pp od 14:03" / "±0 pp ..."
+/** "+2 pp in the last hour" / "−1.5 pp since 14:03" / "±0 pp ..."
  *
- *  Rozpietosc jest w napisie, bo baseline jest przyciety do biezacego okna: „w ciągu godziny"
- *  nad liczba z pieciu minut zaniza tempo palenia limitu. `from === null` => brzmienie
- *  godzinowe (starszy backend). */
+ *  The span is in the string, because the baseline is clipped to the current window: "in the
+ *  last hour" over a number covering five minutes understates the rate at which the limit
+ *  burns. `from === null` => the hourly wording (older backend). */
 export function delta(v: number | null, from: Date | null, nowMs: number): string {
-  if (v === null) return "brak danych z ostatniej godziny";
+  if (v === null) return "no data from the last hour";
   const sign = v > 0 ? "+" : v < 0 ? "−" : "±";
   const n = `${sign}${pct(Math.abs(v)) ?? "0"} pp`;
-  if (from === null || nowMs - from.getTime() >= HOURISH_MS) return `${n} w ciągu godziny`;
-  // `stamp`, nie `hm`: baseline nie wyjdzie poza 45 min, ale przez polnoc „od 23:50"
-  // czytaloby sie jak dzis w nocy.
-  return `${n} od ${stamp(from, nowMs)}`;
+  if (from === null || nowMs - from.getTime() >= HOURISH_MS) return `${n} in the last hour`;
+  // `stamp`, not `hm`: the baseline will not go past 45 min, but across midnight "since 23:50"
+  // would read like tonight.
+  return `${n} since ${stamp(from, nowMs)}`;
 }
 
 export function severityLabel(s: string | null): string {
-  return s ? `severity: ${s}` : "severity: nie podana";
+  return s ? `severity: ${s}` : "severity: not given";
 }
 
-/** Pasek nie moze wyjechac za tor ani wjechac na minus. */
+/** The bar must not run off the track or dip below zero. */
 export function clampPct(v: number | null): number {
   if (v === null || Number.isNaN(v)) return 0;
   return Math.max(0, Math.min(100, v));
