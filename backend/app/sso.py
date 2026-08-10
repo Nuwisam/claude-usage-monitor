@@ -69,7 +69,7 @@ def _authorize(email: str | None, verified_at: str | None) -> CurrentUser:
             detail={"reason": "missing-email"},
         )
     if email.lower() not in settings.allowed_emails:
-        logger.warning("Odrzucono dostep dla adresu spoza allowlisty: {}", email)
+        logger.warning("Denied access for an address outside the allowlist: {}", email)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"reason": "email-not-allowed"},
@@ -85,7 +85,7 @@ async def _call_verify(cookie: str) -> tuple[int, dict]:
                 headers={"Cookie": cookie} if cookie else {},
             )
         except httpx.RequestError as exc:
-            logger.error("Usluga tozsamosci nieosiagalna: {}", exc)
+            logger.error("Identity service unreachable: {}", exc)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={"reason": "sso-unreachable"},
@@ -100,7 +100,7 @@ async def _call_verify(cookie: str) -> tuple[int, dict]:
 
 async def _verify(request: Request) -> CurrentUser:
     if not settings.auth_verify_url:
-        logger.error("AUTH_MODE=verify, ale AUTH_VERIFY_URL jest pusty")
+        logger.error("AUTH_MODE=verify, but AUTH_VERIFY_URL is empty")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"reason": "sso-unavailable"},
@@ -127,7 +127,7 @@ async def _verify(request: Request) -> CurrentUser:
         )
         raise _not_authenticated(redirect)
 
-    logger.warning("Usluga tozsamosci zwrocila nieoczekiwany status: {}", status_code)
+    logger.warning("Identity service returned an unexpected status: {}", status_code)
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail={"reason": "sso-unavailable"},

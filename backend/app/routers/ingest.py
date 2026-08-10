@@ -114,7 +114,7 @@ async def ingest(
 
     raw = await request.body()
     if len(raw) > settings.max_ingest_body_bytes:
-        logger.warning("Ingest odrzucony: body {} B > limit {} B",
+        logger.warning("Ingest rejected: body {} B > limit {} B",
                        len(raw), settings.max_ingest_body_bytes)
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -179,7 +179,7 @@ async def ingest(
                 #
                 # Exception, and NOT BaseException: CancelledError must fly on and
                 # abort the request instead of looking like one bad entry.
-                logger.warning("Backlog: wpis {} odrzucony, ogon zostaje w spoolu: {}",
+                logger.warning("Backlog: entry {} rejected, the tail stays in the spool: {}",
                                accepted, exc)
                 break
             # Only AFTER leaving `_ingest_tx`, that is after a successful commit —

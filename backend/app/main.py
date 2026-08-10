@@ -73,7 +73,7 @@ app.include_router(stream_router.router, prefix="/api")
 
 @app.exception_handler(Exception)
 async def unhandled(request, exc: Exception):
-    logger.exception("Nieobsluzony wyjatek: {}", exc)
+    logger.exception("Unhandled exception: {}", exc)
     return JSONResponse(status_code=500, content={"reason": "internal-error"})
 
 

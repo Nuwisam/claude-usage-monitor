@@ -77,12 +77,12 @@ async def session_alert(
         except ValidationError:
             # A single broken entry must not wipe the machine's whole set — that would
             # mean a formatting error silencing the alert.
-            logger.warning("session-alert: maszyna {} przyslala wpis nie do przyjecia",
+            logger.warning("session-alert: machine {} sent an unacceptable entry",
                            machine)
 
     set_alerts(machine, alerts)
     reached = broker.publish_all(alert_frame(now=utcnow()))
-    logger.info("session-alert: {} — {} wpis(ow), {} odbiorca(ow)",
+    logger.info("session-alert: {} — {} entry(s), {} subscriber(s)",
                 machine, len(alerts), reached)
     return SessionAlertResult(ok=True, machine=machine, accepted=len(alerts),
                               subscribers=reached)
