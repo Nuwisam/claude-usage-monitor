@@ -179,12 +179,12 @@ def test_wiek_bierze_starsza_z_dwoch_serii():
     now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
     acc = fixtures.account(
         "u", "kto@example.pl",
-        series=[fixtures.series("limit:session|session|-|-", "Sesja",
+        series=[fixtures.series("limit:session|session|-|-", "Session",
                                 kind="session", bucketKey="five_hour",
                                 utilization=31,
                                 confirmedAt="2026-07-26T19:06:40Z",
                                 capturedAt="2026-07-26T19:06:40Z"),
-                fixtures.series("limit:weekly_all|weekly|-|-", "Tydzien",
+                fixtures.series("limit:weekly_all|weekly|-|-", "Week",
                                 kind="weekly_all", bucketKey="seven_day",
                                 utilization=30,
                                 confirmedAt="2026-07-23T19:07:40Z",

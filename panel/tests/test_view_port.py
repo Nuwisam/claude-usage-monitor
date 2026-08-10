@@ -12,7 +12,7 @@ NOW = fmt.ms(fmt.parse_utc("2026-07-26T19:07:40Z"))
 
 
 def series(**kw):
-    d = {"seriesKey": "limit:session|session|-|-", "label": "Sesja",
+    d = {"seriesKey": "limit:session|session|-|-", "label": "Session",
          "source": "limit", "kind": "session", "bucketKey": "five_hour",
          "primary": True, "freshness": "live", "sortOrder": 15}
     d.update(kw)

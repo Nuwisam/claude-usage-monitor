@@ -114,10 +114,18 @@ granic resetu (61 „resetów" na dobę zamiast pięciu). Jest na to `parsing.sa
 i testy regresyjne; prawdziwy reset przesuwa granicę o całe okno, więc rozróżnia się je
 progiem, a nie równością.
 
-**10. Tekst widoczny w UI pisze się po polsku, z ogonkami.**
-Komentarze w kodzie zostają bez — to świadoma niespójność (kodowanie na Windows), ale etykiety
-serii, ostrzeżenia i podpisy trafiają na ekran. `display_label` jest odświeżane przy każdym
-ingest, więc poprawka słownika dochodzi do serii zarejestrowanych wcześniej.
+**10. UI text is English (US), and so are comments.**
+The deliberate inconsistency is gone: series labels, warnings and captions reach the screen in
+English, and code comments are written the same way. Fixed terminology: window, pool, series,
+sample, freshness, cascade, withdrawn meter, block, permission, credits, overage, reset, probe,
+frame, banner, card. `display_label` is refreshed on every ingest, so a dictionary fix reaches
+series registered earlier.
+
+This rule states the target, not the current tree: the Polish→English migration is in flight and
+runs over several waves. Polish strings still in the tree — `_LABELS` in `backend/app/parsing.py`
+and the formatter strings in `frontend/src/lib/format.ts` are the two a reader hits first — are
+work not yet done, not counter-examples to the rule; the dot decimal separator declared at the
+top of `format.ts` is likewise ahead of its implementation.
 
 **11. Czas wchodzi przez `NaiveUtcDt`, wychodzi przez `UtcDt`.**
 Odkąd wyjście ma strefę, przeglądarka ją **odsyła** (`Date.toISOString()`), a baza,
@@ -126,6 +134,70 @@ ze strefą do środka i wywraca się dopiero warstwę dalej — Historia zwraca�
 otwarciu. Gorszy wariant jest cichy: sterownik MySQL formatuje datetime `strftime`-em
 i `tzinfo` **ignoruje**, więc `+02:00` przesunęłoby cały zakres o dwie godziny przy
 HTTP 200 i poprawnie wyglądającej odpowiedzi. Oba typy leżą obok siebie w `app/schemas.py`.
+
+## Glossary
+
+| Polish | English |
+|---|---|
+| okno | window |
+| pula | pool |
+| sufit | ceiling |
+| seria | series |
+| próbka | sample |
+| pomiar | measurement |
+| odczyt | reading |
+| świeżość | freshness |
+| kaskada | cascade |
+| szczebel | rung |
+| miernik | meter |
+| wycofany | withdrawn |
+| licznik | meter (NOT "counter") |
+| blokada | block |
+| zgoda | permission (the concept, matching the `permission` reason key). The panel's `SHORT` display value is `ALLOW`: measured 39 px against `AlertList.REASON_W = 58`, where `PERMISSION` is 66 px and `APPROVAL` 59 px and both overflow. |
+| kredyty | credits |
+| nadwyżka | overage |
+| reset | reset |
+| granica resetu | reset boundary |
+| sonda | probe |
+| sygnalizator | signaller |
+| ramka | frame (stream frame vs display frame — qualify when ambiguous) |
+| pas / pasy | band / bands |
+| pasmo | banner (deliberately NOT "band") |
+| karta | card |
+| pasek | bar |
+| tor | track |
+| klatka | frame (display) |
+| zalana | flooded |
+| znacznik | marker |
+| tusz | ink |
+| układ | layout |
+| makieta | mockup |
+| stempel | stamp |
+| dziura | gap |
+| brama / bramka | gate |
+| zrzut | dump |
+| ścieżka gorąca | hot path |
+| zasada | rule |
+| pułapka | pitfall |
+| etykieta | label |
+| stopka | footer |
+| maszyna | machine |
+| konto | account |
+| awaria | failure |
+| kontrakt | contract |
+| wykres | chart |
+
+## Locale
+
+| Item | Rule |
+|---|---|
+| Numeric date | `26.07` — unchanged |
+| Clock | 24 h — unchanged |
+| Decimal separator | a **dot**, in prose and in the formatters alike |
+| Time preposition | `at`, `yesterday at`, `on Wed. at`; the bare numeric-date form takes no preposition |
+| `DAYS` | Sun. Mon. Tue. Wed. Thu. Fri. Sat. |
+| HTML | `<html lang="en">` |
+| Spelling | US (organization, utilization, color), to match the API payload |
 
 ## Układ
 

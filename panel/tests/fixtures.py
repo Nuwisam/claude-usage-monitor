@@ -71,11 +71,11 @@ def base():
                  rung("credits", "off"),
                  rung("hard_block", "unknown")],
         series=[
-            series("limit:session|session|-|-", "Sesja", kind="session",
+            series("limit:session|session|-|-", "Session", kind="session",
                    bucketKey="five_hour", utilization=31, rawUtilization=31,
                    resetsAt=_at(52), isActive=True, severity="normal",
                    confirmedAt=_at(-0.32)),
-            series("bucket:seven_day", "Tydzień (wszystkie modele)",
+            series("bucket:seven_day", "Week (all models)",
                    kind="weekly_all", bucketKey="seven_day", sort_order=20,
                    utilization=30, rawUtilization=30, resetsAt=_at(8213)),
         ])
@@ -90,10 +90,10 @@ def base():
                  rung("hard_block", "on", limitMinor=9000, currency="USD",
                       exponent=2)],
         series=[
-            series("limit:session|session|-|-", "Sesja", kind="session",
+            series("limit:session|session|-|-", "Session", kind="session",
                    bucketKey="five_hour", utilization=12, rawUtilization=12,
                    resetsAt=_at(112), confirmedAt=_at(-0.93)),
-            series("bucket:seven_day", "Tydzień (wszystkie modele)",
+            series("bucket:seven_day", "Week (all models)",
                    kind="weekly_all", bucketKey="seven_day", sort_order=20,
                    utilization=100, rawUtilization=100, resetsAt=_at(3712),
                    isActive=True, severity="critical"),
@@ -108,10 +108,10 @@ def states():
         "aaaa1111-0000-0000-0000-000000000001", "unknown@example.pl",
         cascade=[rung("credits", "unknown")],
         series=[
-            series("limit:session|session|-|-", "Sesja", kind="session",
+            series("limit:session|session|-|-", "Session", kind="session",
                    bucketKey="five_hour", freshness="unknown", utilization=None,
                    rawUtilization=42, resetsAt=_at(31), confirmedAt=_at(-380)),
-            series("bucket:seven_day", "Tydzień", kind="weekly_all",
+            series("bucket:seven_day", "Week", kind="weekly_all",
                    bucketKey="seven_day", sort_order=20, freshness="unknown",
                    utilization=None, rawUtilization=88, resetsAt=_at(4000)),
         ])
@@ -121,10 +121,10 @@ def states():
         cascade=[rung("credits", "on", usedMinor=125, limitMinor=30000,
                       currency="USD", exponent=2)],
         series=[
-            series("limit:session|session|-|-", "Sesja", kind="session",
+            series("limit:session|session|-|-", "Session", kind="session",
                    bucketKey="five_hour", freshness="inferred_reset",
                    utilization=0, rawUtilization=97, resetsAt=None),
-            series("bucket:seven_day", "Tydzień", kind="weekly_all",
+            series("bucket:seven_day", "Week", kind="weekly_all",
                    bucketKey="seven_day", sort_order=20, utilization=7,
                    rawUtilization=7, resetsAt=_at(9000)),
         ])
@@ -139,10 +139,10 @@ def edges():
         cascade=[rung("credits", "on", isCurrent=True, usedMinor=123456,
                       limitMinor=200000, currency="USD", exponent=2)],
         series=[
-            series("limit:session|session|-|-", "Sesja", kind="session",
+            series("limit:session|session|-|-", "Session", kind="session",
                    bucketKey="five_hour", utilization=100, rawUtilization=100,
                    resetsAt=_at(0.2)),
-            series("bucket:seven_day", "Tydzień", kind="weekly_all",
+            series("bucket:seven_day", "Week", kind="weekly_all",
                    bucketKey="seven_day", sort_order=20, utilization=100,
                    rawUtilization=100, resetsAt=_at(2880)),
         ])

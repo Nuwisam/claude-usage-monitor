@@ -31,24 +31,24 @@ _SORT = {
     "extra:usage": 40,
 }
 
-# Etykiety sa TRESCIA WIDOCZNA W UI — w odroznieniu od komentarzy w kodzie pisze sie je
-# z polskimi znakami. Nieznany klucz dostaje etykiete z samego klucza (patrz `humanize`),
-# wiec nowy bucket u Anthropic wyswietli sie sam, bez wpisu w tej tabeli.
+# Labels are UI-VISIBLE CONTENT. An unknown key gets its label from the key itself
+# (see `humanize`), so a new bucket at Anthropic shows up on its own, with no entry
+# in this table.
 _LABELS = {
-    "five_hour": "Sesja (5 h)",
-    "seven_day": "Tydzień (wszystkie modele)",
-    "seven_day_opus": "Tydzień — Opus",
-    "seven_day_sonnet": "Tydzień — Sonnet",
-    "seven_day_omelette": "Tydzień — Design",
-    "seven_day_cowork": "Tydzień — Cowork",
-    "seven_day_oauth_apps": "Tydzień — aplikacje OAuth",
-    "seven_day_overage_included": "Tydzień — z nadwyżką",
+    "five_hour": "Session (5 h)",
+    "seven_day": "Week (all models)",
+    "seven_day_opus": "Week — Opus",
+    "seven_day_sonnet": "Week — Sonnet",
+    "seven_day_omelette": "Week — Design",
+    "seven_day_cowork": "Week — Cowork",
+    "seven_day_oauth_apps": "Week — OAuth apps",
+    "seven_day_overage_included": "Week — with overage",
 }
 
 _KIND_LABELS = {
-    "session": "Sesja",
-    "weekly_all": "Tydzień (wszystkie modele)",
-    "weekly_scoped": "Tydzień",
+    "session": "Session",
+    "weekly_all": "Week (all models)",
+    "weekly_scoped": "Week",
 }
 
 
@@ -417,7 +417,7 @@ def parse_usage(payload: Any, fresh_covered: frozenset[str] = frozenset()) -> Pa
                    if isinstance(scope, dict) else None)
         kind, group = lim.get("kind"), lim.get("group")
         label = _KIND_LABELS.get(kind or "", (kind or "limit").replace("_", " "))
-        # Pauza, nie dywiz — etykieta jest tresci widoczna w UI ("Tydzień — Fable").
+        # Em dash, not a hyphen — the label is UI-visible content ("Week — Fable").
         if model:
             label = "%s — %s" % (label, model)
         if surface:
@@ -443,7 +443,7 @@ def parse_usage(payload: Any, fresh_covered: frozenset[str] = frozenset()) -> Pa
         eu_reason = meter_withdrawn(eu)
         obs.append(Observation(
             series_key="extra:usage", source="extra_usage",
-            display_label="Kredyty dodatkowe",
+            display_label="Extra credits",
             # Wycofany miernik nie ma pomiaru. Kwoty i flagi zostaja nietkniete w `extra`,
             # surowa odpowiedz lezy w `raw_payloads` — nie ginie nic poza fantomowym zerem.
             utilization=None if eu_reason else parse_pct(eu.get("utilization")),
@@ -464,7 +464,7 @@ def parse_usage(payload: Any, fresh_covered: frozenset[str] = frozenset()) -> Pa
             # miesiac). Sufit calej organizacji jest czyms innym i w kontrakcie nie istnieje
             # — gdy sie wyczerpie, ta seria nie rosnie, tylko gasnie (patrz meter_withdrawn).
             # Zmieniamy WYLACZNIE etykiete; `series_key` jest tozsamoscia i zostaje.
-            display_label="Limit wydatków (Twoja pula)",
+            display_label="Spend limit (your pool)",
             utilization=None if sp_reason else parse_pct(sp.get("percent")),
             unavailable_reason=sp_reason,
             severity=sp.get("severity"),

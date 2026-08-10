@@ -556,7 +556,7 @@ async def test_poprawiona_etykieta_dochodzi_do_serii_zarejestrowanej_wczesniej(d
     await db.commit()
     await db.execute(sa_update(UsageSeries)
                      .where(UsageSeries.series_key == "spend:org")
-                     .values(display_label="Etykieta z poprzedniej wersji"))
+                     .values(display_label="Label from a previous version"))
     await db.commit()
 
     await ingest_one(db, machine_name="desktop", payload=payload())
@@ -565,4 +565,4 @@ async def test_poprawiona_etykieta_dochodzi_do_serii_zarejestrowanej_wczesniej(d
     s = (await db.execute(
         select(UsageSeries).where(UsageSeries.series_key == "spend:org")
     )).scalar_one()
-    assert s.display_label == "Limit wydatków (Twoja pula)"
+    assert s.display_label == "Spend limit (your pool)"

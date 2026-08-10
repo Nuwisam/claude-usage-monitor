@@ -46,8 +46,9 @@ python tools/render-png.py --marker upper --zoom 3 --rgb565 --out znacznik.png
   jest** (jedynka węższa od zera), więc duża liczba drgałaby przy każdej zmianie.
 - **Ikony rysowane wektorowo, nigdy fontem ikon.** Przy 11 px font zamienia się w plamę;
   `draw.clock_glyph` jest tego precedensem.
-- **Polskie znaki z ogonkami** — tekst widoczny na ekranie pisze się po polsku (zasada 10
-  projektu). Wysokość mierzy się z faktycznego obrysu, nie z nominalnego rozmiaru.
+- **English on screen** — on-screen text is written in English (project rule 10; the migration
+  is still running, so the screenshots below show Polish until they are re-rendered). Height is
+  measured from the actual outline, not from the nominal size.
 
 ### Paleta (`panel/panel/theme.py`)
 

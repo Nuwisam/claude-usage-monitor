@@ -371,7 +371,7 @@ def test_etykieta_spend_nie_nazywa_puli_limitem_organizacji():
     etykieta nazywala serie tym, czym ona nie jest, i to wlasnie ona podpisywala fantomowe
     zero w chwili, gdy sufit firmowy sie wyczerpal."""
     o = by_key(parse_usage(usage(USAGE_ACTIVE)))["spend:org"]
-    assert o.display_label == "Limit wydatków (Twoja pula)"
-    assert "organizacji" not in o.display_label
+    assert o.display_label == "Spend limit (your pool)"
+    assert "organization" not in o.display_label
     assert len(o.display_label) <= 200        # kolumna display_label to String(200)
     assert o.series_key == "spend:org", "klucz jest tozsamoscia i nie wolno go ruszac"

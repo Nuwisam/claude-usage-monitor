@@ -131,18 +131,18 @@ function accountMax(): AccountStatus {
       rung({ key: "hard_block", state: "on" }),
     ],
     series: [
-      series(1, { key: SESSION_KEY, label: "Sesja", source: "limit", sort: 15, kind: "session",
+      series(1, { key: SESSION_KEY, label: "Session", source: "limit", sort: 15, kind: "session",
         group: "session", u: 31, resetMin: 52, capturedMin: -0.3, fresh: "live",
         active: false, severity: "normal", delta: 2 }),
-      series(2, { key: "bucket:five_hour", label: "Sesja (5 h)", source: "bucket", sort: 10,
+      series(2, { key: "bucket:five_hour", label: "Session (5 h)", source: "bucket", sort: 10,
         bucket: "five_hour", u: 31, resetMin: 52, capturedMin: -0.3, fresh: "live",
         delta: 2, primary: false, dupOf: SESSION_KEY }),
       // Probka sprzed 47 min (dedup), potwierdzenie sprzed 18 s — sztandarowy stan v3.
-      series(3, { key: WEEKLY_KEY, label: "Tydzień (wszystkie modele)", source: "limit", sort: 25,
+      series(3, { key: WEEKLY_KEY, label: "Week (all models)", source: "limit", sort: 25,
         kind: "weekly_all", group: "weekly", u: 30, resetMin: 8453, capturedMin: -47,
         confirmedMin: -0.3, sinceMin: -47,
         fresh: "live", active: true, severity: "normal", delta: 1 }),
-      series(4, { key: "bucket:seven_day", label: "Tydzień (wszystkie modele)", source: "bucket",
+      series(4, { key: "bucket:seven_day", label: "Week (all models)", source: "bucket",
         sort: 20, bucket: "seven_day", u: 30, resetMin: 8453, capturedMin: -47,
         confirmedMin: -0.3, sinceMin: -47, fresh: "live",
         delta: 1, primary: false, dupOf: WEEKLY_KEY }),
@@ -152,12 +152,12 @@ function accountMax(): AccountStatus {
       // `utilization` null na zawsze i nie wchodzi do `series[]` (filtr `ever_non_null`
       // w services/status.py). To jest przypadek DEGRADACJI „?" — panel pokazuje wtedy sama
       // definicje puli, bez bloku flag, i musi byc widoczny w makiecie.
-      series(5, { key: "spend:org", label: "Limit wydatków (Twoja pula)", source: "spend",
+      series(5, { key: "spend:org", label: "Spend limit (your pool)", source: "spend",
         sort: 30,
         u: 0, resetMin: null, capturedMin: -240, confirmedMin: -0.3, sinceMin: -240,
         fresh: "live", severity: "normal", delta: 0,
         extra: { enabled: false, used: { amount_minor: 0, currency: "USD", exponent: 2 } } }),
-      series(6, { key: "limit:weekly_scoped|weekly|fable|-", label: "Tydzień — Fable",
+      series(6, { key: "limit:weekly_scoped|weekly|fable|-", label: "Week — Fable",
         source: "limit", sort: 200, kind: "weekly_scoped", group: "weekly", u: 0, resetMin: null,
         capturedMin: -85, fresh: "stale", active: false, severity: "normal" }),
     ],
@@ -188,22 +188,22 @@ function accountTeam(): AccountStatus {
       rung({ key: "hard_block", state: "on", limitMinor: 9000, currency: "USD", exponent: 2 }),
     ],
     series: [
-      series(1, { key: SESSION_KEY, label: "Sesja", source: "limit", sort: 15, kind: "session",
+      series(1, { key: SESSION_KEY, label: "Session", source: "limit", sort: 15, kind: "session",
         group: "session", u: 12, resetMin: 112, capturedMin: -0.9, fresh: "live",
         active: false, severity: "normal", delta: 4 }),
-      series(2, { key: "bucket:five_hour", label: "Sesja (5 h)", source: "bucket", sort: 10,
+      series(2, { key: "bucket:five_hour", label: "Session (5 h)", source: "bucket", sort: 10,
         bucket: "five_hour", u: 12, resetMin: 112, capturedMin: -0.9, fresh: "live",
         delta: 4, primary: false, dupOf: SESSION_KEY }),
       // Wyczerpany tydzien z natury stoi — tu „bez zmian od" niesie realna tresc.
-      series(3, { key: WEEKLY_KEY, label: "Tydzień (wszystkie modele)", source: "limit", sort: 25,
+      series(3, { key: WEEKLY_KEY, label: "Week (all models)", source: "limit", sort: 25,
         kind: "weekly_all", group: "weekly", u: 100, resetMin: 3713, capturedMin: -26,
         confirmedMin: -0.9, sinceMin: -26,
         fresh: "live", active: true, severity: null, delta: 3 }),
-      series(4, { key: "bucket:seven_day", label: "Tydzień (wszystkie modele)", source: "bucket",
+      series(4, { key: "bucket:seven_day", label: "Week (all models)", source: "bucket",
         sort: 20, bucket: "seven_day", u: 100, resetMin: 3713, capturedMin: -26,
         confirmedMin: -0.9, sinceMin: -26, fresh: "live",
         delta: 3, primary: false, dupOf: WEEKLY_KEY }),
-      series(5, { key: "spend:org", label: "Limit wydatków (Twoja pula)", source: "spend",
+      series(5, { key: "spend:org", label: "Spend limit (your pool)", source: "spend",
         sort: 30,
         u: 41, resetMin: null, capturedMin: -0.9, fresh: "live", severity: "normal", delta: 6,
         extra: { enabled: true, used: { amount_minor: 3820, currency: "USD", exponent: 2 },
@@ -211,7 +211,7 @@ function accountTeam(): AccountStatus {
       // Drugi widok TEJ SAMEJ puli. Wiersza nie widac (`primary: false`), ale jego liczba
       // i flagi sa trescia „?" przy wierszu wyzej — i tylko tu widac, ze zmierzone bylo
       // 41,42%, a nie zaokraglone 41.
-      series(6, { key: "extra:usage", label: "Kredyty dodatkowe", source: "extra_usage",
+      series(6, { key: "extra:usage", label: "Extra credits", source: "extra_usage",
         sort: 40, u: 41.42, resetMin: null, capturedMin: -0.9, fresh: "live", delta: 6,
         primary: false, dupOf: "spend:org",
         extra: { is_enabled: true, monthly_limit: 9000, used_credits: 3820, currency: "USD",
@@ -219,7 +219,7 @@ function accountTeam(): AccountStatus {
                  spend_limit_reached: false, credits_ever_enabled: true,
                  daily: null, weekly: null } }),
       // AWARIA: klient raportuje, ale dla tej serii nie ma probek. Ostatni pomiar 42%.
-      series(7, { key: "limit:weekly_scoped|weekly|fable|-", label: "Tydzień — Fable",
+      series(7, { key: "limit:weekly_scoped|weekly|fable|-", label: "Week — Fable",
         source: "limit", sort: 200, kind: "weekly_scoped", group: "weekly", u: null, raw: 42,
         resetMin: -185, capturedMin: -365, fresh: "unknown", active: false, severity: "normal" }),
     ],
@@ -250,17 +250,17 @@ function accountPro(): AccountStatus {
       rung({ key: "hard_block", state: "on" }),
     ],
     series: [
-      series(1, { key: SESSION_KEY, label: "Sesja", source: "limit", sort: 15, kind: "session",
+      series(1, { key: SESSION_KEY, label: "Session", source: "limit", sort: 15, kind: "session",
         group: "session", u: 68, resetMin: 19, capturedMin: -1.6, fresh: "live",
         active: true, severity: "warning", delta: 11 }),
-      series(2, { key: "bucket:five_hour", label: "Sesja (5 h)", source: "bucket", sort: 10,
+      series(2, { key: "bucket:five_hour", label: "Session (5 h)", source: "bucket", sort: 10,
         bucket: "five_hour", u: 68, resetMin: 19, capturedMin: -1.6, fresh: "live",
         delta: 11, primary: false, dupOf: SESSION_KEY }),
-      series(3, { key: WEEKLY_KEY, label: "Tydzień (wszystkie modele)", source: "limit", sort: 25,
+      series(3, { key: WEEKLY_KEY, label: "Week (all models)", source: "limit", sort: 25,
         kind: "weekly_all", group: "weekly", u: 54, resetMin: 14_800, capturedMin: -12,
         confirmedMin: -1.6, sinceMin: -12, fresh: "live", active: false, severity: "normal",
         delta: 2 }),
-      series(4, { key: "limit:weekly_scoped|weekly|opus|-", label: "Tydzień — Opus",
+      series(4, { key: "limit:weekly_scoped|weekly|opus|-", label: "Week — Opus",
         source: "limit", sort: 200, kind: "weekly_scoped", group: "weekly", u: 76,
         resetMin: 14_800, capturedMin: -1.6, fresh: "live", active: false,
         severity: "warning", delta: 5 }),
@@ -273,7 +273,7 @@ function withEdgeCases(accounts: AccountStatus[]): AccountStatus[] {
   const max = accounts[0]!;
   // inferred_reset: okno wstalo w nocy i nikt nie pracowal
   max.series.push(
-    series(7, { key: "bucket:seven_day_cowork", label: "Tydzień — Cowork", source: "bucket",
+    series(7, { key: "bucket:seven_day_cowork", label: "Week — Cowork", source: "bucket",
       sort: 100, bucket: "seven_day_cowork", u: 0, raw: 18, resetMin: 5600,
       capturedMin: -660, fresh: "inferred_reset" }),
   );
@@ -284,7 +284,7 @@ function withEdgeCases(accounts: AccountStatus[]): AccountStatus[] {
   );
   // `stale` z wartoscia — musi wygladac DOKLADNIE jak `live`, roznic sie ma tylko wiek
   max.series.push(
-    series(9, { key: "bucket:seven_day_opus", label: "Tydzień — Opus", source: "bucket",
+    series(9, { key: "bucket:seven_day_opus", label: "Week — Opus", source: "bucket",
       sort: 100, bucket: "seven_day_opus", u: 17, resetMin: 8453, capturedMin: -85,
       fresh: "stale" }),
   );
@@ -292,7 +292,7 @@ function withEdgeCases(accounts: AccountStatus[]): AccountStatus[] {
   // Do tego `valueSince` sprzed dni przy tym samym potwierdzeniu — wartosc stala, bo nikt nie
   // pracowal, wiec „bez zmian od" tez musi niesc dzien.
   max.series.push(
-    series(10, { key: "bucket:seven_day_haiku", label: "Tydzień — Haiku", source: "bucket",
+    series(10, { key: "bucket:seven_day_haiku", label: "Week — Haiku", source: "bucket",
       sort: 100, bucket: "seven_day_haiku", u: null, raw: 42, resetMin: 4300,
       capturedMin: -4560, sinceMin: -8880, fresh: "unknown" }),
   );
@@ -349,10 +349,10 @@ function creditsStates(): AccountStatus[] {
     lastClientHost: "laptop",
     cascade,
     series: [
-      series(1, { key: SESSION_KEY, label: "Sesja", source: "limit", sort: 15,
+      series(1, { key: SESSION_KEY, label: "Session", source: "limit", sort: 15,
         kind: "session", group: "session", u: 54, resetMin: 70, capturedMin: -0.4,
         fresh: "live", active: false, severity: "normal", delta: 7 }),
-      series(2, { key: WEEKLY_KEY, label: "Tydzień (wszystkie modele)", source: "limit",
+      series(2, { key: WEEKLY_KEY, label: "Week (all models)", source: "limit",
         sort: 25, kind: "weekly_all", group: "weekly", u: 67, resetMin: 7200,
         capturedMin: -0.4, fresh: "live", active: true, severity: "normal", delta: 2 }),
       series(3, spend),
@@ -370,7 +370,7 @@ function creditsStates(): AccountStatus[] {
     // `percent: 0`, `used: 0,00` i `limit: null` — gdyby to on wypelnial wiersz, ekran
     // obiecywalby caly wolny limit w chwili twardej blokady.
     konto("0000wyco", "sufit organizacji", {
-      key: "spend:org", label: "Limit wydatków (Twoja pula)", source: "spend", sort: 30,
+      key: "spend:org", label: "Spend limit (your pool)", source: "spend", sort: 30,
       u: null, raw: 100, resetMin: null, capturedMin: -3120, fresh: "live",
       severity: "critical", reason: "org_level_disabled_until",
       extra: { enabled: true, disabled_reason: null,
@@ -380,7 +380,7 @@ function creditsStates(): AccountStatus[] {
       // `extra` niesie stan SPRZED wycofania — dokladnie tak jak w produkcji, gdzie backend
       // podmienia je na to z ostatniego pomiaru. Dlatego `disabled_reason` jest tu null,
       // a o zamknietej bramie mowi `reason` (czyli `unavailableReason` w kontrakcie).
-      key: "extra:usage", label: "Kredyty dodatkowe", source: "extra_usage", sort: 40,
+      key: "extra:usage", label: "Extra credits", source: "extra_usage", sort: 40,
       u: null, raw: 100.014, resetMin: null, capturedMin: -3120, fresh: "live",
       reason: "org_level_disabled_until", primary: false, dupOf: "spend:org",
       extra: { is_enabled: true, monthly_limit: 30000, used_credits: 30004, currency: "EUR",
@@ -399,7 +399,7 @@ function creditsStates(): AccountStatus[] {
     // WYCZERPANA WLASNA PULA: licznik DZIALA i mowi prawde — 100% przy 300,04 / 300,00 EUR.
     // Tu liczba musi zostac; jej ukrycie bylo by strata jedynej poprawnej wartosci.
     konto("1111pula", "wlasna pula", {
-      key: "spend:org", label: "Limit wydatków (Twoja pula)", source: "spend", sort: 30,
+      key: "spend:org", label: "Spend limit (your pool)", source: "spend", sort: 30,
       u: 100, resetMin: null, capturedMin: -0.4, fresh: "live", severity: "critical",
       delta: 1,
       extra: { enabled: true, disabled_reason: null,
@@ -409,7 +409,7 @@ function creditsStates(): AccountStatus[] {
       // Licznik DZIALA, wiec „?" pokazuje pelna precyzje przy pasku stojacym na 100.
       // `spend_limit_reached` zostaje `false` — tak jest w realnym payloadzie wyczerpanej
       // WLASNEJ puli (backend/tests/team.py), bo ta flaga mowi o suficie organizacji.
-      key: "extra:usage", label: "Kredyty dodatkowe", source: "extra_usage", sort: 40,
+      key: "extra:usage", label: "Extra credits", source: "extra_usage", sort: 40,
       u: 100.014, resetMin: null, capturedMin: -0.4, fresh: "live", delta: 1,
       primary: false, dupOf: "spend:org",
       extra: { is_enabled: true, monthly_limit: 30000, used_credits: 30004, currency: "EUR",
@@ -443,12 +443,12 @@ function afterReset(): AccountStatus[] {
     ],
     series: [
       series(1, sesja),
-      series(2, { key: WEEKLY_KEY, label: "Tydzień (wszystkie modele)", source: "limit", sort: 25,
+      series(2, { key: WEEKLY_KEY, label: "Week (all models)", source: "limit", sort: 25,
         kind: "weekly_all", group: "weekly", u: 30, resetMin: 8453, capturedMin: -0.3,
         fresh: "live", active: true, severity: "normal", delta: 1 }),
     ],
   });
-  const sesja = { key: SESSION_KEY, label: "Sesja", source: "limit" as SeriesSource, sort: 15,
+  const sesja = { key: SESSION_KEY, label: "Session", source: "limit" as SeriesSource, sort: 15,
     kind: "session", group: "session", severity: "normal" };
 
   return [

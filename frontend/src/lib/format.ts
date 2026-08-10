@@ -1,4 +1,4 @@
-/** Formatowanie liczb i kwot. Polskie separatory, wszedzie tabelarycznie. */
+/** Number and amount formatting. Dot decimal separator, tabular figures everywhere. */
 import { stamp } from "./time";
 
 /** 31 -> "31", 30.5 -> "30,5". null zostaje nullem — o tym, co pokazac zamiast liczby,
