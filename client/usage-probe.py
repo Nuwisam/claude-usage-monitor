@@ -1,72 +1,72 @@
 #!/usr/bin/env python3
-"""Sonda limitow Claude + sygnalizator zablokowanej sesji. Oba z hookow Claude Code.
+"""Claude limit probe + blocked-session signaller. Both run from Claude Code hooks.
 
-DWIE FUNKCJE, JEDEN PROCES — i to jest zmierzone, nie estetyczne. Sygnalizator byl
-osobnym skryptem (`client/session-status.py`), przez co 9 z 10 jego zdarzen odpalalo
-DRUGIEGO CPythona obok tego, ktory i tak startowal dla sondy. Pomiar (100 przebiegow
-na wariant, przeplatane, mediana): dolozenie kodu sygnalizatora do tego procesu
-kosztuje 2,7 ms (95% CI 1,9-3,2), a osobny proces 41,9 ms (41,7-42,3). W skali doby,
-przy ~21 000 zdarzen: +57 s wobec +890 s. Dawne uzasadnienie rozdzialu ("+0,294 ms na
-kazda dopisana linie") bylo zawyzone ~71-krotnie — realnie 0,0041 ms/linia.
+TWO FUNCTIONS, ONE PROCESS — and that is measured, not aesthetic. The signaller used to
+be a separate script (`client/session-status.py`), so 9 of its 10 events started a SECOND
+CPython next to the one that was starting for the probe anyway. Measurement (100 runs per
+variant, interleaved, median): folding the signaller code into this process costs 2.7 ms
+(95% CI 1.9-3.2), a separate process 41.9 ms (41.7-42.3). Over a day, at ~21 000 events:
++57 s against +890 s. The old justification for the split ("+0.294 ms for every added
+line") was overstated ~71-fold — really 0.0041 ms/line.
 
-Skutek uboczny, tez policzony: 9 z 13 wspolnych nazw bylo bajt w bajt identycznych,
-a `_extract_block` (~40 linii) roznil sie tylko komentarzem. Rozdzial WYMUSZAL duplikat.
+A side effect, also counted: 9 of the 13 shared names were byte-for-byte identical, and
+`_extract_block` (~40 lines) differed only in a comment. The split FORCED the duplicate.
 
-NIE wola api.anthropic.com. Zamiast tego zleca pomiar samemu Claude Code
-(`claude -p "/usage"`) i czyta wynik z dwoch miejsc, ktore ten zostawia na dysku.
+Does NOT call api.anthropic.com. Instead it asks Claude Code itself to measure
+(`claude -p "/usage"`) and reads the result from the two places Claude Code leaves on disk.
 
-ZASADY BEZPIECZENSTWA — nie lamac przy rozwijaniu:
-  1. Sonda NIE wykonuje zadnego zapytania do api.anthropic.com. Jedynym podmiotem
-     wolajacym /api/oauth/usage jest Claude Code, wlasnym kanalem, wlasnym tokenem,
-     ktory sam sobie odswieza. To usuwa naraz: uzycie tokena OAuth przez obce
-     narzedzie (zakazane w ToS), impersonacje User-Agenta i ryzyko bana.
-  2. .credentials.json czytamy TYLKO do odczytu i TYLKO po metadane planu.
-     accessToken nie jest z niego pobierany ani uzywany do niczego.
-  3. NIGDY nie wolamy endpointu tokenowego (grant_type=refresh_token).
-  4. Throttle obowiazkowy — PostToolUse odpala sie przy kazdym narzedziu.
-  5. Zero ciezkich importow w sciezce goracej. Tylko stdlib.
-  6. Nigdy nie rzuca wyjatkiem i nigdy nie blokuje sesji.
-  7. Sonda NIGDY nie czeka na proces potomny. `claude -p "/usage"` trwa ~3,4 s;
-     wynik konsumuje DOPIERO nastepny przebieg sondy.
+SAFETY RULES — do not break them while extending:
+  1. The probe makes NO request to api.anthropic.com. The only party calling
+     /api/oauth/usage is Claude Code, over its own channel, with its own token, which
+     it refreshes itself. That removes at once: use of the OAuth token by a foreign
+     tool (forbidden by the ToS), User-Agent impersonation and the risk of a ban.
+  2. .credentials.json is opened READ-ONLY and ONLY for plan metadata.
+     accessToken is neither taken from it nor used for anything.
+  3. NEVER call the token endpoint (grant_type=refresh_token).
+  4. The throttle is mandatory — PostToolUse fires on every tool.
+  5. Zero heavy imports on the hot path. Stdlib only.
+  6. Never raises an exception and never blocks the session.
+  7. The probe NEVER waits for the child process. `claude -p "/usage"` takes ~3.4 s;
+     the result is consumed ONLY by the next probe run.
 
-DWA ZRODLA, bo swiezosc i kompletnosc leza w roznych miejscach (zmierzone):
-  * stdout `claude -p "/usage"` — SWIEZE przy kazdym wywolaniu, ale tylko procenty
-    glownych okien, jako tekst. Wartosci sa calkowite — i to nie jest strata, bo
-    API samo zwraca liczby calkowite (zweryfikowane na surowym payloadzie).
-  * ~/.claude.json -> cachedUsageUtilization.utilization — PELNE surowe cialo
-    odpowiedzi (spend, extra_usage, limits[], wszystkie buckety), ale Claude Code
-    przepisuje je najwyzej raz na 5 minut (twardy throttle zapisu po jego stronie).
+TWO SOURCES, because freshness and completeness live in different places (measured):
+  * stdout of `claude -p "/usage"` — FRESH on every call, but only the percentages
+    of the main windows, as text. The values are whole numbers — and that is no loss,
+    because the API itself returns whole numbers (verified on the raw payload).
+  * ~/.claude.json -> cachedUsageUtilization.utilization — the FULL raw response
+    body (spend, extra_usage, limits[], every bucket), but Claude Code rewrites it
+    at most once every 5 minutes (a hard write throttle on its side).
 
-Scalamy: struktura z cache + swieze procenty ze stdout nadpisane na wierzchu.
-Wynik ma DOKLADNIE ten sam ksztalt co dawna odpowiedz HTTP, wiec parser backendu
-nie wymaga zmian.
+We merge: the structure from the cache + fresh percentages from stdout laid on top.
+The result has EXACTLY the same shape as the former HTTP response, so the backend parser
+needs no changes.
 
-SYGNALIZATOR (sekcja "alert" nizej) wykrywa moment, w ktorym Claude Code stanal
-i czeka na CZLOWIEKA: prompt o zgode, AskUserQuestion, ExitPlanMode. Kazda blokada to
-jeden plik w katalogu stanu; zbior tych plikow jest CALA prawda, a POST tylko
-powiadomieniem o zmianie, niosacym zbior w calosci. Odpala sie PRZED throttlem —
-alert nie moze czekac 60 s, a throttle sondy to 60 s. Wylacza go "session_status": false.
+THE SIGNALLER (section "alert" below) detects the moment Claude Code has stopped and is
+waiting for a HUMAN: a permission prompt, AskUserQuestion, ExitPlanMode. Each block is one
+file in the state directory; the set of those files is the WHOLE truth, and the POST is
+only a notification of change, carrying the set in full. It fires BEFORE the throttle —
+an alert cannot wait 60 s, and the probe throttle is 60 s. "session_status": false turns it off.
 
-Konfiguracja: %LOCALAPPDATA%\\claude-usage-monitor\\config.json (Windows)
-              ~/.local/state/claude-usage-monitor/config.json (Linux)
+Configuration: %LOCALAPPDATA%\\claude-usage-monitor\\config.json (Windows)
+               ~/.local/state/claude-usage-monitor/config.json (Linux)
     {"ingest_url": "https://usage.example.org/claude-usage/api/ingest",
-     "ingest_token": "<token TEJ maszyny>",
-     "edge_key": "<wspolny sekret brzegowy>",
+     "ingest_token": "<token of THIS machine>",
+     "edge_key": "<shared edge secret>",
      "throttle_sec": 60,
-     "claude_bin": "<opcjonalnie pelna sciezka do claude>",
-     "session_status": true,        # sygnalizator; false wylacza go w calosci
+     "claude_bin": "<optionally the full path to claude>",
+     "session_status": true,        # signaller; false disables it entirely
      "alert_url": "https://usage.example.org/claude-usage/api/session-alert",
      "toast": true,
      "blocked_ttl_sec": 86400}
-Celowo plik lokalny, a nie repo — token maszyny nie ma prawa trafic do gita.
+Deliberately a local file, not the repo — a machine token has no business in git.
 """
 import sys, os, json, time, re
 
 SCRIPT_VERSION = 12
 
-# Znacznik dziedziczony przez proces potomny. `claude -p "/usage"` to normalna sesja
-# Claude Code — odpali hook Stop, ktory odpali sonde, ktora odpalilaby kolejnego
-# `claude`... Sam throttle tego NIE zatrzyma, bo kazdy potomek ma wlasny zegar.
+# Marker inherited by the child process. `claude -p "/usage"` is a normal Claude Code
+# session — it will fire the Stop hook, which fires the probe, which would fire another
+# `claude`... The throttle alone will NOT stop this, because every child has its own clock.
 CHILD_ENV = "CUM_PROBE_CHILD"
 
 _base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/.local/state")
@@ -79,9 +79,9 @@ CLI_OUT = os.path.join(OUTDIR, "usage-cli.json")
 
 MAX_SPOOL_LINES = 5000
 MAX_BACKLOG_PER_REQUEST = 200
-CACHE_MAX_AGE_S = 3600          # tyle samo, ile TTL odczytu po stronie Claude Code
-CLI_MAX_AGE_S = 900             # starszy zrzut stdout ignorujemy — lepiej same dane z cache
-MAX_SANE_PCT = 101              # patrz strazniki w parse_usage_text / sanitize
+CACHE_MAX_AGE_S = 3600          # the same as the read TTL on the Claude Code side
+CLI_MAX_AGE_S = 900             # an older stdout dump is ignored — cache-only data is better
+MAX_SANE_PCT = 101              # see the guards in parse_usage_text / sanitize
 
 
 def _safe(fn, *a, **kw):
@@ -109,7 +109,7 @@ def load_config():
 
 
 def throttled(seconds):
-    """Znacznik zapisujemy PRZED wywolaniem, zeby rownolegle hooki nie zrobily stampede."""
+    """The marker is written BEFORE the call, so that parallel hooks do not stampede."""
     try:
         if time.time() - os.path.getmtime(THROTTLE_FILE) < seconds:
             return True
@@ -124,7 +124,7 @@ def throttled(seconds):
     return False
 
 
-# --------------------------------------------------------------- tozsamosc + cache
+# --------------------------------------------------------------- identity + cache
 def _find(name, in_claude_dir=False):
     cfg = os.environ.get("CLAUDE_CONFIG_DIR")
     cands = []
@@ -140,13 +140,13 @@ def _find(name, in_claude_dir=False):
 
 
 def _extract_block(text, key):
-    """Wycina zbalansowany blok {...} po kluczu. Odporne na duplikaty kluczy roznjace sie
-    wielkoscia liter (z:/... i Z:/...), na ktorych parsery calego pliku padaja —
-    ~/.claude.json REALNIE takie ma, json.load() na calosci sie na nim wywraca.
+    """Cuts out the balanced {...} block after a key. Immune to duplicate keys differing
+    only in letter case (c:/... and C:/...), on which whole-file parsers fail —
+    ~/.claude.json REALLY does have such keys, json.load() over the whole file trips on them.
 
-    Dwoch wolajacych: `read_claude_json` (tozsamosc konta i cache pomiaru) oraz
-    `account_uuid` z sekcji alertu (przy ktorym pasie panelu stanie znacznik). Przed
-    scaleniem obu skryptow ta funkcja istniala w DWOCH kopiach."""
+    Two callers: `read_claude_json` (account identity and measurement cache) and
+    `account_uuid` from the alert section (which panel band the marker lands on). Before
+    the two scripts were merged, this function existed in TWO copies."""
     i = text.find('"%s"' % key)
     if i < 0:
         return None
@@ -172,13 +172,13 @@ def _extract_block(text, key):
 
 
 def _extract_scalar(text, key):
-    """Wycina wartosc SKALARNA po kluczu — string, liczbe, bool albo null.
+    """Cuts out the SCALAR value after a key — string, number, bool or null.
 
-    Rodzenstwo `_extract_block`, ktore umie tylko `{...}`. `cachedExtraUsageDisabledReason`
-    lezy na najwyzszym poziomie jako goly string albo null, wiec tamta funkcja go nie widzi.
+    A sibling of `_extract_block`, which only handles `{...}`. `cachedExtraUsageDisabledReason`
+    sits at the top level as a bare string or null, so that function cannot see it.
 
-    `raw_decode` od pozycji za dwukropkiem zamiast szukania konca recznie: sam json wie,
-    gdzie konczy sie wartosc, i radzi sobie z apostrofami oraz sekwencjami ucieczki w srodku.
+    `raw_decode` from the position past the colon instead of hunting for the end by hand:
+    json itself knows where the value ends, and copes with quotes and escapes inside it.
     """
     i = text.find('"%s"' % key)
     if i < 0:
@@ -188,7 +188,7 @@ def _extract_scalar(text, key):
         return None
     j += 1
     while j < len(text) and text[j] in " \t\r\n":
-        j += 1          # raw_decode NIE toleruje bialych znakow przed wartoscia
+        j += 1          # raw_decode does NOT tolerate whitespace before the value
     return json.JSONDecoder().raw_decode(text, j)[0]
 
 
@@ -198,13 +198,13 @@ _ACCT_FIELDS = ("accountUuid", "emailAddress", "organizationUuid", "organization
 
 
 def read_claude_json():
-    """Jeden odczyt pliku, trzy wyciagi: tozsamosc konta, cache pomiaru i powod
-    wylaczenia kredytow.
+    """One file read, three extracts: account identity, measurement cache and the reason
+    credits are disabled.
 
-    Dawna wersja cache'owala tozsamosc po mtime. Teraz i tak musimy czytac ten plik za
-    kazdym razem (cachedUsageUtilization sie zmienia), wiec osobny cache byl juz tylko
-    dodatkowym I/O. Przelaczenie konta przez /login przepisuje ten sam plik, wiec
-    wykrywanie zmiany konta nadal dziala — po prostu bez posrednika."""
+    The former version cached the identity by mtime. This file now has to be read every
+    time anyway (cachedUsageUtilization changes), so a separate cache was nothing but extra
+    I/O. Switching accounts through /login rewrites this same file, so account-change
+    detection still works — simply without the middleman."""
     path = _find(".claude.json")
     if not path:
         return None, None, None, None
@@ -220,24 +220,24 @@ def read_claude_json():
         acct = {k: raw.get(k) for k in _ACCT_FIELDS}
 
     cached = _safe(_extract_block, text, "cachedUsageUtilization")
-    # Powod wylaczenia kredytow z cache KLIENTA. Rozroznia sam trzy stany, ktorych dane
-    # w pasmie nie rozrozniaja: null / `org_spend_cap_reached` (wyczerpana WLASNA pula,
-    # gdzie `spend.disabled_reason` jest null) / `org_level_disabled_until` (sufit
-    # organizacji). Zbieramy go DO WGLADU — werdykt zostaje na danych w pasmie.
+    # The credits-disabled reason from the CLIENT cache. On its own it tells apart three
+    # states that the in-band data does not: null / `org_spend_cap_reached` (the OWN pool
+    # exhausted, where `spend.disabled_reason` is null) / `org_level_disabled_until` (the
+    # organization ceiling). Collected FOR INSPECTION — the verdict stays on in-band data.
     reason = _safe(_extract_scalar, text, "cachedExtraUsageDisabledReason")
     return acct, cached, os.path.dirname(path), reason
 
 
-# --------------------------------------------------------------- metadane planu
+# --------------------------------------------------------------- plan metadata
 def load_token_meta():
-    """TYLKO metadane planu. accessToken celowo nie jest zwracany — od wersji 3 sonda
-    nie uwierzytelnia niczego. Brak pliku (macOS trzyma credentiale w Keychain) nie
-    jest juz bledem krytycznym: pomiar dziala dalej, znikaja tylko tagi planu."""
+    """Plan metadata ONLY. accessToken is deliberately not returned — since version 3 the
+    probe authenticates nothing. A missing file (macOS keeps credentials in the Keychain)
+    is no longer a fatal error: measurement keeps working, only the plan tags disappear."""
     path = _find(".credentials.json", in_claude_dir=True)
     if not path:
         return {"reason": "brak-credentials"}
     try:
-        with open(path, "r", encoding="utf-8") as f:      # TYLKO odczyt
+        with open(path, "r", encoding="utf-8") as f:      # READ-ONLY
             oa = (json.load(f).get("claudeAiOauth") or {})
     except Exception as e:
         return {"reason": "odczyt-%s" % type(e).__name__}
@@ -247,48 +247,49 @@ def load_token_meta():
             "expires_in_s": int(exp / 1000.0 - time.time()) if exp else None}
 
 
-# --------------------------------------------------------------- pomiar przez CLI
+# --------------------------------------------------------------- measurement via the CLI
 def find_claude(cfg):
     b = cfg.get("claude_bin")
     if b and os.path.isfile(b):
         return b
-    import shutil                       # import lokalny — sciezka zimna, raz na 60 s
+    import shutil                       # local import — cold path, once every 60 s
     return shutil.which("claude")
 
 
 def spawn_refresh(cfg):
-    """Odpala `claude -p "/usage"` i NATYCHMIAST wraca. Wynik przeczyta nastepny przebieg.
+    """Fires `claude -p "/usage"` and returns IMMEDIATELY. The next run reads the result.
 
-    /usage jest zarejestrowane dwukrotnie; wariant z supportsNonInteractive jest aktywny
-    wlasnie w trybie -p. Zwraca {type:"text"}, co ustawia shouldQuery=false — czyli
-    zaden turn modelu sie nie odbywa. Zmierzone: num_turns=0, duration_api_ms=0,
-    total_cost_usd=0. Pomiar limitu nie zuzywa limitu.
+    /usage is registered twice; the variant with supportsNonInteractive is the one active
+    in -p mode. It returns {type:"text"}, which sets shouldQuery=false — meaning no model
+    turn happens at all. Measured: num_turns=0, duration_api_ms=0, total_cost_usd=0.
+    Measuring the limit does not consume the limit.
 
-    --no-session-persistence wylacza zapis transkryptu. Bez niej kazde wywolanie zostawia
-    ~4 KB plik w ~/.claude/projects/<cwd> — zmierzone 102 pliki w 2h35m pracy. Flaga dziala
-    wylacznie z -p. Zweryfikowane A/B: z flaga 0 plikow, bez niej 1 plik, przy czym cache
-    cachedUsageUtilization nadal sie odswieza (a od niego zalezy merge).
+    --no-session-persistence turns off transcript writing. Without it every call leaves
+    a ~4 KB file in ~/.claude/projects/<cwd> — measured 102 files over 2h35m of work. The
+    flag works only with -p. Verified A/B: with the flag 0 files, without it 1 file, while
+    the cachedUsageUtilization cache still refreshes (and the merge depends on it).
 
-    --model haiku to pas bezpieczenstwa, bezczynny na sciezce szczesliwej: /usage zwraca
-    shouldQuery=false, wiec zaden model nie rusza (zmierzone: num_turns=0, koszt 0, czas bez
-    zmian). Znaczenie ma tylko wtedy, gdy argument nie trafi w komende lokalna — wtedy leci
-    platna tura, ktora bez tej flagi poszlaby na modelu z settings.json.
-    Sonda i tak odrzuci taki zrzut po num_turns>0, ale koszt jest juz poniesiony; flaga go
-    obniza o rzad wielkosci. Alias, nie ID z data — ID bywaja wycofywane.
+    --model haiku is a safety belt, idle on the happy path: /usage returns
+    shouldQuery=false, so no model moves at all (measured: num_turns=0, cost 0, time
+    unchanged). It matters only when the argument misses the local command — then a paid
+    turn runs, which without this flag would go to the model from settings.json.
+    The probe will reject such a dump anyway on num_turns>0, but the cost has already been
+    paid; the flag cuts it by an order of magnitude. An alias, not a dated ID — IDs get
+    withdrawn.
 
-    --strict-mcp-config --mcp-config {"mcpServers":{}} odcina boot MCP — sonda go nie uzywa,
-    a to kilkanascie procesow node/npx na przebieg."""
+    --strict-mcp-config --mcp-config {"mcpServers":{}} cuts off the MCP boot — the probe
+    does not use it, and it is a dozen-odd node/npx processes per run."""
     exe = find_claude(cfg)
     if not exe:
         return "brak-claude-w-path"
     import subprocess
     env = dict(os.environ)
-    env[CHILD_ENV] = "1"                # zapora przed rekurencja hookow
+    env[CHILD_ENV] = "1"                # barrier against hook recursion
     kw = {}
     if os.name == "nt":
-        # CREATE_NO_WINDOW (ukryta konsola, dziedziczona przez wnuki) | NEW_PROCESS_GROUP
-        # (brak Ctrl+C od rodzica). NIE dodawac DETACHED_PROCESS (0x8) — wygrywa z
-        # CREATE_NO_WINDOW, wnuki alokuja wtedy wlasna, widoczna konsole.
+        # CREATE_NO_WINDOW (hidden console, inherited by grandchildren) | NEW_PROCESS_GROUP
+        # (no Ctrl+C from the parent). Do NOT add DETACHED_PROCESS (0x8) — it beats
+        # CREATE_NO_WINDOW, and grandchildren then allocate their own, visible console.
         kw["creationflags"] = 0x08000000 | 0x00000200
     else:
         kw["start_new_session"] = True
@@ -301,10 +302,10 @@ def spawn_refresh(cfg):
         subprocess.Popen(
             [exe, "-p", "--no-session-persistence", "--model", "haiku",
              "/usage", "--output-format", "json",
-             # tylko na koncu: --mcp-config jest wariadyczne, zjadloby prompt jako sciezke
+             # last only: --mcp-config is variadic, it would eat the prompt as a path
              "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'],
             stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.DEVNULL,
-            cwd=OUTDIR,                 # neutralny katalog: bez CLAUDE.md i hookow projektu
+            cwd=OUTDIR,                 # neutral directory: no CLAUDE.md, no project hooks
             env=env, close_fds=True, **kw)
     except Exception as e:
         return "spawn-%s" % type(e).__name__
@@ -313,30 +314,30 @@ def spawn_refresh(cfg):
     return None
 
 
-# [^:\n] a nie [^:] — klasa negatywna lapie takze znak nowej linii, wiec bez wykluczenia
-# \n tytul przezera naglowek i puste linie az do dwukropka w NASTEPNEJ linii. Efekt jest
-# podstepny: krotkie wejscia parsuja sie dobrze, realne wyjscie gubi pierwszy odczyt.
+# [^:\n] and not [^:] — a negated class matches the newline too, so without excluding
+# \n the title chews through the header and the blank lines up to a colon on the NEXT line.
+# The effect is sly: short inputs parse fine, real output loses the first reading.
 _PCT_RE = re.compile(r"^(?P<title>\S[^:\n]*):\s+(?P<pct>\d+)%\s+used", re.M)
 
 
 def parse_usage_text(text):
-    """Tolerancyjny parser wyjscia /usage. Nierozpoznana linia jest ignorowana, nie jest
-    bledem. Tytuly sa lokalizowalne i moga sie zmienic miedzy wersjami — dlatego surowy
-    tekst i tak trafia do payloadu, obok sparsowanych wartosci.
+    """Tolerant parser of /usage output. An unrecognized line is ignored, it is not an
+    error. Titles are localizable and can change between versions — which is why the raw
+    text goes into the payload anyway, alongside the parsed values.
 
         Current session: 47% used - resets Jul 27, 12:30pm (UTC)
         Current week (all models): 48% used - resets Aug 1, 6pm (UTC)
         Current week (Fable): 0% used
 
-    Sekcja atrybucji ("100% of your usage came from...") nie ma dwukropka przed
-    procentem, wiec nie lapie sie w regex."""
+    The attribution section ("100% of your usage came from...") has no colon before the
+    percentage, so it does not match the regex."""
     out = {"session": None, "weekly_all": None, "scoped": {}}
     for m in _PCT_RE.finditer(text or ""):
         title, pct = m.group("title").strip(), int(m.group("pct"))
         if pct > MAX_SANE_PCT:
-            # Claude Code potrafi wyciec epoch z resets_at w pole procentu (blad #52326).
-            # Odrzucamy zamiast obcinac do 100: obciecie zamienia ewidentna awarie w
-            # wiarygodnie wygladajace "limit na maksie", czyli w falszywy alarm.
+            # Claude Code can leak the epoch from resets_at into the percent field (bug
+            # #52326). We reject instead of clamping to 100: clamping turns an obvious
+            # failure into a plausible-looking "limit maxed out", i.e. into a false alarm.
             continue
         low = title.lower()
         if low == "current session":
@@ -349,11 +350,11 @@ def parse_usage_text(text):
 
 
 def read_fresh():
-    """Czyta zrzut stdout zostawiony przez POPRZEDNI przebieg.
+    """Reads the stdout dump left by the PREVIOUS run.
 
-    Plik pisze proces potomny, wiec mozemy trafic na zapis w toku — dlatego walidacja
-    jest przez json.loads(): urwany plik po prostu nie sparsuje i cykl leci na samym
-    cache. Zadnego blokowania, zadnego pliku-znacznika."""
+    The file is written by the child process, so a write in progress can be hit — which is
+    why validation goes through json.loads(): a truncated file simply does not parse and
+    the cycle runs on the cache alone. No locking, no marker file."""
     try:
         age = time.time() - os.path.getmtime(CLI_OUT)
         with open(CLI_OUT, "r", encoding="utf-8", errors="replace") as f:
@@ -361,8 +362,8 @@ def read_fresh():
     except Exception:
         return None, None, None
     if d.get("num_turns"):
-        # num_turns>0 znaczy, ze "/usage" nie trafilo w komende lokalna i poszlo do modelu.
-        # Taki wynik jest bezwartosciowy i kosztowny — nie uzywamy go i sygnalizujemy.
+        # num_turns>0 means "/usage" missed the local command and went to the model.
+        # Such a result is worthless and expensive — we do not use it and we signal it.
         return None, None, "nie-komenda-lokalna"
     if age > CLI_MAX_AGE_S:
         return None, None, "stary-zrzut"
@@ -373,36 +374,37 @@ def read_fresh():
 
 
 def dump_outdated(fresh_at, cache_at):
-    """Czy zrzut jest STARSZY od cache — wtedy nie ma czego nakladac.
+    """Whether the dump is OLDER than the cache — then there is nothing to lay on top.
 
-    Cale scalanie zaklada, ze zrzut jest swiezszy. Ale zrzutowi wolno miec do
-    CLI_MAX_AGE_S (900 s), a cache w tym czasie odswieza zwykla praca w Claude Code, wiec
-    kolejnosc potrafi sie odwrocic (zmierzone: 2 przypadki na 1646 pomiarow, do -105 s).
+    The whole merge assumes the dump is fresher. But a dump is allowed to be up to
+    CLI_MAX_AGE_S (900 s) old, and ordinary work in Claude Code refreshes the cache in that
+    time, so the order can invert (measured: 2 cases out of 1646 measurements, down to -105 s).
 
-    Grozny jest przypadek z RESETEM OKNA miedzy zrzutem a cache. Procent szedlby wtedy ze
-    zrzutu, czyli sprzed resetu (np. 95%), a `resets_at` mamy WYLACZNIE z cache, czyli juz
-    z nowego okna. `sanitize` tego nie zlapie — granica jest wazna, wiec nic nie wyglada na
-    sprzeczne — i publikujemy 95% przeciwko oknu, w ktorym realnie jest ~1%. Pewnie
-    wygladajaca nieprawda, dokladnie w chwili, gdy okno jest wolne. W historii zostaje
-    dodatkowo spadek wewnatrz jednego okna, ktory `window_start_index` czyta jako reset.
+    The dangerous case is a WINDOW RESET between the dump and the cache. The percentage
+    would then come from the dump, i.e. from before the reset (e.g. 95%), while `resets_at`
+    comes ONLY from the cache, i.e. already from the new window. `sanitize` will not catch
+    it — the boundary is valid, so nothing looks contradictory — and we publish 95% against
+    a window that is really at ~1%. A confident-looking untruth, exactly at the moment the
+    window is free. History additionally keeps a drop inside a single window, which
+    `window_start_index` reads as a reset.
 
-    W normalnym kierunku ten sam reset konczy sie dobrze: zrzut daje ~1%, granica z cache
-    jest przeterminowana, `sanitize` ja zeruje i zglasza `reset-w-toku`.
+    In the normal direction that same reset ends well: the dump gives ~1%, the boundary from
+    the cache is expired, `sanitize` zeroes it and reports `reset-w-toku`.
 
-    Koszt odrzucenia jest ZEROWY: zostaje wartosc z cache, ktora jest nowsza — i przy okazji
-    dokladniejsza, bo stdout obcina procenty do liczb calkowitych."""
+    The cost of rejecting is ZERO: the cache value stays, and it is newer — and incidentally
+    more accurate, because stdout truncates percentages to whole numbers."""
     return bool(fresh_at) and bool(cache_at) and fresh_at < cache_at
 
 
 def _limit_model(lim):
-    """display_name modelu z wpisu limits[] — ze STRAZNIKAMI TYPU na kazdym poziomie.
+    """The model's display_name from a limits[] entry — with TYPE GUARDS at every level.
 
-    Skrot `(lim.get("scope") or {}).get("model")` dziala tylko dopoki `scope` jest slownikiem
-    albo brakiem. Ta funkcja biegnie dla KAZDEGO limitu (bo klucz pokrycia zawiera model
-    niezaleznie od `kind`), wiec `scope: "global"` dalby AttributeError w `merge()` — czyli
-    przed `log_local`, przed spoolem i przed POST-em. Przebieg znikalby bez sladu, przy kazdym
-    kolejnym cyklu, dopoki cache ma ten ksztalt. Backend ma tu ten sam straznik
-    (backend/app/parsing.py:386)."""
+    The shortcut `(lim.get("scope") or {}).get("model")` works only as long as `scope` is
+    a dict or absent. This function runs for EVERY limit (because the coverage key contains
+    the model regardless of `kind`), so `scope: "global"` would give an AttributeError in
+    `merge()` — that is, before `log_local`, before the spool and before the POST. The run
+    would vanish without a trace, on every following cycle, for as long as the cache has
+    that shape. The backend carries the same guard (backend/app/parsing.py:386)."""
     scope = lim.get("scope")
     if not isinstance(scope, dict):
         return None
@@ -414,26 +416,27 @@ def _limit_model(lim):
 
 
 def _limit_key(lim):
-    """Identyfikator pokrycia dla wpisu limits[]. Musi byc IDENTYCZNY z tym, co liczy
-    backend (`parsing.probe_key`) — bez slugowania, surowy `display_name`. Rozjazd jest
-    CICHY: zbior po prostu nigdy sie nie dopasuje i zachowanie cofa sie do stanu sprzed
-    tej zmiany.
+    """The coverage identifier for a limits[] entry. Must be IDENTICAL to what the backend
+    computes (`parsing.probe_key`) — no slugging, the raw `display_name`. A divergence is
+    SILENT: the set simply never matches and behavior falls back to the state before this
+    change.
 
-    `surface` do klucza NIE wchodzi, bo `merge` dopasowuje po `kind`+`model` i powierzchni
-    nie rozroznia — dwa limity roznjace sie tylko nia naprawde sa pokryte oba."""
+    `surface` does NOT go into the key, because `merge` matches on `kind`+`model` and does
+    not tell surfaces apart — two limits differing only in it really are both covered."""
     return "limit:%s:%s" % (lim.get("kind") or "?", _limit_model(lim) or "-")
 
 
 def merge(cached_usage, fresh):
-    """Struktura z cache + swieze procenty na wierzchu.
+    """The structure from the cache + fresh percentages on top.
 
-    Zwraca payload w ksztalcie identycznym z dawna odpowiedzia HTTP oraz liste serii
-    POKRYTYCH przez zrzut. Pokrycie to nie to samo co zmiana: swiezy odczyt rowny wartosci
-    z cache JEST potwierdzeniem i musi sie liczyc, bo od tej listy zalezy datowanie po
-    stronie backendu (`measurement.fresh_covered`) i decyzja `reset-w-toku` w `sanitize`."""
+    Returns a payload shaped identically to the former HTTP response, plus the list of
+    series COVERED by the dump. Coverage is not the same as change: a fresh reading equal
+    to the cached value IS a confirmation and has to count, because dating on the backend
+    side (`measurement.fresh_covered`) and the `reset-w-toku` decision in `sanitize` both
+    depend on this list."""
     if not fresh:
         return cached_usage, []
-    usage = json.loads(json.dumps(cached_usage))      # kopia — nie mutujemy zrodla
+    usage = json.loads(json.dumps(cached_usage))      # a copy — the source is not mutated
     covered = []
 
     def put(bucket, val):
@@ -464,36 +467,36 @@ def merge(cached_usage, fresh):
 
 
 def _epoch(iso):
-    """resets_at przychodzi jako ISO-8601 z offsetem: 2026-07-27T10:29:59.761469+00:00."""
+    """resets_at arrives as ISO-8601 with an offset: 2026-07-27T10:29:59.761469+00:00."""
     if not iso:
         return None
     try:
-        from datetime import datetime          # modul C, import znikomy
+        from datetime import datetime          # a C module, the import is negligible
         return datetime.fromisoformat(iso).timestamp()
     except Exception:
         return None
 
 
 def sanitize(usage, covered, now):
-    """Odrzuca dane z okna, ktore juz sie zresetowalo, oraz absurdalne procenty.
+    """Rejects data from a window that has already reset, and absurd percentages.
 
-    Sedno problemu: `resets_at` mamy WYLACZNIE z cache, ktory ma do 5 minut (a w trybie
-    awaryjnym do godziny). Jesli okno zresetowalo sie w miedzyczasie, para
-    (procent, resets_at) jest wewnetrznie sprzeczna. Dwa przypadki, dwie reakcje:
+    The heart of the problem: `resets_at` comes ONLY from the cache, which is up to 5
+    minutes old (and up to an hour in fallback mode). If the window reset in the meantime,
+    the pair (percent, resets_at) is internally contradictory. Two cases, two reactions:
 
-    Pytanie brzmi "czy seria dostala SWIEZY procent", wiec czytamy `covered`, nie liste
-    zmian. Wczesniej szla tu lista zmienionych wartosci, przez co seria o swiezym procencie
-    ROWNYM cache'owemu i wygaslym oknie byla wyrzucana z pomiaru zamiast dostac
-    `reset-w-toku` — czyli tracilismy jedyny prawdziwy odczyt.
+    The question is "did the series get a FRESH percent", so we read `covered`, not the
+    list of changes. Earlier the list of changed values went here, so a series with a fresh
+    percent EQUAL to the cached one and an expired window was thrown out of the measurement
+    instead of getting `reset-w-toku` — meaning the one true reading was lost.
 
-      * seria dostala swiezy procent  -> procent jest prawdziwy, nieaktualny jest tylko
-        czas resetu. Zerujemy resets_at; nastepny zapis cache (<=5 min) poda nowy.
-      * seria NIE dostala swiezego    -> procent tez pochodzi z wygaslego okna. Publikacja
-        dawnych 95% jako biezacych bylaby grubym bledem (realnie jest ~0%), wiec
-        wyrzucamy cala serie z tego cyklu.
+      * the series got a fresh percent  -> the percent is true, only the reset time is
+        stale. We zero resets_at; the next cache write (<=5 min) supplies a new one.
+      * the series got NO fresh value   -> the percent comes from the expired window too.
+        Publishing a former 95% as current would be a gross error (really it is ~0%), so
+        the whole series is thrown out of this cycle.
 
-    Zwraca liste zdarzen do diagnostyki — cisza przy odrzucaniu danych jest gorsza niz
-    brak danych, bo wyglada jak poprawny pomiar."""
+    Returns a list of events for diagnostics — silence while discarding data is worse than
+    missing data, because it looks like a correct measurement."""
     events = []
     covered_set = set(covered)
 
@@ -560,14 +563,15 @@ def append_spool(rec):
         with open(SPOOL, "r", encoding="utf-8") as f:
             lines = [l for l in f.read().splitlines() if l.strip()]
         if len(lines) > MAX_SPOOL_LINES:
-            with open(SPOOL, "w", encoding="utf-8") as f:   # wyrzucamy najstarsze
+            with open(SPOOL, "w", encoding="utf-8") as f:   # the oldest are dropped
                 f.write("\n".join(lines[-MAX_SPOOL_LINES:]) + "\n")
     except Exception:
         pass
 
 
 def trim_spool(accepted):
-    """Obcinamy DOPIERO po potwierdzeniu, ile wpisow przyjeto — awaria w polowie nie gubi danych."""
+    """Trimmed ONLY after confirmation of how many entries were accepted — a failure
+    halfway through loses no data."""
     if accepted <= 0:
         return
     try:
@@ -584,13 +588,13 @@ _ssl_ctx = None
 
 
 def ssl_context(cfg):
-    """Magazyn CA Windows uzywany przez Pythona odrzuca lancuch Let's Encrypt niektorych hostow
-    z bledem 'certificate has expired', mimo ze KAZDE ogniwo jest wazne (zweryfikowane
-    openssl-em: 2026/2028/2032/2032). curl przechodzi, Python nie — czyli wina magazynu,
-    nie serwera. certifi dziala, wiec uzywamy go, gdy jest dostepny.
+    """The Windows CA store used by Python rejects the Let's Encrypt chain of some hosts
+    with 'certificate has expired', even though EVERY link is valid (verified with openssl:
+    2026/2028/2032/2032). curl passes, Python does not — so the fault is the store's, not
+    the server's. certifi works, so it is used whenever it is available.
 
-    Swiadomie NIE wylaczamy weryfikacji. `ca_bundle` w config.json pozwala wskazac wlasny
-    plik, gdyby certifi nie bylo zainstalowane."""
+    Verification is deliberately NOT disabled. `ca_bundle` in config.json allows pointing at
+    a custom file, should certifi not be installed."""
     global _ssl_ctx
     if _ssl_ctx is not None:
         return _ssl_ctx
@@ -608,13 +612,13 @@ def ssl_context(cfg):
 
 
 def post(cfg, target, body):
-    """Jeden POST. `target` jawnie, bo wolajacych jest dwoch: ingest pomiaru
-    (`ingest_url`) i sygnalizator (`alert_url`). Oba uwierzytelnia ten sam token
-    maszyny i ten sam sekret brzegowy.
+    """One POST. `target` is explicit, because there are two callers: measurement ingest
+    (`ingest_url`) and the signaller (`alert_url`). Both are authenticated by the same
+    machine token and the same edge secret.
 
-    Importy lokalne — sciezka zimna. `http.client` wciaga socket i ssl; te cztery
-    moduly na gorze pliku kosztowaly ~23 ms przy KAZDYM przebiegu, takze tym, ktory
-    konczy sie na throttlu. NIE przenosic w gore ani nie dodawac uzyc przed ta linia.
+    Local imports — a cold path. `http.client` pulls in socket and ssl; those four modules
+    at the top of the file cost ~23 ms on EVERY run, including the one that ends at the
+    throttle. Do NOT move them up and do not add uses before this line.
     """
     import http.client, urllib.parse
 
@@ -642,68 +646,69 @@ def _iso(epoch):
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(epoch)) + "Z"
 
 
-# =============================================================== alert: sygnalizator
-# Wykrywa, ze Claude Code stanal i czeka na czlowieka. Ta sekcja NIE dotyka niczego
-# z sondy poza wspolnymi pomocnikami (`_safe`, `load_config`, `_iso`, `_find`,
-# `_extract_block`, `ssl_context`, `post`).
+# =============================================================== alert: the signaller
+# Detects that Claude Code has stopped and is waiting for a human. This section touches
+# NOTHING from the probe beyond the shared helpers (`_safe`, `load_config`, `_iso`,
+# `_find`, `_extract_block`, `ssl_context`, `post`).
 #
-# CO ZMIERZONO, I DLACZEGO KOD WYGLADA WLASNIE TAK (Claude Code 2.1.221, VS Code,
-# permission_mode=default, Windows; 224 zdarzenia filtrowane po session_id):
-#   * `PermissionRequest` odpala WYLACZNIE przy realnym pytaniu do czlowieka —
-#     auto-dopuszczone Read/Grep/Write/echo nie generuja go ani razu. Zero heurystyk.
-#   * `PermissionRequest` NIE MA `tool_use_id`. Stad klucz hybrydowy.
-#   * `tool_input` dla AskUserQuestion ZMIENIA sie miedzy wejsciem a wyjsciem (harness
-#     domerza odpowiedzi, 1326 -> 1649 B), wiec hash z tool_input nie moze byc jedynym
-#     kluczem. Te dwa narzedzia klucza sie po `tool_use_id` z PreToolUse.
-#   * NIC, co konczy wywolanie inaczej niz normalnym wykonaniem, nie generuje zdarzenia:
-#     odmowa przyciskiem, Esc na prompcie i Esc w trakcie dzialania — 5/5 przypadkow
-#     konczy sie na PreToolUse + PermissionRequest i niczym wiecej. `PermissionDenied`
-#     nie odpalil ani razu, `is_interrupt: true` okazalo sie nieosiagalne. Dlatego
-#     zamiatanie po prefiksie session_id jest OBOWIAZKOWE, a nie ostroznosciowe.
-#   * ...ale w TRANSKRYPCIE takie zakonczenie zostawia `tool_result` — zmierzone na
-#     2.1.223 trzy razy, z trzema roznymi trescami (odmowa przyciskiem, Esc na prompcie,
-#     zamkniecie okna z wiszacym pytaniem). Stad druga droga wyjscia: `closed_by_transcript`,
-#     jedyna, ktora gasi alert sesji, co po odmowie ZAMILKLA. Szczegoly przy tej funkcji.
-#   * `Stop` NIE odpala na przerwanej turze, a odmowa konczy ture wlasnie jako
-#     przerwanie. Dlatego w liscie zamiatania pierwszy jest `UserPromptSubmit`.
-#   * `PostToolUse` nie jest gwarantowany (Edit na pliku planu: 0/6 domknietych, na
-#     innych plikach 4/4). Domyka to `PostToolBatch.tool_calls[]`.
+# WHAT WAS MEASURED, AND WHY THE CODE LOOKS EXACTLY LIKE THIS (Claude Code 2.1.221,
+# VS Code, permission_mode=default, Windows; 224 events filtered by session_id):
+#   * `PermissionRequest` fires ONLY on a real question to a human — auto-allowed
+#     Read/Grep/Write/echo never generate it. Zero heuristics.
+#   * `PermissionRequest` HAS NO `tool_use_id`. Hence the hybrid key.
+#   * `tool_input` for AskUserQuestion CHANGES between entry and exit (the harness merges
+#     the answers in, 1326 -> 1649 B), so a hash of tool_input cannot be the only key.
+#     Those two tools are keyed by the `tool_use_id` from PreToolUse.
+#   * NOTHING that ends a call other than by normal execution generates an event:
+#     refusal by button, Esc on the prompt and Esc while running — 5/5 of the cases end
+#     at PreToolUse + PermissionRequest and nothing more. `PermissionDenied` never fired,
+#     `is_interrupt: true` turned out to be unreachable. That is why sweeping by the
+#     session_id prefix is MANDATORY, not precautionary.
+#   * ...but in the TRANSCRIPT such an ending leaves a `tool_result` — measured on
+#     2.1.223 three times, with three different contents (refusal by button, Esc on the
+#     prompt, closing the window with a question left hanging). Hence the second way out:
+#     `closed_by_transcript`, the only one that clears the alert of a session that FELL
+#     SILENT after a refusal. Details at that function.
+#   * `Stop` does NOT fire on an interrupted turn, and a refusal ends the turn precisely
+#     as an interrupt. That is why `UserPromptSubmit` comes first in the sweep list.
+#   * `PostToolUse` is not guaranteed (Edit on a plan file: 0/6 closed, on other files
+#     4/4). `PostToolBatch.tool_calls[]` closes those.
 
 STATEDIR = os.path.join(OUTDIR, "session-status")
 POSTED = os.path.join(OUTDIR, "session-status-posted.txt")
 
 DEFAULT_TTL_S = 86400
 DETAIL_MAX = 120
-MAX_ENTRIES = 64            # sufit na wypadek awarii zamiatania; panel i tak pokazuje kilka
+MAX_ENTRIES = 64            # a ceiling in case sweeping fails; the panel shows a few anyway
 
-# Te dwa narzedzia ZAWSZE blokuja, wiec PreToolUse nie daje przy nich falszywek —
-# a niesie `tool_use_id`, ktorego `PermissionRequest` nie ma.
+# These two tools ALWAYS block, so PreToolUse gives no false positives on them —
+# and it carries the `tool_use_id` that `PermissionRequest` lacks.
 ENTER_TOOLS = {"AskUserQuestion": "question", "ExitPlanMode": "plan"}
 
 CLOSING_EVENTS = ("PostToolUse", "PostToolUseFailure")
 SWEEP_EVENTS = ("UserPromptSubmit", "Stop", "SessionEnd")
 
-# Pola potrzebne WYLACZNIE lokalnie, do domykania z transkryptu. `snapshot()` je zdejmuje:
-# `transcript_path` niesie nazwe katalogu domowego czlowieka, a `prompt_id` nie ma odbiorcy
-# w `SessionAlert`.
+# Fields needed LOCALLY ONLY, for closing from the transcript. `snapshot()` strips them:
+# `transcript_path` carries the name of a person's home directory, and `prompt_id` has no
+# recipient in `SessionAlert`.
 LOCAL_FIELDS = ("transcript_path", "prompt_id", "registry_seen")
 
-# Ogon transkryptu. Zmierzone na sesjach, ktore po rozstrzygnieciu zamilkly: odleglosc
-# rozstrzygniecia od EOF max 366 B (n=8), a przy dopuszczeniu <=4 rekordow po nim max
-# 12,9 KB (n=14). 32 KB to 2,5x nad tym maksimum. Powyzej progu mechanizm NIC nie znajduje
-# i wpis wraca do TTL — kierunek awarii jest bezpieczny.
+# The transcript tail. Measured on sessions that fell silent after being resolved: the
+# distance from the resolution to EOF is at most 366 B (n=8), and allowing <=4 records
+# after it, at most 12.9 KB (n=14). 32 KB is 2.5x above that maximum. Past the threshold
+# the mechanism finds NOTHING and the entry falls back to TTL — the failure direction is safe.
 TAIL_BYTES = 32768
 
 _ACCT_CACHE = {}
 
 
 def account_uuid():
-    """`oauthAccount.accountUuid` z ~/.claude.json, z cache na mtime.
+    """`oauthAccount.accountUuid` from ~/.claude.json, cached on mtime.
 
-    Czytane WYLACZNIE na sciezce wejscia (rzadkiej), wiec nie zastepuje
-    `read_claude_json` — ta czyta ten sam plik po throttlu i po znacznie wiecej.
-    Panel stawia znacznik przy konkretnym pasie konta, wiec musi wiedziec, do ktorego
-    pasa alert nalezy; zasada 7 mowi, ze tozsamosc bierze sie stad i tylko stad.
+    Read ONLY on the entry path (a rare one), so it does not replace `read_claude_json` —
+    that one reads the same file after the throttle and for considerably more. The panel
+    puts the marker on one specific account band, so it has to know which band the alert
+    belongs to; rule 7 says identity comes from here and from here only.
     """
     path = _find(".claude.json")
     if not path:
@@ -727,29 +732,31 @@ def account_uuid():
     return uuid
 
 
-# --------------------------------------------------------------- nazwa projektu
+# --------------------------------------------------------------- project name
 def _slug(path):
-    """Sciezka -> slug katalogu transkryptow. Kazdy znak spoza [A-Za-z0-9] to '-'.
+    """Path -> transcript directory slug. Every character outside [A-Za-z0-9] becomes '-'.
 
-    Normalizacja obustronna, wiec ewentualna roznica w traktowaniu podkreslnika przez
-    Claude Code nas nie rozjedzie: ten sam filtr kladziemy takze na nazwe katalogu."""
+    Normalization on both sides, so a possible difference in how Claude Code treats the
+    underscore cannot make us diverge: the same filter is applied to the directory name."""
     return "".join(c if (c.isascii() and c.isalnum()) else "-"
                    for c in os.path.normcase(path))
 
 
 def project_name(cwd, transcript_path):
-    """Nazwa projektu — z katalogu transkryptu, NIE z `basename(cwd)`.
+    """The project name — from the transcript directory, NOT from `basename(cwd)`.
 
-    Zmierzone: 38 z 73 sesji raportuje wiecej niz jedno `cwd` (w jednej sesji naraz
-    ...\\claude-usage-monitor, ...\\backend, ...\\frontend, ...\\frontend\\src — naglowek
-    pokazywalby "src"), a 27 z 51 roznych `cwd` to `...\\.claude\\worktrees\\agent-a<hex>`.
+    Measured: 38 of 73 sessions report more than one `cwd` (within a single session at
+    once ...\\claude-usage-monitor, ...\\backend, ...\\frontend, ...\\frontend\\src — the
+    header would show "src"), and 27 of 51 distinct `cwd` values are
+    `...\\.claude\\worktrees\\agent-a<hex>`.
 
-    "Idz w gore do .git" tez jest zle: korzen worktree ma `.git` jako PLIK, wiec walk-up
-    staje na worktree i zwraca `agent-a00ce9ba287d12ab1`.
+    "Walk up to .git" is wrong too: a worktree root has `.git` as a FILE, so the walk-up
+    stops at the worktree and returns `agent-a00ce9ba287d12ab1`.
 
-    Transkrypty leza pod ~/.claude/projects/<slug PIERWOTNEGO cwd sesji>/, a ten katalog
-    zawiera zmierzone WYLACZNIE korzenie projektow. Odzyskujemy korzen, obcinajac segmenty
-    `cwd`, az slug prefiksu zgodzi sie z nazwa katalogu. Zero I/O na sciezce glownej.
+    Transcripts live under ~/.claude/projects/<slug of the session's ORIGINAL cwd>/, and
+    that directory was measured to contain project roots ONLY. The root is recovered by
+    trimming `cwd` segments until the slug of the prefix matches the directory name. Zero
+    I/O on the main path.
     """
     if not isinstance(cwd, str) or not cwd:
         return None
@@ -766,7 +773,7 @@ def project_name(cwd, transcript_path):
             if parent == probe:
                 break
             probe = parent
-    # Zapas: katalog z `.git` jako KATALOGIEM (plik = worktree, ten nas nie interesuje).
+    # Fallback: a directory with `.git` as a DIRECTORY (a file = worktree, not wanted here).
     probe = path
     while True:
         if _safe(os.path.isdir, os.path.join(probe, ".git")):
@@ -777,15 +784,15 @@ def project_name(cwd, transcript_path):
         probe = parent
 
 
-# --------------------------------------------------------------- klucz wpisu
+# --------------------------------------------------------------- entry key
 def call_key(tool_name, tool_input, prompt_id):
     """sha256(prompt_id | tool_name | json(tool_input)) [:16].
 
-    Uzywane tam, gdzie `tool_use_id` nie istnieje — czyli dla `PermissionRequest`.
-    Zmierzone jako stabilne dla Bash/Edit/Read/Grep/Write: 36 wywolan, zero kolizji,
-    dokladnie jeden tool_use_id na klucz. Znany przypadek zdegenerowany: dwa IDENTYCZNE
-    co do znaku wywolania w obrebie jednego prompt_id dziela klucz, wiec wyjscie
-    pierwszego zdejmie wpis drugiego. Rzadkie i tanie.
+    Used where `tool_use_id` does not exist — that is, for `PermissionRequest`.
+    Measured as stable for Bash/Edit/Read/Grep/Write: 36 calls, zero collisions, exactly
+    one tool_use_id per key. Known degenerate case: two calls IDENTICAL character for
+    character within one prompt_id share a key, so the exit of the first removes the entry
+    of the second. Rare and cheap.
     """
     import hashlib
     blob = "%s|%s|%s" % (prompt_id or "", tool_name or "",
@@ -799,10 +806,10 @@ def _fname(session_id, agent_id, key):
 
 
 def key_of(name):
-    """Klucz z nazwy pliku wpisu, albo None dla nazwy nie z tej formy.
+    """The key from an entry's file name, or None for a name not of this form.
 
-    Nazwa spoza schematu potrafi tam byc naprawde (test kladzie `smieci.json`), a wtedy
-    nie wolno jej ani kasowac, ani zgadywac, co znaczy.
+    A name outside the scheme really can be there (a test drops `smieci.json`), and then it
+    must neither be deleted nor guessed at.
     """
     if not name.endswith(".json"):
         return None
@@ -810,13 +817,13 @@ def key_of(name):
     return czlony[2] if len(czlony) == 3 else None
 
 
-# --------------------------------------------------------------- katalog stanu
+# --------------------------------------------------------------- state directory
 def entries():
-    """Wszystkie wpisy: [(nazwa_pliku, mtime)]. `scandir`, NIGDY `os.stat(sciezka)`.
+    """All entries: [(file_name, mtime)]. `scandir`, NEVER `os.stat(path)`.
 
-    Zmierzone przeciw czytelnikowi w petli: `os.stat(path)` koliduje w 35% przy
-    maksymalnym obciazeniu, `scandir` + `DirEntry.stat()` w 0% — ten drugi jest
-    obslugiwany z rekordu enumeracji katalogu i nie otwiera niczego.
+    Measured against a reader in a loop: `os.stat(path)` collides in 35% of cases under
+    maximum load, `scandir` + `DirEntry.stat()` in 0% — the latter is served from the
+    directory enumeration record and opens nothing.
     """
     out = []
     try:
@@ -843,13 +850,14 @@ def read_entry(name):
 
 
 def write_excl(name, payload):
-    """Zapis przez O_CREAT|O_EXCL. Zwraca True, gdy plik POWSTAL teraz.
+    """A write through O_CREAT|O_EXCL. Returns True when the file was CREATED just now.
 
-    Zmierzone: 0 twardych porazek na 10 978 prob przeciw czytelnikowi w petli.
-    Wariant "temp + os.replace" odpada, bo CPython otwiera bez FILE_SHARE_DELETE,
-    wiec uchwyt czytelnika blokuje `replace` i `remove` (zreprodukowane: WinError 5 / 32).
-    O_EXCL daje przy okazji zachowanie `since` za darmo i BEZ odczytu: FileExistsError
-    znaczy "ta blokada juz jest", wiec stempel pierwszego wejscia zostaje nietkniety.
+    Measured: 0 hard failures over 10 978 attempts against a reader in a loop.
+    The "temp + os.replace" variant is out, because CPython opens without
+    FILE_SHARE_DELETE, so a reader's handle blocks `replace` and `remove` (reproduced:
+    WinError 5 / 32). O_EXCL incidentally preserves `since` for free and WITHOUT a read:
+    FileExistsError means "this block already exists", so the stamp of the first entry
+    stays untouched.
     """
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
     flags |= getattr(os, "O_BINARY", 0)
@@ -861,8 +869,8 @@ def write_excl(name, payload):
     except Exception:
         return False
     try:
-        # ensure_ascii=False + utf-8 jawnie, jak log_local: bez tego cp1250 wywala sie
-        # na polskiej sciezce w `detail`.
+        # ensure_ascii=False + explicit utf-8, as in log_local: without it cp1250 blows up
+        # on a path with Polish characters in `detail`.
         os.write(fd, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
     except Exception:
         pass
@@ -872,9 +880,9 @@ def write_excl(name, payload):
 
 
 def drop(name):
-    """Kasowanie idempotentne. Jedyna krucha operacja w tej sekcji — uchwyt czytelnika
-    potrafi ja zablokowac, wiec trzy podejscia. Porazka to zawieszony alert, nie
-    zgubiony: kazde kolejne zdarzenie wyjscia probuje ponownie."""
+    """Idempotent deletion. The only fragile operation in this section — a reader's handle
+    can block it, hence three attempts. A failure is a stuck alert, not a lost one: every
+    following exit event tries again."""
     path = os.path.join(STATEDIR, name)
     for _ in range(3):
         try:
@@ -888,14 +896,14 @@ def drop(name):
 
 
 def sweep_ttl(ttl_s, now):
-    """Granica smieci. Kasuje, NIGDY nie ukrywa — o tym, kiedy alert PRZEJMUJE ekran,
-    decyduje panel (`alert_takeover_sec`), nie ten prog. Ale okno przejecia nalezy tam do
-    zbioru, wiec stary wpis wraca na karte przy kazdej nowej blokadzie i to dopiero ten
-    prog konczy jego zycie. Wartosc pochodzi z recznie edytowanego config.json, wiec
-    smieci znacza domyslna, a nie wyjatek.
+    """The garbage boundary. It deletes, it NEVER hides — when an alert TAKES OVER the
+    screen is decided by the panel (`alert_takeover_sec`), not by this threshold. But the
+    takeover window belongs there to the set, so an old entry comes back onto the card with
+    every new block and only this threshold ends its life. The value comes from a manually
+    edited config.json, so garbage means the default, not an exception.
 
-    Sama nie publikuje i nie musi: `alert_dispatch` wola ja tuz przed `sweep_session`, ktore
-    publikuje bezwarunkowo i tam nastepuje porownanie ze znacznikiem."""
+    It does not publish itself and does not need to: `alert_dispatch` calls it right before
+    `sweep_session`, which publishes unconditionally and compares against the marker there."""
     try:
         ttl_s = float(ttl_s)
     except (TypeError, ValueError):
@@ -905,30 +913,31 @@ def sweep_ttl(ttl_s, now):
             drop(name)
 
 
-# ----------------------------------------------------- rejestr sesji harnessu
-# Harness prowadzi rejestr swoich sesji: `<pid>.json` z polem `sessionId`. Zmierzone na
-# 2.1.223, i na tym stoi cala ta sekcja:
-#   * rekord powstaje 0,2-1,0 s PO pierwszym hooku sesji (13/13), wiec na `SessionStart`
-#     jego brak nie znaczy nic;
-#   * na `SessionEnd` rekord jeszcze JEST (14/14) — znika 0,1-0,8 s pozniej;
-#   * zamkniecie okna VS Code sprzata rekord w <=5 s, a rekord po ZABITYM procesie usuwa sam
-#     harness przy pierwszej enumeracji rejestru (zmierzone 626 ms po TerminateProcess);
-#     nie robi tego tylko na WSL i wtedy, gdy zabito ostatnia sesje na maszynie;
-#   * rejestr NIE jest zbiorem wszystkich zywych sesji: `claude.exe` bez konsoli nie
-#     rejestruje sie wcale (zmierzone: 18 s zycia, zero rekordow). Stad `registry_seen`.
+# ----------------------------------------------------- harness session registry
+# The harness keeps a registry of its sessions: `<pid>.json` with a `sessionId` field.
+# Measured on 2.1.223, and this whole section stands on it:
+#   * the record appears 0.2-1.0 s AFTER the session's first hook (13/13), so on
+#     `SessionStart` its absence means nothing;
+#   * on `SessionEnd` the record is still THERE (14/14) — it disappears 0.1-0.8 s later;
+#   * closing a VS Code window cleans up the record in <=5 s, and the record left by a
+#     KILLED process is removed by the harness itself on its first enumeration of the
+#     registry (measured 626 ms after TerminateProcess); it fails to do so only on WSL and
+#     when the last session on the machine was killed;
+#   * the registry is NOT the set of all live sessions: `claude.exe` without a console does
+#     not register at all (measured: 18 s of life, zero records). Hence `registry_seen`.
 #
-# ZAKAZ: nigdy `os.kill(pid, 0)` — na Windows mapuje sie na `TerminateProcess`, czyli sonda
-# ubijalaby sesje Claude Code, w kodzie, ktory z zasady nie rzuca wyjatkiem. O zyciu decyduje
-# OBECNOSC rekordu i nic wiecej. Harness sam sprawdza `procStart`, wiec recyklingu pidow tez
-# nie musimy pilnowac my.
+# FORBIDDEN: never `os.kill(pid, 0)` — on Windows it maps to `TerminateProcess`, i.e. the
+# probe would kill Claude Code sessions, in code that as a matter of rule does not raise.
+# Liveness is decided by the PRESENCE of a record and nothing else. The harness checks
+# `procStart` itself, so pid recycling is not ours to watch either.
 
 
 def registry_dir():
-    """`$CLAUDE_CONFIG_DIR/sessions` albo `~/.claude/sessions`.
+    """`$CLAUDE_CONFIG_DIR/sessions` or `~/.claude/sessions`.
 
-    Gdy zmienna jest ustawiona, `~` NIE jest zapasem: cudzy katalog konfiguracyjny to cudze
-    `sessionId`, a tych uzylibysmy do KASOWANIA wpisow. Dlatego nie `_find` — on zwraca tylko
-    pliki i ma wlasnie ten zapas.
+    When the variable is set, `~` is NOT a fallback: a foreign configuration directory means
+    foreign `sessionId` values, and those would be used to DELETE entries. Hence not `_find`
+    — it returns files only and carries exactly that fallback.
     """
     cfg = os.environ.get("CLAUDE_CONFIG_DIR")
     if cfg:
@@ -936,20 +945,21 @@ def registry_dir():
     return os.path.join(os.path.expanduser("~"), ".claude", "sessions")
 
 
-REGDIR = registry_dir()         # przy imporcie, bez `stat` — jak STATEDIR
+REGDIR = registry_dir()         # at import time, without `stat` — as with STATEDIR
 
 
 def live_sessions():
-    """Zbior `sessionId` z rejestru, albo None gdy zbior moze byc NIEPELNY.
+    """The set of `sessionId` values from the registry, or None when the set may be PARTIAL.
 
-    None znaczy "nie wiem" i NIGDY nie znaczy "pusty" — to zasada 4 przeniesiona na ten zbior.
-    Katalog przeczytany do polowy skrocilby liste zywych i skasowal hurtem cudze wpisy, czyli
-    zgasil ZYWE blokady. Dlatego jeden wyjatek na dowolnym rekordzie uniewaznia CALY przebieg.
+    None means "unknown" and NEVER means "empty" — that is rule 4 carried onto this set.
+    A directory read only halfway would shorten the live list and delete foreign entries
+    wholesale, i.e. clear LIVE blocks. Hence one exception on any record invalidates the
+    WHOLE run.
 
-    Rekordem jest wylacznie plik `<cyfry>.json` — tak samo filtruje sam harness (parsuje nazwe
-    przez `parseInt` i odrzuca `NaN`). Wszystko inne w tym katalogu (`.in_use`,
-    `.last_inuse_sweep` — osobny mechanizm harnessu) jest IGNOROWANE, a nie liczone jako
-    rekord nieparsowalny.
+    A record is exclusively a `<digits>.json` file — the harness filters the same way (it
+    parses the name with `parseInt` and rejects `NaN`). Everything else in this directory
+    (`.in_use`, `.last_inuse_sweep` — a separate harness mechanism) is IGNORED, not counted
+    as an unparsable record.
     """
     out = set()
     try:
@@ -968,24 +978,26 @@ def live_sessions():
 
 
 def registry_view(event, session_id):
-    """(zbior zywych sesji, powod wstrzymania). Zbior `None` = reguly smierci NIE uzywamy."""
+    """(set of live sessions, reason for holding back). A `None` set = the death rule is NOT
+    used."""
     if event in ("SessionStart", "SessionEnd"):
-        # Na tych dwoch rekord wlasnie powstaje albo wlasnie znika, wiec jego brak nie jest
-        # dowodem na nic. Zbieranie zrobi najblizszy `UserPromptSubmit` albo `Stop`.
+        # On these two the record is just being created or just disappearing, so its absence
+        # proves nothing. The next `UserPromptSubmit` or `Stop` will do the collecting.
         return None, "rejestr-brzeg-sesji"
     live = live_sessions()
     if live is None:
         return None, "rejestr-niepelny"
     if session_id and session_id not in live:
-        # Biezaca sesja ZYJE — to w niej biegnie ten hook. Jesli jej w rejestrze nie ma, to
-        # nie rozumiemy rejestru (inna wersja harnessu, inny katalog, sesja nierejestrowana)
-        # i nie wolno na nim opierac kasowania CZEGOKOLWIEK.
+        # The current session is ALIVE — this hook is running inside it. If it is not in the
+        # registry, then we do not understand the registry (a different harness version, a
+        # different directory, an unregistered session) and deletion of ANYTHING must not
+        # rest on it.
         return None, "rejestr-bez-biezacej-sesji"
     return live, None
 
 
 def entry_session(name):
-    """`session_id` z nazwy pliku wpisu, albo None dla nazwy nie z tej formy."""
+    """The `session_id` from an entry's file name, or None for a name not of this form."""
     if not name.endswith(".json"):
         return None
     czlony = name[:-5].split("__")
@@ -993,45 +1005,48 @@ def entry_session(name):
 
 
 def registry_dead(name, live):
-    """Czy sesja tego wpisu juz nie zyje. Nazwa spoza schematu NIE jest martwa — jest obca."""
+    """Whether this entry's session is no longer alive. A name outside the scheme is NOT
+    dead — it is foreign."""
     sid = entry_session(name)
     return bool(sid) and sid not in live
 
 
 def registry_seen(session_id):
-    """Czy MOJA sesja jest teraz w rejestrze. Zapisywane we wpisie przy jego powstaniu.
+    """Whether THIS session is in the registry right now. Stored in the entry at creation.
 
-    Regule smierci podlegaja wylacznie wpisy z tym znacznikiem. Bez niego wpis sesji, ktorej
-    harness nie rejestruje, ginalby natychmiast — a to zgaszenie ZYWEJ blokady, jedyna awaria
-    tego narzedzia, ktora kosztuje realna prace. Czytane na sciezce WEJSCIA, czyli rzadkiej.
+    Only entries carrying this marker are subject to the death rule. Without it, an entry of
+    a session the harness does not register would die immediately — and that is clearing a
+    LIVE block, the one failure of this tool that costs real work. Read on the ENTRY path,
+    i.e. the rare one.
     """
     live = live_sessions()
     return bool(live and session_id in live)
 
 
-# --------------------------------------------------- domykanie z transkryptu
-# Odmowa i Esc nie generuja ZADNEGO zdarzenia hooka (zmierzone 5/5), ale ZAPISUJA
-# `tool_result` w transkrypcie — zmierzone trzy razy, z trzema roznymi trescami:
-# odmowa przyciskiem, Esc na prompcie ("The user doesn't want to proceed...") i zamkniecie
-# okna z wiszacym pytaniem ("Tool permission request failed: AbortError..."). Dlatego
-# `is_error` NIE jest tu warunkiem, a tresci nie wolno dopasowywac po tekscie: kazdy
-# `tool_result` znaczy "rozstrzygniete".
+# --------------------------------------------------- closing from the transcript
+# A refusal and Esc generate NO hook event at all (measured 5/5), but they DO WRITE a
+# `tool_result` into the transcript — measured three times, with three different contents:
+# refusal by button, Esc on the prompt ("The user doesn't want to proceed...") and closing
+# the window with a question left hanging ("Tool permission request failed: AbortError...").
+# That is why `is_error` is NOT a condition here, and the contents must not be matched by
+# text: every `tool_result` means "resolved".
 #
-# Ta galaz jest jedynym mechanizmem, ktory gasi alert po odmowie w sesji, ktora POTEM
-# zamilkla (`Stop` nie odpala na przerwanej turze) — i robi to z zamiatania DOWOLNEJ
-# sesji, bo idzie po calym katalogu stanu, nie po wlasnym prefiksie.
+# This branch is the only mechanism that clears an alert after a refusal in a session that
+# THEN fell silent (`Stop` does not fire on an interrupted turn) — and it does so from the
+# sweep of ANY session, because it walks the whole state directory, not its own prefix.
 
 
 def _epoch(iso):
-    """ISO-8601 UTC -> epoch (float) albo None.
+    """ISO-8601 UTC -> epoch (float) or None.
 
-    Po SPARSOWANYM czasie, nigdy po podciagu: `since` ma rozdzielczosc sekundy, a transkrypt
-    milisekundowa, wiec porownanie leksykograficzne odwraca wynik ("...:40.816Z" < "...:40Z",
-    bo '.' < 'Z') i uznawaloby pozniejsze rozstrzygniecie za wczesniejsze.
+    On the PARSED time, never on a substring: `since` has one-second resolution while the
+    transcript has milliseconds, so a lexicographic comparison inverts the result
+    ("...:40.816Z" < "...:40Z", because '.' < 'Z') and would treat a later resolution as
+    an earlier one.
     """
     if not isinstance(iso, str) or len(iso) < 19:
         return None
-    import calendar                 # lazy, jak `hashlib` w `call_key`
+    import calendar                 # lazy, like `hashlib` in `call_key`
     try:
         base = calendar.timegm(time.strptime(iso[:19], "%Y-%m-%dT%H:%M:%S"))
     except Exception:
@@ -1049,12 +1064,12 @@ def _epoch(iso):
 
 
 def tail_records(path):
-    """Ostatnie `TAIL_BYTES` bajtow transkryptu jako lista sparsowanych rekordow.
+    """The last `TAIL_BYTES` bytes of the transcript as a list of parsed records.
 
-    Uchwyt trzymamy na czas jednego odczytu i nic wiecej: CPython otwiera bez
-    FILE_SHARE_DELETE, wiec dlugo trzymany czytelnik przeszkadza harnessowi w jego wlasnych
-    operacjach na transkrypcie. Pierwsza linia jest niepelna TYLKO wtedy, gdy realnie
-    zaczelismy w srodku pliku.
+    The handle is held for one read and no longer: CPython opens without FILE_SHARE_DELETE,
+    so a long-held reader gets in the harness's way during its own operations on the
+    transcript. The first line is incomplete ONLY when the read really started in the middle
+    of the file.
     """
     size = os.path.getsize(path)
     off = max(0, size - TAIL_BYTES)
@@ -1068,19 +1083,19 @@ def tail_records(path):
     for line in lines:
         if not line.strip():
             continue
-        rec = _safe(json.loads, line)      # zepsuta linia nie moze ubic reszty ogona
+        rec = _safe(json.loads, line)      # a broken line must not kill the rest of the tail
         if isinstance(rec, dict):
             out.append(rec)
     return out
 
 
 def _blocks(rec, rec_type, block_type):
-    """Bloki `block_type` z rekordu typu `rec_type`. Dopasowanie STRUKTURALNE.
+    """`block_type` blocks from a record of type `rec_type`. STRUCTURAL matching.
 
-    Zmierzone: `tool_use` wystepuje wylacznie w rekordach `assistant` (43 597/43 597),
-    a `tool_result` wylacznie w `user` (43 475/43 475). Dopasowanie po podciagu jest
-    zakazane — klucz wpisu siedzi w ogonie zawsze, w jego wlasnym rekordzie `tool_use`,
-    wiec podciag gasilby kazda ZYWA blokade przy pierwszym zamiataniu.
+    Measured: `tool_use` occurs exclusively in `assistant` records (43 597/43 597), and
+    `tool_result` exclusively in `user` ones (43 475/43 475). Substring matching is
+    forbidden — the entry key always sits in the tail, in its own `tool_use` record, so a
+    substring would clear every LIVE block on the first sweep.
     """
     if rec.get("type") != rec_type:
         return []
@@ -1095,7 +1110,7 @@ def _blocks(rec, rec_type, block_type):
 
 
 def result_record(records, tool_use_id):
-    """Rekord `user` z `tool_result` dla tego `tool_use_id`, albo None."""
+    """The `user` record with a `tool_result` for this `tool_use_id`, or None."""
     found = None
     for rec in records:
         for b in _blocks(rec, "user", "tool_result"):
@@ -1105,17 +1120,19 @@ def result_record(records, tool_use_id):
 
 
 def _rozstrzygniete(records, prompt_id, since):
-    """`tool_use_id` rozstrzygniec, ktore moga dotyczyc TEJ blokady. Dwa z trzech warunkow.
+    """The `tool_use_id` values of resolutions that may concern THIS block. Two of the three
+    conditions.
 
-    Warunek 1: `promptId` musi byc z tej tury. To pole jest WYLACZNIE na `tool_result`
-    (7695/7695), na `tool_use` go nie ma — stad cala okrezna droga tej funkcji.
-    Warunek 2: rozstrzygniecie musi byc POZNIEJSZE niz wejscie w blokade. `prompt_id` obejmuje
-    cala ture czlowieka (zmierzone 5-12 wywolan, 89-199 s), wiec identyczny retry w tej samej
-    turze jest realny i warunek 1 go nie lapie.
+    Condition 1: `promptId` must be from this turn. That field is ONLY on `tool_result`
+    (7695/7695), `tool_use` does not have it — hence this function's whole roundabout route.
+    Condition 2: the resolution must be LATER than entry into the block. `prompt_id` spans
+    a whole human turn (measured 5-12 calls, 89-199 s), so an identical retry within the
+    same turn is real and condition 1 does not catch it.
 
-    Ten filtr idzie PIERWSZY, przed jakimkolwiek hashem, i to jest decyzja o koszcie, nie
-    o stylu: liczenie `call_key` po WSZYSTKICH `tool_use` w ogonie zmierzono na 27,8 ms
-    mediany przy 64 wpisach (max 495 ms), a rozstrzygniec z tej tury jest w ogonie garstka.
+    This filter goes FIRST, before any hash, and that is a decision about cost, not about
+    style: computing `call_key` over ALL `tool_use` entries in the tail was measured at
+    a 27.8 ms median with 64 entries (max 495 ms), while resolutions from this turn are
+    a handful in the tail.
     """
     out = set()
     if not prompt_id or since is None:
@@ -1132,42 +1149,46 @@ def _rozstrzygniete(records, prompt_id, since):
 
 
 def transcript_closed(data, key, records):
-    """Czy wpis jest rozstrzygniety wedlug ogona transkryptu."""
+    """Whether the entry is resolved according to the transcript tail."""
     if not records:
         return False
     if data.get("reason") in ("question", "plan"):
-        # Klucz wpisu JEST `tool_use_id` — nie ma czego odzyskiwac.
+        # The entry key IS the `tool_use_id` — there is nothing to recover.
         return result_record(records, key) is not None
 
     prompt_id = data.get("prompt_id")
     if not prompt_id:
-        return False                # starsza sonda: hash z pustym lancuchem nie rozroznia tury
+        return False                # older probe: a hash over an empty string cannot tell
+                                    # turns apart
     gotowe = _rozstrzygniete(records, prompt_id, _epoch(data.get("since")))
     if not gotowe:
         return False
 
-    # Klucz wpisu `permission` to `call_key(tool_name, tool_input, prompt_id)`, czyli hash,
-    # ktorego w transkrypcie nie ma. Sa jego skladniki, wiec przeliczamy TA SAMA funkcja — nie
-    # przepisana formula, bo `json.dumps` ma tam `ensure_ascii=False, default=str`, a polskie
-    # sciezki sa realne. Zmierzone, ze skladniki sa identyczne: `tool_input` z hooka odtwarza
-    # `input` z transkryptu bajt w bajt 202/202 (Bash, Edit, Write, PowerShell, Read i dalsze).
-    # Pre-filtr po nazwie narzedzia jest DARMOWY i nie zmienia wyniku: `call_key` liczy sie
-    # z `tool_name`, wiec inna nazwa nie moze dac tego klucza. Realny ogon jest mieszany
-    # (Read, Edit, Bash...), wiec to odsiewa wiekszosc kandydatow przed hashem.
+    # A `permission` entry key is `call_key(tool_name, tool_input, prompt_id)`, i.e. a hash
+    # that the transcript does not contain. Its ingredients are there, so it is recomputed
+    # with THE SAME function — not a rewritten formula, because `json.dumps` there carries
+    # `ensure_ascii=False, default=str`, and paths with Polish characters are real. The
+    # ingredients were measured to be identical: `tool_input` from the hook reproduces
+    # `input` from the transcript byte for byte 202/202 (Bash, Edit, Write, PowerShell, Read
+    # and more). The pre-filter on the tool name is FREE and does not change the result:
+    # `call_key` is computed from `tool_name`, so a different name cannot yield that key.
+    # A real tail is mixed (Read, Edit, Bash...), so this sifts out most candidates before
+    # the hash.
     tool = data.get("tool")
     uzycia = [b for rec in records for b in _blocks(rec, "assistant", "tool_use")]
     trafienie = None
     for i, b in enumerate(uzycia):
         if (b.get("id") in gotowe and b.get("name") == tool
                 and call_key(b.get("name"), b.get("input"), prompt_id) == key):
-            trafienie = (i, b)          # przy wielu trafieniach liczy sie OSTATNIE
+            trafienie = (i, b)          # with several hits the LAST one counts
     if trafienie is None:
         return False
 
-    # Warunek 3: gdyby po tym wywolaniu stalo w ogonie DRUGIE, bajtowo identyczne, to ono jest
-    # ta zywa blokada i wpisu nie wolno zdjac — oba maja ten sam `call_key`, wiec sam hash ich
-    # nie rozroznia. Zmierzone: 0,24% wywolan ma takiego blizniaka w oknie 32 KB, a scenariusz
-    # "odmowa, Claude powtarza identyczne wywolanie" wystapil w korpusie 22 razy.
+    # Condition 3: if a SECOND, byte-identical call stood in the tail after this one, then
+    # that one is the live block and the entry must not be removed — both have the same
+    # `call_key`, so the hash alone cannot tell them apart. Measured: 0.24% of calls have
+    # such a twin within the 32 KB window, and the scenario "refusal, Claude repeats an
+    # identical call" occurred 22 times in the corpus.
     i, b = trafienie
     for pozniejsze in uzycia[i + 1:]:
         if (pozniejsze.get("name") == b.get("name")
@@ -1177,11 +1198,11 @@ def transcript_closed(data, key, records):
 
 
 def transcript_path_of(data):
-    """Plik transkryptu wpisu. Dla subagenta NIE jest to `transcript_path` z hooka.
+    """The entry's transcript file. For a subagent this is NOT the hook's `transcript_path`.
 
-    Zmierzone: hook subagenta niesie `transcript_path` RODZICA, a rekordy subagenta leza
-    w osobnym pliku. Sciezka jest wyliczalna i sprawdzona — wszystkie `tool_use` subagentow
-    znalazly sie tam i nigdzie indziej.
+    Measured: a subagent's hook carries the PARENT's `transcript_path`, while the subagent's
+    records live in a separate file. The path is computable and verified — every subagent
+    `tool_use` was found there and nowhere else.
     """
     tp = data.get("transcript_path")
     if not isinstance(tp, str) or not tp:
@@ -1197,20 +1218,20 @@ def transcript_path_of(data):
 
 
 def closed_by_transcript(name, data, tails):
-    """Jeden wpis wobec swojego transkryptu. Ogon czytamy RAZ na plik, nie raz na wpis."""
+    """One entry against its transcript. The tail is read ONCE per file, not once per entry."""
     path = transcript_path_of(data)
     if not path:
-        return False                # starsza sonda albo subagent bez `session_id`
+        return False                # an older probe, or a subagent without `session_id`
     if path not in tails:
-        # `_safe` wokol calego odczytu jednego pliku: zablokowany plik nie moze ubic
-        # sprawdzenia pozostalych wpisow.
+        # `_safe` around the whole read of a single file: a locked file must not kill the
+        # check of the remaining entries.
         tails[path] = _safe(tail_records, path) or []
     return transcript_closed(data, key_of(name), tails[path])
 
 
-# --------------------------------------------------------------- wysylka alertu
+# --------------------------------------------------------------- sending the alert
 def snapshot():
-    """Biezacy zbior wpisow maszyny, posortowany po `since`. Pola lokalne zdejmowane."""
+    """The machine's current set of entries, sorted by `since`. Local fields are stripped."""
     out = []
     for name, _mtime in sorted(entries()):
         data = read_entry(name)
@@ -1229,12 +1250,12 @@ def _fingerprint(items):
 
 
 def publish(cfg):
-    """POST tylko wtedy, gdy ZBIOR sie zmienil.
+    """POST only when the SET has changed.
 
-    Znacznik zapisujemy DOPIERO po udanej wysylce, wiec nieudany POST powtorzy sie przy
-    nastepnym zdarzeniu. Ograniczenie znane i wpisane w projekt: zablokowana sesja nie
-    generuje kolejnych zdarzen, wiec POST zgubiony dokladnie na wejsciu czeka na
-    najblizszy ruch w tej albo innej sesji na tej maszynie.
+    The marker is written ONLY after a successful send, so a failed POST repeats on the next
+    event. A known limitation, built into the design: a blocked session generates no further
+    events, so a POST lost exactly at entry waits for the next activity in this or another
+    session on the same machine.
     """
     items = snapshot()
     finger = _fingerprint(items)
@@ -1246,7 +1267,7 @@ def publish(cfg):
         pass
     url = cfg.get("alert_url")
     if not url or not cfg.get("ingest_token"):
-        return                      # tryb tylko lokalny — pliki i toast, bez sieci
+        return                      # local-only mode — files and toast, no network
     body = {"entries": items, "sent_at": _iso(time.time()),
             "script_version": SCRIPT_VERSION}
     try:
@@ -1275,16 +1296,16 @@ def _xml(s):
 
 
 def toast(reason, project, detail):
-    """Powiadomienie Windows przez WinRT, bez zadnych modulow.
+    """A Windows notification through WinRT, without any modules.
 
-    BurntToast nie jest zainstalowany, a wariant z `[xml]` z poradnikow nie dziala
-    (`Cannot find type [Windows.Data.Xml.Dom.XmlDocument]`). Ponizsze jest sprawdzone:
-    PowerShell 5.1, zero modulow, 394 ms. AUMID zarejestrowanego PowerShella jest nosny
-    — Windows po cichu odrzuca toasty z niezarejestrowanych AppID.
+    BurntToast is not installed, and the `[xml]` variant from the guides does not work
+    (`Cannot find type [Windows.Data.Xml.Dom.XmlDocument]`). What follows is verified:
+    PowerShell 5.1, zero modules, 394 ms. The AUMID of a registered PowerShell is the
+    carrier — Windows silently drops toasts from unregistered AppIDs.
 
-    -EncodedCommand, NIE -Command: PowerShell 5.1 dekoduje wiersz polecenia strona
-    kodowa konsoli i polskie znaki wychodzily krzakami. Base64 z UTF-16LE tego nie
-    dotyczy i przy okazji znosi problem cytowania w `detail`.
+    -EncodedCommand, NOT -Command: PowerShell 5.1 decodes the command line with the console
+    code page and Polish characters came out as mojibake. Base64 from UTF-16LE is immune to
+    that and incidentally removes the quoting problem in `detail`.
     """
     if os.name != "nt":
         return
@@ -1312,14 +1333,14 @@ def toast(reason, project, detail):
             ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            # CREATE_NO_WINDOW | NEW_PROCESS_GROUP — jak w spawn_refresh. NIE dodawac
-            # DETACHED_PROCESS: wygrywa z CREATE_NO_WINDOW i konsola miga.
+            # CREATE_NO_WINDOW | NEW_PROCESS_GROUP — as in spawn_refresh. Do NOT add
+            # DETACHED_PROCESS: it beats CREATE_NO_WINDOW and the console flashes.
             creationflags=0x08000000 | 0x00000200, close_fds=True)
     except Exception:
         pass
 
 
-# --------------------------------------------------------------- maszyna stanow
+# --------------------------------------------------------------- state machine
 _DETAIL_KEYS = ("command", "file_path", "path", "url", "pattern", "description",
                 "prompt", "plan")
 
@@ -1359,27 +1380,27 @@ def enter(cfg, hook, reason, key):
         "cwd": hook.get("cwd"),
         "since": _iso(time.time()),
         "account_uuid": account_uuid(),
-        # Do diagnostyki: caly pomiar szedl w trybie `default`, a tryby
-        # auto-zatwierdzajace rozstrzygaja wywolanie PRZED warstwa promptu.
+        # For diagnostics: the whole measurement ran in `default` mode, while auto-approving
+        # modes resolve a call BEFORE the prompt layer.
         "permission_mode": hook.get("permission_mode"),
-        # Pola LOKALNE (LOCAL_FIELDS) — `snapshot()` je zdejmuje przed wysylka.
-        # Zmierzone, ze `PermissionRequest` niesie oba pierwsze: 10/10, `prompt_id` nigdy
-        # `undefined`. `registry_seen` musi powstac TUTAJ: `write_excl` idzie przez `O_EXCL`,
-        # wiec potem nie ma jak tego dopisac.
+        # LOCAL fields (LOCAL_FIELDS) — `snapshot()` strips them before sending.
+        # Measured that `PermissionRequest` carries both of the first two: 10/10, `prompt_id`
+        # never `undefined`. `registry_seen` has to be created HERE: `write_excl` goes through
+        # `O_EXCL`, so there is no way to add it afterwards.
         "transcript_path": hook.get("transcript_path"),
         "prompt_id": hook.get("prompt_id"),
         "registry_seen": registry_seen(session_id),
     }
     if not write_excl(name, entry):
-        return                              # ta blokada juz jest — bez toasta, bez POST-u
+        return                              # this block already exists — no toast, no POST
     if cfg.get("toast", True):
         toast(reason, entry["project"], entry["detail"])
     publish(cfg)
 
 
 def _close_keys(hook, call):
-    """Oba kandydaty klucza dla jednego wywolania. Wyjscie nie musi wiedziec, ktorym
-    trybem wpis powstal — kasowanie jest idempotentne, wiec chybienie nic nie kosztuje."""
+    """Both key candidates for one call. The exit does not have to know which mode created
+    the entry — deletion is idempotent, so a miss costs nothing."""
     out = []
     tuid = call.get("tool_use_id")
     if tuid:
@@ -1390,10 +1411,11 @@ def _close_keys(hook, call):
 
 
 def leave(cfg, hook):
-    """Zdarzenie zamykajace. Zdarzenie z `agent_id` nigdy nie zamknie wpisu zapisanego
-    bez niego — segment agenta jest czescia nazwy pliku, wiec regula wynika z konstrukcji."""
+    """A closing event. An event with an `agent_id` will never close an entry written
+    without one — the agent segment is part of the file name, so the rule follows from the
+    construction."""
     if not entries():
-        return                              # sciezka goraca konczy sie tutaj
+        return                              # the hot path ends here
     session_id = hook.get("session_id")
     if not session_id:
         return
@@ -1410,44 +1432,49 @@ def leave(cfg, hook):
 
 
 def sweep_session(cfg, hook):
-    """Zamiatanie po prefiksie `<session_id>__`.
+    """Sweeping by the `<session_id>__` prefix.
 
-    OBOWIAZKOWE, nie ostroznosciowe: to jedyny mechanizm gaszacy alert po odmowie
-    i po przerwaniu, bo zadne z nich nie generuje wlasnego zdarzenia. `UserPromptSubmit`
-    jest w tej liscie najwazniejszy, bo `Stop` nie odpala na przerwanej turze.
+    MANDATORY, not precautionary: it is the only mechanism that clears an alert after a
+    refusal and after an interrupt, because neither of them generates an event of its own.
+    `UserPromptSubmit` is the most important one in this list, because `Stop` does not fire
+    on an interrupted turn.
 
-    `SessionEnd` zamiata WYLACZNIE wlasny session_id: zmierzone, ze przychodzi ~raz na
-    minute z identyfikatorem dziecka `claude -p` odpalanego przez ten sam skrypt, wiec
-    zamiatanie globalne wycieraloby alerty co minute.
+    `SessionEnd` sweeps its OWN session_id only: it was measured to arrive ~once a minute
+    with the identifier of the `claude -p` child fired by this very script, so a global
+    sweep would wipe alerts every minute.
 
-    Wpisy CUDZYCH sesji ta petla tez oglada, ale kasuje je na jednym z dwoch DOWODOW, nigdy
-    na podobienstwo: albo sesja nie ma rekordu w rejestrze harnessu (`registry_dead`), albo jej
-    wlasny transkrypt niesie juz rozstrzygniecie (`closed_by_transcript`). Bez tego wpis sesji,
-    ktora po odmowie zamilkla, nie ma zbieracza: to jest awaria ze zgloszenia.
+    This loop also looks at entries of OTHER sessions, but it deletes them on one of two
+    PROOFS, never on resemblance: either the session has no record in the harness registry
+    (`registry_dead`), or its own transcript already carries a resolution
+    (`closed_by_transcript`). Without this, an entry of a session that fell silent after a
+    refusal has no collector: that is the failure this came from.
 
-    Regula po zgodnosci `cwd` (`gc_cwd`) zostala USUNIETA. Kasowala po samym podobienstwie
-    projektu, wiec nowa karta w projekcie potrafila zgasic ZYWA blokade sasiedniej — w rejestrze
-    tej maszyny stalo naraz 5 sesji z tym samym `cwd`. Jej jedyny realny zysk (zabite okno)
-    pokrywa teraz rejestr: rekord po zabitym procesie usuwa sam harness.
+    The rule based on matching `cwd` (`gc_cwd`) has been REMOVED. It deleted on project
+    resemblance alone, so a new card in a project could clear the LIVE block of a
+    neighboring one — a registry held 5 sessions with the same `cwd` at once. Its one real
+    benefit (a killed window) is now covered by the registry: the record left by a killed
+    process is removed by the harness itself.
     """
     session_id = hook.get("session_id")
     all_entries = entries()
     if not all_entries:
-        # Pusty katalog nie znaczy "nie ma nic do roboty": moze wlasnie ktos uzyl furtki
-        # `del session-status\*`, moze TTL zdjal ostatni wpis (`sweep_ttl` nie publikuje
-        # nigdy). Wtedy serwer trzyma zbior, ktorego na dysku nie ma, a panel maluje karte
-        # po blokadzie, ktorej nie ma. `publish()` sam sprawdzi znacznik i zamilknie, gdy
-        # zbior sie zgadza — czyli w zdecydowanej wiekszosci przebiegow.
+        # An empty directory does not mean "nothing to do": someone may have just used the
+        # `del session-status\*` escape hatch, or TTL may have taken the last entry
+        # (`sweep_ttl` never publishes). Then the server holds a set that is not on disk,
+        # and the panel paints a card for a block that does not exist. `publish()` checks
+        # the marker itself and stays silent when the set agrees — that is, on the vast
+        # majority of runs.
         #
-        # Brak PLIKU znacznika znaczy "nigdy nic nie oglaszalismy", a wtedy nie ma czego
-        # korygowac: maszyna bez ani jednej blokady w zyciu nie dotyka tego endpointu wcale.
+        # A missing marker FILE means "nothing was ever announced", and then there is
+        # nothing to correct: a machine without a single block in its life never touches
+        # this endpoint at all.
         if os.path.exists(POSTED):
             return publish(cfg)
         return
     prefix = ("%s__" % session_id) if session_id else None
     event = hook.get("hook_event_name")
     live, powod = registry_view(event, session_id)
-    tails = {}                       # transcript_path -> ogon, czytany RAZ na plik
+    tails = {}                       # transcript_path -> tail, read ONCE per file
     wstrzymane = 0
     for name, _mtime in all_entries:
         if prefix and name.startswith(prefix):
@@ -1460,37 +1487,40 @@ def sweep_session(cfg, hook):
             if live is None:
                 wstrzymane += 1
             elif registry_dead(name, live):
-                # Sesja tego wpisu juz nie istnieje, a wpis powstal, gdy BYLA w rejestrze.
+                # This entry's session no longer exists, and the entry was created while it
+                # WAS in the registry.
                 drop(name)
                 continue
-        # Cudzy wpis zyjacej sesji, ale jego wlasny transkrypt moze juz nosic
-        # rozstrzygniecie — i wtedy tylko MY mozemy go zdjac, bo tamta sesja moze
-        # nie odpalic juz nic.
+        # A foreign entry of a live session, but its own transcript may already carry a
+        # resolution — and then only this run can remove it, because that session may fire
+        # nothing more.
         if _safe(closed_by_transcript, name, data, tails):
             drop(name)
     if wstrzymane and powod:
-        # Bez tej linii "mechanizm umarl po zmianie u Anthropic" i "nie ma czego zbierac" sa
-        # nierozroznialne, a objawem jest dokladnie ten blad, ktory ta sekcja naprawia.
-        # Osobny klucz, nie `skip`: to nie jest przebieg bez pomiaru, `analyze-samples.py`
-        # liczy tam co innego. Logujemy tylko, gdy realnie bylo co wstrzymac.
+        # Without this line "the mechanism died after a change at Anthropic" and "there is
+        # nothing to collect" are indistinguishable, and the symptom is exactly the bug this
+        # section fixes. A separate key, not `skip`: this is not a run without a measurement,
+        # `analyze-samples.py` counts something else there. Logged only when there really
+        # was something to hold back.
         log_local({"t": round(time.time(), 3), "alert_skip": powod,
                    "event": event, "wpisy": wstrzymane})
-    # BEZWARUNKOWO, nie `if hit`: kasowania, ktore nie przeszly tedy, zostawialy serwer ze
-    # zbiorem, ktorego na dysku nie ma (`sweep_ttl` kasuje i nie publikuje, furtka `del`
-    # kasuje spoza sondy). `publish()` porownuje snapshot ze znacznikiem, wiec POST leci
-    # dopiero przy realnym rozjezdzie, a nie na kazdym zdarzeniu.
+    # UNCONDITIONALLY, not `if hit`: deletions that did not go through here left the server
+    # with a set that is not on disk (`sweep_ttl` deletes and does not publish, the `del`
+    # escape hatch deletes from outside the probe). `publish()` compares the snapshot with
+    # the marker, so a POST goes out only on a real divergence, not on every event.
     #
-    # Tylko w galezi ZAMIATANIA (cztery zdarzenia). `leave()` zostaje na `if not entries()`,
-    # bo `PostToolUse` odpala sie przy KAZDYM wywolaniu narzedzia i to jest sciezka goraca.
+    # Only in the SWEEP branch (four events). `leave()` stays on `if not entries()`, because
+    # `PostToolUse` fires on EVERY tool call and that is the hot path.
     publish(cfg)
 
 
 def alert_shutdown(cfg):
-    """Wylaczone przez `session_status: false` — zgas to, co jeszcze wisi.
+    """Disabled by `session_status: false` — clear whatever is still hanging.
 
-    Sam `return` by nie wystarczyl: blokada trwajaca w chwili wylaczenia zostalaby na
-    panelu do serwerowego TTL (24 h), bo nikt juz nie wysle korekty. Po pierwszym takim
-    przebiegu katalog jest pusty i kazdy kolejny konczy sie na samym `scandir`.
+    A bare `return` would not be enough: a block in progress at the moment of disabling
+    would stay on the panel until the server TTL (24 h), because nobody would send a
+    correction any more. After the first such run the directory is empty and every
+    following one ends at the `scandir` alone.
     """
     biezace = entries()
     if not biezace:
@@ -1501,15 +1531,15 @@ def alert_shutdown(cfg):
 
 
 def alert_dispatch(cfg, hook):
-    """Wejscie sekcji alertu. Wolane PRZED throttlem, opakowane w `_safe`."""
+    """The alert section's entry point. Called BEFORE the throttle, wrapped in `_safe`."""
     if not cfg.get("session_status", True):
         return alert_shutdown(cfg)
 
     event = hook.get("hook_event_name")
 
     if event == "PreToolUse":
-        # Bramka nazwa narzedzia jako PIERWSZA instrukcja: dla ~90% wywolan galaz
-        # konczy sie tutaj i nie dotyka dysku.
+        # The tool-name gate as the FIRST statement: for ~90% of calls the branch ends
+        # here and never touches the disk.
         reason = ENTER_TOOLS.get(hook.get("tool_name"))
         if reason is None:
             return
@@ -1517,9 +1547,9 @@ def alert_dispatch(cfg, hook):
 
     if event == "PermissionRequest":
         if hook.get("tool_name") in ENTER_TOOLS:
-            # Te dwa maja wlasne wejscie po `tool_use_id`. Kolejnosc PreToolUse vs
-            # PermissionRequest jest NIEGWARANTOWANA (zmierzone 20% inwersji), wiec
-            # dwa zrodla wejscia dla jednego wywolania daly by wyscig o dwa pliki.
+            # These two have their own entry by `tool_use_id`. The order of PreToolUse vs
+            # PermissionRequest is NOT GUARANTEED (measured 20% inversions), so two entry
+            # sources for one call would give a race over two files.
             return
         return enter(cfg, hook, "permission",
                      call_key(hook.get("tool_name"), hook.get("tool_input"),
@@ -1529,14 +1559,14 @@ def alert_dispatch(cfg, hook):
         return leave(cfg, hook)
 
     if event == "PermissionDenied":
-        # Zarejestrowany przez caly pomiar i nie odpalil ani razu — nie moze na nim
-        # stac zadna regula. Wpiety, bo nic nie kosztuje i zlapie odmowy klasyfikatora.
+        # Registered for the whole measurement and never fired once — no rule may rest
+        # on it. Wired in because it costs nothing and will catch classifier refusals.
         return leave(cfg, hook)
 
     if event in SWEEP_EVENTS or event == "SessionStart":
         _safe(sweep_ttl, cfg.get("blocked_ttl_sec", DEFAULT_TTL_S), time.time())
-        # `SessionStart` zostaje na liscie, bo zamiata wlasny prefiks i liczy TTL. Reguly
-        # smierci z rejestru na nim NIE uzywamy — patrz `registry_view`.
+        # `SessionStart` stays on the list, because it sweeps its own prefix and counts
+        # TTL. The registry death rule is NOT used on it — see `registry_view`.
         return sweep_session(cfg, hook)
 
 
@@ -1544,28 +1574,29 @@ def alert_dispatch(cfg, hook):
 def main():
     t0 = time.perf_counter()
 
-    # Zapora przed rekurencja. MUSI byc przed czymkolwiek innym: proces potomny
-    # `claude -p "/usage"` odpala hook Stop, ktory uruchamia te sonde ponownie.
+    # The barrier against recursion. MUST come before anything else: the child process
+    # `claude -p "/usage"` fires the Stop hook, which starts this probe again.
     if os.environ.get(CHILD_ENV):
         return 0
 
-    # Payload hooka przychodzi w UTF-8, ale `sys.stdin` w trybie tekstowym rozkodowuje
-    # go kodowaniem locale (tu cp1250) z `errors=surrogateescape`. Skutki byly dwa,
-    # oba ciche: polskie znaki wychodzily na toast i na panel jako dwa znaki na jeden,
-    # a bajty bez odpowiednika w cp1250 (0x81 0x83 0x88 0x90 0x98 — czyli m.in. "L"
-    # z kreska i apostrof typograficzny) stawaly sie samotnymi surogatami, ktore
-    # wywracaly `write_excl` na `.encode("utf-8")`. Wpis blokady powstawal wtedy PUSTY,
-    # wiec alert nie docieral nigdzie, a klucz byl juz zajety. Reszta sciezki ma jawne
-    # utf-8, wiec wiernie niosla to, co tu weszlo — jedno miejsce psulo wszystkie.
-    # `lambda`, bo `_safe` osloni wtedy takze siegniecie po atrybut (stdin bywa None).
+    # The hook payload arrives in UTF-8, but `sys.stdin` in text mode decodes it with the
+    # locale encoding (cp1250 here) and `errors=surrogateescape`. There were two effects,
+    # both silent: Polish characters reached the toast and the panel as two characters per
+    # one, and bytes with no counterpart in cp1250 (0x81 0x83 0x88 0x90 0x98 — that is,
+    # among others, "L" with a stroke and the typographic apostrophe) became lone
+    # surrogates, which broke `write_excl` on `.encode("utf-8")`. The block entry was then
+    # created EMPTY, so the alert reached nowhere while the key was already taken. The rest
+    # of the path has explicit utf-8, so it faithfully carried whatever entered here — one
+    # place ruined all of them.
+    # A `lambda`, so that `_safe` also shields the attribute access (stdin can be None).
     data = _safe(lambda: sys.stdin.buffer.read().decode("utf-8", "replace")) or "{}"
     hook = _safe(json.loads, data) or {}
     cfg = load_config()
 
-    # PRZED throttlem. Alert ma dojsc natychmiast, a throttle sondy to 60 s — za tym
-    # progiem blokada byla by widoczna dopiero po minucie albo wcale.
-    # `_safe`, bo zasada 3: sonda nie ma prawa rzucic wyjatkiem, a sygnalizator nie ma
-    # prawa zepsuc pomiaru limitow.
+    # BEFORE the throttle. An alert has to arrive immediately, and the probe throttle is
+    # 60 s — past that threshold a block would become visible only after a minute, or not
+    # at all. `_safe`, because of rule 3: the probe must not raise, and the signaller must
+    # not spoil the limit measurement.
     _safe(alert_dispatch, cfg, hook)
 
     if throttled(int(cfg.get("throttle_sec", 60))):
@@ -1574,13 +1605,13 @@ def main():
     fresh, fresh_at, fresh_skip = read_fresh()
     acct, cached, cfg_dir, eu_reason = read_claude_json()
 
-    # Zlecamy pomiar na NASTEPNY cykl. Zawsze, takze gdy teraz nie mamy czego wyslac —
-    # to jest wlasnie mechanizm bootstrapu na swiezej maszynie.
+    # A measurement is ordered for the NEXT cycle. Always, including when there is nothing
+    # to send now — this is precisely the bootstrap mechanism on a fresh machine.
     spawn_err = spawn_refresh(cfg)
 
     if not cached or not isinstance(cached.get("utilization"), dict):
-        # Pierwszy przebieg na maszynie: Claude Code jeszcze nigdy nie zapisal cache.
-        # Spawn wyzej to naprawi, pomiar pojawi sie w nastepnym cyklu.
+        # The first run on a machine: Claude Code has never written the cache yet.
+        # The spawn above will fix it, the measurement appears in the next cycle.
         log_local({"t": round(time.time(), 3), "ok": False, "skip": "brak-cache",
                    "spawn": spawn_err, "event": hook.get("hook_event_name")})
         return 0
@@ -1592,7 +1623,7 @@ def main():
                    "cache_age_s": round(cache_age), "spawn": spawn_err})
         return 0
 
-    # Claude Code czysci cache przy zmianie konta, ale nie ufamy temu na slowo.
+    # Claude Code clears the cache on an account change, but that is not taken on trust.
     if acct and cached.get("accountUuid") and cached["accountUuid"] != acct.get("accountUuid"):
         log_local({"t": round(time.time(), 3), "ok": False, "skip": "cache-innego-konta"})
         return 0
@@ -1603,28 +1634,31 @@ def main():
     usage, covered = merge(cached["utilization"], fresh)
     usage, dropped = sanitize(usage, covered, time.time())
 
-    # captured_at to moment POMIARU, nigdy now(). Uruchomienie sondy niczego nie
-    # potwierdza — odczyt 4-minutowego cache znaczy tylko tyle, ze wartosc byla taka
-    # 4 minuty temu. Podstawienie tu now() zawyzaloby swiezosc w UI.
+    # captured_at is the moment of MEASUREMENT, never now(). Starting the probe confirms
+    # nothing — reading a 4-minute-old cache only means the value was that 4 minutes ago.
+    # Substituting now() here would overstate freshness in the UI.
     #
-    # ZAWSZE `cache_at`, nigdy blend z `fresh_at`. Pomiar sklada sie z DWOCH zrodel o
-    # roznym wieku, a `spend` i `extra_usage` pochodza WYLACZNIE z cache — jeden stempel
-    # wziety ze zrzutu odmladzal je o cala roznice wiekow (do godziny). Backend rozstrzyga
-    # po nim "ktory odczyt jest biezacy", wiec maszyna ze starszym cache, ale swiezszym
-    # zrzutem cofala stan `spend:org` i `extra:usage` — jedynych dwoch serii, ktore granicy
-    # okna nie maja nigdy, wiec guard monotonicznosci ich nie broni.
+    # ALWAYS `cache_at`, never a blend with `fresh_at`. A measurement is made of TWO sources
+    # of different age, and `spend` and `extra_usage` come ONLY from the cache — a single
+    # stamp taken from the dump rejuvenated them by the whole age difference (up to an
+    # hour). The backend decides "which reading is current" by it, so a machine with an
+    # older cache but a fresher dump rolled back the state of `spend:org` and `extra:usage`
+    # — the only two series that never have a window boundary, so the monotonicity guard
+    # does not defend them.
     #
-    # Wiek zrzutu jedzie osobno (`fresh_at` + `fresh_covered`); to backend sklada z tego
-    # date per seria, bo tylko on wie, ktora seria czym jest.
+    # The dump's age travels separately (`fresh_at` + `fresh_covered`); it is the backend
+    # that assembles a per-series date from it, because only it knows which series is what.
     #
-    # Rozdzialu "pierwsza obserwacja tej wartosci" (wykres) od "ostatnie potwierdzenie"
-    # (swiezosc) NIE robimy tutaj: sonda nie zna poprzedniej wartosci serii. Robi to
-    # backend, ktory ma series_state — patrz confirmed_at w backend/app/services/ingest.py.
+    # Separating "the first observation of this value" (the chart) from "the last
+    # confirmation" (freshness) is NOT done here: the probe does not know a series' previous
+    # value. The backend does it, holding series_state — see confirmed_at in
+    # backend/app/services/ingest.py.
     captured = cache_at
 
-    # Jak w post(): import lokalny, bo tu jestesmy juz za throttlem. NIE przenosic
-    # w gore — uzycie przed ta linia to UnboundLocalError, ktory `except Exception`
-    # w :764 polknie w cisze i maszyna przestanie raportowac bez jednego objawu.
+    # As in post(): a local import, because this point is already past the throttle. Do NOT
+    # move it up — a use before this line is an UnboundLocalError, which the `except
+    # Exception` at :764 swallows into silence and the machine stops reporting without
+    # a single symptom.
     import socket, hashlib
 
     record = {
@@ -1653,44 +1687,45 @@ def main():
                  "session_id": hook.get("session_id"), "cwd": hook.get("cwd")},
         "measurement": {
             "source": "cli_merged" if fresh else "cli_usage_cache",
-            "probe_at": _iso(time.time()),  # kiedy sonda sie uruchomila — DIAGNOSTYKA,
-                                            # nie mylic z captured_at; roznica tych dwoch
-                                            # to wlasnie opoznienie pomiaru
+            "probe_at": _iso(time.time()),  # when the probe started — DIAGNOSTICS, not to
+                                            # be confused with captured_at; the difference
+                                            # between the two is the measurement lag
             "cache_age_s": round(cache_age),
-            # Powod z cache KLIENTA. DIAGNOSTYKA: rozroznia wyczerpana wlasna pule od
-            # sufitu organizacji, ale werdykt backendu stoi na `usage.spend`, bo tylko
-            # ono jest spojne z reszta tej samej odpowiedzi. Nie idzie do `usage` —
-            # parse_usage iteruje tam klucze najwyzszego poziomu i wartosc nie-slownikowa
-            # zglosilaby drift schematu przy kazdym pomiarze.
+            # The reason from the CLIENT cache. DIAGNOSTICS: it tells an exhausted own pool
+            # apart from the organization ceiling, but the backend's verdict rests on
+            # `usage.spend`, because only that is consistent with the rest of the same
+            # response. It does not go into `usage` — parse_usage iterates the top-level
+            # keys there and a non-dict value would report schema drift on every measurement.
             "extra_usage_disabled_reason": eu_reason,
             "fresh_age_s": round(time.time() - fresh_at) if fresh_at else None,
-            # Czas zrzutu i lista serii, ktore z niego wzialy wartosc. Backend datuje po
-            # nich TE serie, a reszte po `captured_at` (czyli po cache). Identyfikatory
-            # musza sie zgadzac z `parsing.probe_key` — patrz `_limit_key`.
+            # The dump's time and the list of series that took their value from it. The
+            # backend dates THOSE series by them, and the rest by `captured_at` (i.e. by
+            # the cache). The identifiers must agree with `parsing.probe_key` — see
+            # `_limit_key`.
             "fresh_at": _iso(fresh_at) if (fresh and fresh_at) else None,
             "fresh_covered": covered,
-            "fresh_skip": fresh_skip,       # czemu zrzut stdout nie zostal uzyty
-            "dropped": dropped,             # co odrzucil sanitize i dlaczego
+            "fresh_skip": fresh_skip,       # why the stdout dump was not used
+            "dropped": dropped,             # what sanitize rejected, and why
             "spawn_error": spawn_err,
         },
         "usage": usage,
     }
 
-    log_local(dict(record, t=round(time.time(), 3), ok=True))   # lokalny log niezaleznie od POST
+    log_local(dict(record, t=round(time.time(), 3), ok=True))   # local log regardless of POST
 
     if not cfg.get("ingest_url") or not cfg.get("ingest_token"):
-        return 0                                   # tryb "tylko lokalnie" — brak konfiguracji
+        return 0                                   # "local only" mode — no configuration
 
     backlog, spool_total = read_spool(MAX_BACKLOG_PER_REQUEST)
 
-    # KOTWICA WIEKU. Backend liczy z niej `offset = arrived_at - sent_at` i datuje pomiar
-    # jako `min(ts + offset, arrived_at)`, czyli `received_at - wiek`. Zegar scienny tej
-    # maszyny nie wchodzi do rachunku — liczy sie tylko roznica `sent_at - ts`, a ta jest
-    # w obrebie JEDNEGO zegara i dlatego wiarygodna.
+    # THE AGE ANCHOR. The backend computes `offset = arrived_at - sent_at` from it and dates
+    # the measurement as `min(ts + offset, arrived_at)`, that is `received_at - age`. The
+    # machine's wall clock does not enter the arithmetic — only the difference `sent_at - ts`
+    # counts, and that one is within a SINGLE clock and therefore trustworthy.
     #
-    # Ustawiane tuz przed wysylka i zapisywane TAKZE w `record`, ktory idzie do spoola:
-    # dla wpisu ze spoola `sent_at` jest z chwili nieudanej proby, wiec wiek liczy sie sam
-    # i we wlasciwym momencie, bez przeliczania czegokolwiek po stronie klienta.
+    # Set just before sending and written ALSO into `record`, which goes to the spool: for
+    # a spooled entry `sent_at` comes from the moment of the failed attempt, so the age
+    # computes itself, at the right moment, without recomputing anything on the client side.
     record["measurement"]["sent_at"] = _iso(time.time())
 
     payload = dict(record)
@@ -1716,4 +1751,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception:
-        sys.exit(0)          # sonda nie ma prawa zepsuc sesji
+        sys.exit(0)          # the probe has no right to break the session
