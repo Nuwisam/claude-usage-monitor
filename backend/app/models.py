@@ -1,16 +1,16 @@
-"""Model danych.
+"""Data model.
 
-Zasada naczelna: **otwarty zbior serii**. Krok 0 pokazal 17 kluczy najwyzszego poziomu
-w odpowiedzi /api/oauth/usage, z czego 5 nie bylo znanych ani z walidatora w binarce
-Claude Code, ani z repo referencyjnego (amber_ladder, iguana_necktie, nimbus_quill,
-tangelo, omelette_promotional). Zahardkodowana lista bucketow bylaby bledna juz w dniu
-napisania — dlatego serie sa wierszami w tabeli, a nie kolumnami.
+Governing rule: **an open set of series**. Step 0 showed 17 top-level keys in the
+/api/oauth/usage response, 5 of which were known neither from the validator in the Claude
+Code binary nor from the reference repo (amber_ladder, iguana_necktie, nimbus_quill,
+tangelo, omelette_promotional). A hardcoded list of buckets would have been wrong on the
+day it was written — which is why series are rows in a table, not columns.
 
-Cztery zrodla serii, wszystkie sprowadzone do wspolnego "procent zuzycia 0-100":
-  bucket       - klucz najwyzszego poziomu z polem `utilization`  (five_hour, seven_day, ...)
-  limit        - wpis w `limits[]` z polem `percent`               (session, weekly_all, ...)
-  extra_usage  - obiekt `extra_usage`, pole `utilization`
-  spend        - obiekt `spend`, pole `percent`  <-- na koncie Team to JEST wiazacy limit
+Four sources of series, all reduced to a common "usage percent 0-100":
+  bucket       - top-level key with a `utilization` field     (five_hour, seven_day, ...)
+  limit        - entry in `limits[]` with a `percent` field   (session, weekly_all, ...)
+  extra_usage  - the `extra_usage` object, `utilization` field
+  spend        - the `spend` object, `percent`  <-- on a Team account this IS the binding limit
 """
 from datetime import datetime
 
@@ -26,13 +26,13 @@ class Base(DeclarativeBase):
     pass
 
 
-# Warianty zamiast typow z dialektu wprost — dzieki temu modele daja sie zaladowac
-# takze pod SQLite (testy), a na MariaDB dostaja DATETIME(6) z mikrosekundami.
+# Variants instead of dialect types used directly — thanks to that the models can also be
+# loaded under SQLite (tests), while on MariaDB they get DATETIME(6) with microseconds.
 DT6 = DateTime().with_variant(mysql.DATETIME(fsp=6), "mysql")
 LONGTEXT = Text().with_variant(mysql.LONGTEXT, "mysql")
 MEDIUMTEXT = Text().with_variant(mysql.MEDIUMTEXT, "mysql")
-# SQLite robi autoincrement wylacznie na INTEGER (alias rowid), nie na BIGINT.
-# Na MariaDB zostaje BIGINT — tylko testy dostaja INTEGER.
+# SQLite does autoincrement only on INTEGER (a rowid alias), not on BIGINT.
+# On MariaDB it stays BIGINT — only the tests get INTEGER.
 PK_BIG = BigInteger().with_variant(Integer, "sqlite")
 
 
@@ -40,20 +40,20 @@ def _dt(**kw) -> Mapped[datetime]:
     return mapped_column(DT6, **kw)
 
 
-# --------------------------------------------------------------------------- konta
+# --------------------------------------------------------------------------- accounts
 class Account(Base):
-    """Kluczem naturalnym jest account_uuid z oauthAccount, NIE label.
+    """The natural key is account_uuid from oauthAccount, NOT the label.
 
-    Powod: na jednej maszynie przelaczasz sie miedzy kontami przez /login, a settings.json
-    jest wspolny. Statyczny label w konfiguracji przypisywalby polowe probek do zlego konta
-    i cicho zatruwal historie obu — bez zadnego widocznego objawu.
+    Reason: on a single machine accounts are switched through /login, and settings.json is
+    shared. A static label in the configuration would assign half the samples to the wrong
+    account and quietly poison the history of both — with no visible symptom at all.
     """
     __tablename__ = "accounts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     account_uuid: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
 
-    label: Mapped[str | None] = mapped_column(String(100))          # edytowalna nazwa wlasna
+    label: Mapped[str | None] = mapped_column(String(100))          # editable custom name
     email: Mapped[str | None] = mapped_column(String(255))
     display_name: Mapped[str | None] = mapped_column(String(255))
     color: Mapped[str | None] = mapped_column(String(16))
@@ -79,16 +79,16 @@ class Account(Base):
 
 
 class Machine(Base):
-    """Maszyna == token ingestu. Sluzy do unieważnienia pojedynczej maszyny i do
-    odpowiedzi na pytanie 'skad przyszly te dane'."""
+    """Machine == ingest token. Serves to revoke a single machine and to answer the
+    question 'where did this data come from'."""
     __tablename__ = "machines"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     host: Mapped[str | None] = mapped_column(String(128))
-    # cc_version usuniete: pochodzilo z UA_VERSION sondy, czyli ze stalej "2.1.215"
-    # zaszytej w kodzie. Kolumna trzymala te sama wartosc dla wszystkich maszyn i nie
-    # mowila nic o wersji faktycznie tam dzialajacej.
+    # cc_version removed: it came from the probe's UA_VERSION, that is from the constant
+    # "2.1.215" baked into the code. The column held the same value for every machine and
+    # said nothing about the version actually running there.
     script_version: Mapped[int | None] = mapped_column(Integer)
     first_seen_at: Mapped[datetime] = _dt(nullable=False, server_default=func.now(6))
     last_seen_at: Mapped[datetime | None] = _dt()
@@ -96,9 +96,9 @@ class Machine(Base):
 
 
 class MachineAccount(Base):
-    """Ktora maszyna raportowala ktore konto. Zamiast zakazywac (statyczna lista kont per
-    token by sie rozjechala, skoro na jednej maszynie uzywasz obu), wykrywamy: pierwsze
-    wystapienie nowej pary generuje zdarzenie new_account_for_token."""
+    """Which machine reported which account. Instead of forbidding it (a static list of
+    accounts per token would drift apart, since both are used on one machine), we detect:
+    the first occurrence of a new pair generates a new_account_for_token event."""
     __tablename__ = "machine_accounts"
 
     machine_id: Mapped[int] = mapped_column(ForeignKey("machines.id"), primary_key=True)
@@ -108,7 +108,7 @@ class MachineAccount(Base):
     samples: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
 
-# --------------------------------------------------------------------------- serie
+# --------------------------------------------------------------------------- series
 SeriesSource = Enum("bucket", "limit", "extra_usage", "spend", name="series_source")
 
 
@@ -130,17 +130,17 @@ class UsageSeries(Base):
 
     first_seen_at: Mapped[datetime] = _dt(nullable=False, server_default=func.now(6))
     last_seen_at: Mapped[datetime | None] = _dt()
-    # Seria widziana tylko jako null (np. seven_day_opus na koncie bez Opusa) — rejestrujemy,
-    # ale oznaczamy, zeby UI nie zasmiecalo sie pustymi wykresami.
+    # A series seen only as null (e.g. seven_day_opus on an account without Opus) — we register
+    # it, but mark it, so that the UI does not clutter itself up with empty charts.
     ever_non_null: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
 # --------------------------------------------------------------------------- ingest
 class RawPayload(Base):
-    """Adresowane trescia. Sonda odpytuje co ~120 s, a odpowiedz przy bezczynnosci jest
-    bajt-identyczna — hash zwija to do jednego wiersza i licznika. To dedup, NIE kompaktowanie:
-    kazdy batch nadal wskazuje na swoje dokladne body."""
+    """Content-addressed. The probe polls every ~120 s, and while nothing is happening the
+    response is byte-identical — the hash folds that into one row and a meter. This is dedup,
+    NOT compaction: every batch still points at its own exact body."""
     __tablename__ = "raw_payloads"
 
     id: Mapped[int] = mapped_column(PK_BIG, primary_key=True, autoincrement=True)
@@ -152,8 +152,8 @@ class RawPayload(Base):
 
 
 class IngestBatch(Base):
-    """Jeden wiersz na request. Kluczowe dla rozroznienia 'cisza klienta' od 'cisza w danych' —
-    bez tego zepsuty klient wyglada identycznie jak brak aktywnosci, a UI pokazuje falszywe 0%."""
+    """One row per request. Essential for telling 'client silence' from 'silence in the data' —
+    without it a broken client looks exactly like no activity, and the UI shows a false 0%."""
     __tablename__ = "ingest_batches"
 
     id: Mapped[int] = mapped_column(PK_BIG, primary_key=True, autoincrement=True)
@@ -167,16 +167,16 @@ class IngestBatch(Base):
     hook_event: Mapped[str | None] = mapped_column(String(64))
     session_id: Mapped[str | None] = mapped_column(String(64))
 
-    # http_status / request_id / rl_status usuniete wraz z wersja 3 sondy: opisywaly
-    # odpowiedz HTTP od Anthropic na ZADANIE SONDY, a sonda zadnego juz nie wysyla.
-    # W zamian — skad wziety zostal pomiar i jak stary byl w chwili wyslania.
+    # http_status / request_id / rl_status removed together with version 3 of the probe: they
+    # described the HTTP response from Anthropic to the PROBE'S REQUEST, and the probe sends
+    # none any more. In their place — where the measurement came from and how old it was when sent.
     measurement_source: Mapped[str | None] = mapped_column(String(32))
     cache_age_s: Mapped[int | None] = mapped_column(Integer)
     fresh_age_s: Mapped[int | None] = mapped_column(Integer)
     probe_ms: Mapped[int | None] = mapped_column(Integer)
-    # `arrived_at - measurement.sent_at` uzyte dla TEGO zadania. Razem z `received_at`
-    # i `limit_samples.client_captured_at` czyni wyliczony `captured_at` odtwarzalnym
-    # z bazy — inaczej zostaje sam wynik, bez dzialania.
+    # `arrived_at - measurement.sent_at` as used for THIS request. Together with `received_at`
+    # and `limit_samples.client_captured_at` it makes the computed `captured_at` reproducible
+    # from the database — otherwise only the result is left, without the arithmetic.
     clock_offset_s: Mapped[int | None] = mapped_column(Integer)
 
     raw_payload_id: Mapped[int | None] = mapped_column(ForeignKey("raw_payloads.id"))
@@ -194,52 +194,54 @@ class IngestBatch(Base):
 
 
 class LimitSample(Base):
-    """Tabela faktow.
+    """The fact table.
 
-    ODSTEPSTWO OD PLANU, swiadome: plan zakladal klucz glowny zlozony i klastrujacy
-    (account_id, series_id, captured_at, id) dla ciaglego range scanu. Przy realnym wolumenie —
-    rzedu tysiecy wierszy dziennie, bo sonda ma throttle 120 s i dziala tylko gdy pracujesz —
-    to przedwczesna optymalizacja, ktora komplikuje mapowanie ORM i AUTO_INCREMENT w InnoDB.
-    Prosty PK + zlozony indeks daje ten sam plan zapytania przy tej skali.
+    A DEPARTURE FROM THE PLAN, a deliberate one: the plan assumed a composite, clustering
+    primary key (account_id, series_id, captured_at, id) for a contiguous range scan. At the
+    real volume — on the order of thousands of rows a day, because the probe is throttled to
+    120 s and runs only while work is going on — that is premature optimization that complicates
+    the ORM mapping and AUTO_INCREMENT in InnoDB. A simple PK + a composite index gives the same
+    query plan at this scale.
     """
     __tablename__ = "limit_samples"
 
     id: Mapped[int] = mapped_column(PK_BIG, primary_key=True, autoincrement=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), nullable=False)
     series_id: Mapped[int] = mapped_column(ForeignKey("usage_series.id"), nullable=False)
-    # Moment pomiaru w czasie SERWERA: `min(client_captured_at + offset, received_at)`.
+    # The moment of measurement in SERVER time: `min(client_captured_at + offset, received_at)`.
     captured_at: Mapped[datetime] = _dt(nullable=False)
-    # Ten sam moment w czasie KLIENTA, przed offsetem. Nie jest to duplikat: od czasu
-    # datowania serwerowego `captured_at` jest funkcja ZADANIA, wiec powtorka tego samego
-    # wpisu ze spoola w innym zadaniu ma inny `captured_at`. Guard idempotencji potrzebuje
-    # czesci, ktora jest funkcja samego wpisu — i to jest wlasnie ta kolumna.
+    # The same moment in CLIENT time, before the offset. Not a duplicate: since server-side
+    # dating, `captured_at` is a function of the REQUEST, so a repeat of the same spooled entry
+    # in another request has a different `captured_at`. The idempotency guard needs a part that
+    # is a function of the entry itself — and that is exactly this column.
     client_captured_at: Mapped[datetime | None] = _dt()
     batch_id: Mapped[int] = mapped_column(ForeignKey("ingest_batches.id"), nullable=False)
 
-    # `probe` = historyczne dane sprzed wersji 3 sondy, gdy sama wolala /api/oauth/usage.
-    # Zostaje w enumie, bo te wiersze nadal sa w bazie i nadal sa poprawnymi pomiarami.
-    # `statusline` i `ratelimit_headers` nigdy nie zostaly wdrozone — statusline nie dziala
-    # w rozszerzeniu VS Code (#55643, zamkniete not_planned), a naglowki wymagalyby
-    # proxy MITM na wlasnym ruchu. Usuniete, zeby enum nie obiecywal nieistniejacych zrodel.
+    # `probe` = historical data from before version 3 of the probe, when it called
+    # /api/oauth/usage itself. It stays in the enum, because those rows are still in the
+    # database and are still valid measurements. `statusline` and `ratelimit_headers` were
+    # never shipped — statusline does not work in the VS Code extension (#55643, closed as
+    # not_planned), and the headers would need a MITM proxy on one's own traffic. Removed so
+    # that the enum does not promise sources that do not exist.
     source: Mapped[str] = mapped_column(
         Enum("probe", "cli_merged", "cli_usage_cache", name="sample_source"),
         nullable=False, default="cli_merged",
     )
-    # ZAWSZE 0..100 po normalizacji. Skala zrodlowa roznila sie (naglowki daja 0.0-1.0),
-    # dlatego kolumna `source` mowi skad przyszlo, a wartosc jest juz ujednolicona.
+    # ALWAYS 0..100 after normalization. The source scale differed (headers give 0.0-1.0),
+    # which is why the `source` column says where it came from, and the value is already unified.
     utilization: Mapped[float | None] = mapped_column(Numeric(7, 4))
     resets_at: Mapped[datetime | None] = _dt()
 
     is_active: Mapped[bool | None] = mapped_column(Boolean)   # limits[].is_active
-    severity: Mapped[str | None] = mapped_column(String(32))  # klasyfikacja od Anthropic
+    severity: Mapped[str | None] = mapped_column(String(32))  # classification from Anthropic
     stale_read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     session_id: Mapped[str | None] = mapped_column(String(64))
     extra: Mapped[dict | None] = mapped_column(JSON)
 
     __table_args__ = (
         Index("ix_samples_series_time", "account_id", "series_id", "captured_at"),
-        # Pod guard idempotencji backlogu. Bez niego kazde sprawdzenie to skan wszystkich
-        # wierszy serii — ~7 razy na wpis, do 200 wpisow, POD GLOBALNYM LOCKIEM zapisu.
+        # For the backlog idempotency guard. Without it every check is a scan of all the
+        # rows of the series — ~7 times per entry, up to 200 entries, UNDER THE GLOBAL write LOCK.
         Index("ix_samples_series_client_time", "account_id", "series_id",
               "client_captured_at"),
         Index("ix_samples_batch", "batch_id"),
@@ -248,8 +250,8 @@ class LimitSample(Base):
 
 
 class SeriesState(Base):
-    """Goracy wiersz per (konto, seria). Dzieki niemu /api/status czyta kilkanascie wierszy
-    zamiast robic groupwise-max po calej tabeli faktow. Cache — odtwarzalny z limit_samples."""
+    """The hot row per (account, series). Thanks to it /api/status reads a dozen-odd rows
+    instead of a groupwise-max over the whole fact table. A cache — rebuildable from limit_samples."""
     __tablename__ = "series_state"
 
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), primary_key=True)
@@ -258,13 +260,13 @@ class SeriesState(Base):
     last_sample_id: Mapped[int | None] = mapped_column(BigInteger)
     last_captured_at: Mapped[datetime | None] = _dt()
 
-    # Trzy rozne pytania, na ktore jedno pole odpowiadac nie moze:
-    #   last_captured_at  - kiedy zapisano ostatnia PROBKE (dedup pomija niezmienione)
-    #   last_confirmed_at - kiedy ostatnio POTWIERDZONO, ze wartosc nadal ta sama
-    #   value_since       - odkad wartosc jest niezmienna
-    # Bez last_confirmed_at stabilny odczyt wyglada identycznie jak zerwana lacznosc:
-    # dedup nie zapisuje probki, wiec last_captured_at stoi i UI melduje "pomiar sprzed
-    # 6 minut", mimo ze klient potwierdzil te wartosc 20 sekund temu.
+    # Three different questions that one field cannot answer:
+    #   last_captured_at  - when the last SAMPLE was written (dedup skips unchanged ones)
+    #   last_confirmed_at - when it was last CONFIRMED that the value is still the same
+    #   value_since       - since when the value has been unchanged
+    # Without last_confirmed_at a stable reading looks exactly like a broken connection:
+    # dedup writes no sample, so last_captured_at stands still and the UI reports "a measurement
+    # from 6 minutes ago", even though the client confirmed that value 20 seconds ago.
     last_confirmed_at: Mapped[datetime | None] = _dt()
     value_since: Mapped[datetime | None] = _dt()
 
