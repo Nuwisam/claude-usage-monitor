@@ -1,10 +1,10 @@
-"""CLI panelu.
+"""Panel CLI.
 
-    python -m panel                 petla (to samo, co robi zadanie harmonogramu)
-    python -m panel --list          jakie moduly widac i na ktorych portach
-    python -m panel --identify 0    namaluj wielki znak na wskazanym module
-    python -m panel --probe         karta testowa: kolory, paski, ogonki
-    python -m panel --once          jedna klatka z prawdziwych danych i wyjscie
+    python -m panel                 loop (same as the scheduled task runs)
+    python -m panel --list          which screens are visible and on what ports
+    python -m panel --identify 0    paint a big character on the given screen
+    python -m panel --probe         test card: colors, bars, descenders
+    python -m panel --once          one frame of real data, then exit
 """
 import argparse
 import sys
@@ -108,9 +108,9 @@ def cmd_identify(args):
 
 
 def cmd_probe(args):
-    """Karta testowa. Odpowiada na pytania, ktore trzeba miec zamkniete, zanim
-    zaufa sie ukladowi: czy panel jest wolny, czy typografia jest czytelna
-    z biurka i czy ogonki nie sa obciete."""
+    """Test card. Answers the questions that need to be settled before trusting
+    the setup: is the panel free, is the typography readable from the desk,
+    and are descenders left uncut."""
     from .view import SeriesView
 
     cfg, opts = _options(args)
