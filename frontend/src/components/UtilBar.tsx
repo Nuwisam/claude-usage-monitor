@@ -1,11 +1,11 @@
 import type { SeriesView } from "../lib/freshness";
 
-/** Tor wypelnienia — DWA rysunki, nie cztery.
+/** The fill track — TWO drawings, not four.
  *
- *  Kazdy realny pomiar wyglada tak samo, niezaleznie od wieku: swiezosc niesie etykieta
- *  odczytu pod wierszem, a nie kolor wypelnienia. Kreskowany kontur zostaje wylacznie dla
- *  przypadkow, w ktorych LICZBY NIE MA — wywnioskowanego resetu (kikut przy zerze) i serii,
- *  ktorej nigdy nie zmierzono (skos). Pusty tor czytaloby sie tam jako zero. */
+ *  Every real measurement looks the same, regardless of age: freshness is carried by the
+ *  reading label under the row, not by the color of the fill. The dashed outline stays solely
+ *  for the cases where THERE IS NO NUMBER — an inferred reset (a stub at zero) and a series
+ *  that has never been measured (hatching). An empty track would read there as zero. */
 export function UtilBar({ v, hero = false }: { v: SeriesView; hero?: boolean }) {
   return (
     <div className={hero ? "bar bar-hero" : "bar"} aria-hidden="true">
