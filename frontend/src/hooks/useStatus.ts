@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { fetchStatus } from "../api/client";
 import { serverOffsetMs } from "../lib/time";
 
-/** /status co 15 s — tempo z handoutu. Dane i tak przyrastaja tylko wtedy, gdy pracujesz;
- *  czestsze pytanie nic nie kupuje, a kazde odpytanie przechodzi przez brame autoryzacji. */
+/** /status every 15 s — the pace from the handout. The data grows only while you are working
+ *  anyway; asking more often buys nothing, and every request passes the authorization gate. */
 export const STATUS_REFETCH_MS = 15_000;
 
 /** With SSE connected the poll stops being the way new data arrives and becomes a safety
@@ -53,8 +53,8 @@ export function useStatus() {
   });
 }
 
-/** Tykanie sekundowe do countdownow. Osobno od zapytania, bo countdown ma iść co sekunde,
- *  a dane przychodza co 15 s — inaczej licznik staby skokami po 15 s. */
+/** A one-second tick for the countdowns. Separate from the query, because a countdown has to
+ *  run every second while data arrives every 15 s — otherwise the meter would jump by 15 s. */
 export function useTick(intervalMs = 1000): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -64,8 +64,8 @@ export function useTick(intervalMs = 1000): number {
   return now;
 }
 
-/** Zegar serwera: przesuniecie liczone raz na odpowiedz, potem tykane lokalnie.
- *  Wszystkie countdowny w UI licza sie z tego, nigdy z `new Date()`. */
+/** Server clock: the offset is computed once per response, then ticked locally.
+ *  Every countdown in the UI counts from this, never from `new Date()`. */
 export function useServerClock(serverNow: string | undefined): number {
   const tick = useTick();
   const [offset, setOffset] = useState(0);

@@ -34,11 +34,11 @@ function valueOf(r: CascadeRung): string {
       return r.utilization !== null && r.utilization >= 100 ? `${p}% — exhausted` : `${p}%`;
     }
     case "credits": {
-      const kwoty = amounts(r);
+      const amountsForRung = amounts(r);
       // Amounts beat the state: when we know them, the rung shows NUMBERS, without a word
       // of commentary and without a strikethrough. The withdrawal reason belongs to the
       // hard block — that is the rung which changed because of it.
-      if (kwoty) return kwoty;
+      if (amountsForRung) return amountsForRung;
       if (r.state === "off") return "off";
       return pct(r.utilization) ?? "on";
     }
