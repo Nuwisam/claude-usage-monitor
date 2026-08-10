@@ -1,14 +1,14 @@
-"""Backlog, granice transakcji i idempotencja — to, co da sie sprawdzic bez MariaDB.
+"""Backlog, transaction boundaries and idempotence — what can be checked without MariaDB.
 
-CZEGO TEN PLIK NIE POKRYWA, swiadomie i wprost:
-  * samego bledu 1020 — jest specyficzny dla MariaDB z innodb_snapshot_isolation=ON,
-    a suite chodzi na SQLite;
-  * PRAWDZIWEJ rownoleglosci — kazdy test ponizej jest SEKWENCYJNY. Ostatni pokazuje
-    SKUTEK przeplotu (cudzy commit w szczelinie), nie sam przeplot;
-  * utraty odpowiedzi po stronie sondy — to jest po drugiej stronie HTTP.
+WHAT THIS FILE DELIBERATELY AND EXPLICITLY DOES NOT COVER:
+  * error 1020 itself — it is specific to MariaDB with innodb_snapshot_isolation=ON,
+    and the suite runs on SQLite;
+  * REAL concurrency — every test below is SEQUENTIAL. The last one shows the EFFECT
+    of an interleaving (someone else's commit in the gap), not the interleaving itself;
+  * a response lost on the probe's side — that is on the other side of HTTP.
 
-Uwaga na kontrakt: `IngestResult` to `CamelModel`, a FastAPI serializuje po aliasie, wiec
-na drucie jest `backlogAccepted`, nie `backlog_accepted`. Sonda czyta to samo
+Mind the contract: `IngestResult` is a `CamelModel` and FastAPI serializes by alias, so
+on the wire it is `backlogAccepted`, not `backlog_accepted`. The probe reads the same
 (client/usage-probe.py, `parsed.get("backlogAccepted")`).
 """
 import asyncio
@@ -26,28 +26,28 @@ from app.routers.ingest import _ingest_tx
 from app.services.ingest import ingest_one
 from tests.test_ingest_e2e import db, payload, utcnow, with_util   # noqa: F401
 
-# Wpis, ktorego `ingest_one` nie przetrawi: `payload.get("account") or {}` przepuszcza
-# liczbe (jest prawdziwa), a `acct.get("uuid")` na niej rzuca AttributeError. Bez
-# monkeypatcha, bo to jest realny ksztalt "trwale zlego wpisu".
+# An entry `ingest_one` cannot digest: `payload.get("account") or {}` lets a number
+# through (it is truthy), and `acct.get("uuid")` on it raises AttributeError. No
+# monkeypatch, because this is the real shape of a "permanently bad entry".
 ZLY_WPIS = {"account": 123}
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def _swieza_blokada(monkeypatch):
-    """`asyncio.Lock` na poziomie modulu wiaze sie z petla zdarzen przy pierwszym
-    KONFLIKCIE (od 3.10 `acquire()` ma bezkolizyjna szybka sciezke przed `_get_loop()`),
-    a pytest-asyncio daje kazdemu testowi WLASNA petle. W produkcji proces ma jedna petle
-    na cale zycie, wiec lock modulowy jest tam poprawny; konfliktu moze dzis dorobic sie
-    tylko ten plik, wiec fixture siedzi TUTAJ, a nie w globalnym conftest.py, ktorego to
-    repo nie ma. Gdyby konfliktowal jeszcze jakis inny plik testowy, to wlasnie ta fixture
-    nalezy wtedy przeniesc do conftest.py."""
+    """A module-level `asyncio.Lock` binds to the event loop at the first CONFLICT (since
+    3.10 `acquire()` has a contention-free fast path ahead of `_get_loop()`), while
+    pytest-asyncio gives every test its OWN loop. A production process keeps one loop for
+    its whole life, so a module-level lock is correct there; today only this file can
+    manage to cause a conflict, so the fixture sits HERE and not in a global conftest.py,
+    which this repo does not have. Should some other test file start conflicting too, this
+    is the fixture to move to conftest.py."""
     monkeypatch.setattr(ingest_router, "_WRITE_LOCK", asyncio.Lock())
 
 
 @pytest_asyncio.fixture
 async def api(db, monkeypatch):
-    """Prawdziwy endpoint, bo petla backlogu zyje w routerze, nie w `ingest_one`.
-    Bez latania SSO — `/api/ingest` wisi tylko na `require_ingest_token`."""
+    """The real endpoint, because the backlog loop lives in the router, not in `ingest_one`.
+    No SSO patching — `/api/ingest` hangs off `require_ingest_token` alone."""
     import app.main as main
     from app.db import get_session
 
@@ -69,48 +69,51 @@ async def ile(db, model) -> int:
 
 
 async def probki_o(db, ts) -> int:
-    """Probki dokladnie na tym captured_at. Goly licznik calej tabeli tu nie wystarczy:
-    kazde zadanie dopisuje jeszcze pomiar BIEZACY, wiec suma rosnie tak czy tak."""
+    """Samples exactly at that captured_at. A bare count over the whole table is not enough
+    here: every request also appends the CURRENT measurement, so the total grows either way."""
     return (await db.execute(
         select(func.count()).select_from(LimitSample)
         .where(LimitSample.captured_at == ts)
     )).scalar_one()
 
 
-# ------------------------------------------------------- ksiegowanie `backlogAccepted`
+# -------------------------------------------------------- `backlogAccepted` accounting
 async def test_wpis_niebedacy_obiektem_jest_liczony(api, db):
-    """Prefiks, nie licznik sukcesow: bez inkrementu sonda obcielaby zly kawalek spoola."""
+    """A prefix, not a success count: without the increment the probe would cut the wrong
+    piece off the spool."""
     now = utcnow()
     p = payload(captured_at=now)
     p["backlog"] = ["nie-obiekt", payload(captured_at=now - timedelta(minutes=5))]
     r = await post(api, p)
     assert r.status_code == 200
-    # 2, nie 1: pozycji 0 nie da sie zapisac nigdy, wiec przyznajemy sie do niej.
+    # 2, not 1: position 0 can never be written, so the count admits to it anyway.
     assert r.json()["backlogAccepted"] == 2
 
 
 async def test_stop_na_pierwszym_niezapisanym_wpisie(api, db):
-    """`break`, nie `continue` — inaczej `accepted` obejmuje wpis, ktorego nie zapisalismy."""
+    """`break`, not `continue` — otherwise `accepted` covers an entry that was never written."""
     now = utcnow()
     p = payload(captured_at=now)
     p["backlog"] = [
-        payload(captured_at=now - timedelta(minutes=9)),   # 0 — przejdzie
-        ZLY_WPIS,                                          # 1 — padnie
-        payload(captured_at=now - timedelta(minutes=3)),   # 2 — NIE moze byc policzony
+        payload(captured_at=now - timedelta(minutes=9)),   # 0 — passes
+        ZLY_WPIS,                                          # 1 — fails
+        payload(captured_at=now - timedelta(minutes=3)),   # 2 — must NOT be counted
     ]
     r = await post(api, p)
     assert r.status_code == 200
     assert r.json()["backlogAccepted"] == 1
-    # Zywy pomiar + wpis 0. Wpis 1 dolecial do `db.add(batch)` i `flush()`, ale rollback
-    # jego transakcji go zabral; wpisu 2 nie tkneliesmy. Ogon wroci nastepnym zadaniem.
+    # The live measurement + entry 0. Entry 1 reached `db.add(batch)` and `flush()`, but
+    # its transaction's rollback took it away; entry 2 was never touched. The tail comes
+    # back with the next request.
     assert await ile(db, IngestBatch) == 2
 
 
 async def test_blad_w_backlogu_nie_cofa_pomiaru_zywego(api, db):
-    """Wlasna transakcja per wpis. Kluczowa jest tu asercja na LICZBIE batchy: bez
-    rollbacku wiersz batcha zlego wpisu zostaje w sesji i wspolny `commit()` na koncu
-    zadania zapisuje go razem z resztą — czyli w bazie ląduje batch pomiaru, ktorego
-    nigdy nie bylo. Same `ok`/`backlogAccepted`/liczba probek tego nie rozroznia."""
+    """One transaction per entry. The key assertion here is the one on the NUMBER of
+    batches: without a rollback the bad entry's batch row stays in the session and the
+    shared `commit()` at the end of the request writes it along with the rest — a batch
+    lands in the database for a measurement that never happened. `ok`/`backlogAccepted`/the
+    sample count alone cannot tell that apart."""
     p = payload()
     p["backlog"] = [ZLY_WPIS]
     r = await post(api, p)
@@ -118,17 +121,18 @@ async def test_blad_w_backlogu_nie_cofa_pomiaru_zywego(api, db):
     assert r.json()["ok"] is True
     assert r.json()["backlogAccepted"] == 0
     assert await ile(db, LimitSample) > 0
-    # 1, nie 2: batch zlego wpisu zostal cofniety razem z jego transakcja.
+    # 1, not 2: the bad entry's batch was rolled back along with its transaction.
     assert await ile(db, IngestBatch) == 1
 
 
-# --------------------------------------------------------------------- idempotencja
+# ---------------------------------------------------------------------- idempotence
 async def test_powtorka_ze_spoola_nie_dubluje_probki(api, db):
-    """Odpowiedz przepadla, sonda nie obciela spoola, ten sam wpis przychodzi drugi raz.
+    """The response was lost, the probe did not truncate the spool, the same entry arrives
+    a second time.
 
-    Wartosc wpisu MUSI sie roznic od pomiaru biezacego, inaczej dedup wyrzuca go w calosci
-    (to jest osobny finding F5) i test przechodzilby prozno — dlatego `with_util` i
-    dlatego asercja `po_pierwszym > 0`."""
+    The entry's value MUST differ from the current measurement, otherwise dedup throws it
+    out entirely (that is a separate finding, F5) and the test would pass vacuously — hence
+    `with_util` and hence the `po_pierwszym > 0` assertion."""
     now = utcnow().replace(microsecond=0)
     ts = now - timedelta(minutes=20)
     stary = payload(usage=with_util(five_hour=0.11), captured_at=ts)
@@ -139,21 +143,23 @@ async def test_powtorka_ze_spoola_nie_dubluje_probki(api, db):
     po_pierwszym = await probki_o(db, ts)
     assert po_pierwszym > 0, "wpis z backlogu nie zapisal nic — test nie sprawdza niczego"
 
-    # Ta sama tresc wpisu, nowy pomiar biezacy — dokladnie to, co robi sonda po timeoucie.
+    # The same entry content, a new current measurement — exactly what the probe does
+    # after a timeout.
     p2 = payload(captured_at=now + timedelta(minutes=2))
     p2["backlog"] = [stary]
     r = await post(api, p2)
     assert r.status_code == 200
-    # Wpis MUSI byc policzony, zeby sonda w koncu obciela spool...
+    # The entry MUST be counted so that the probe eventually truncates the spool...
     assert r.json()["backlogAccepted"] == 1
-    # ...ale nie moze dopisac drugiego wiersza na tym samym captured_at.
+    # ...but it must not append a second row at the same captured_at.
     assert await probki_o(db, ts) == po_pierwszym
 
 
 async def test_dwa_rozne_pomiary_w_tej_samej_sekundzie_przechodza(api, db):
-    """`parse_ts` obcina do pelnych sekund, a rownolegle hooki potrafia odpalic dwie sondy
-    w tej samej sekundzie. Guard nie ma prawa skasowac drugiego, ROZNEGO pomiaru — dlatego
-    w kluczu jest sha256 payloadu, nie tylko czas. Bez tego warunku wychodzi tu 1."""
+    """`parse_ts` truncates to whole seconds, and parallel hooks can fire two probes within
+    the same second. The guard has no right to delete the second, DIFFERENT measurement —
+    which is why the key holds a sha256 of the payload, not just the time. Without that
+    condition the answer here comes out as 1."""
     now = utcnow().replace(microsecond=0)
     a = payload(usage=with_util(five_hour=0.11), captured_at=now)
     b = payload(usage=with_util(five_hour=0.44), captured_at=now)
@@ -166,35 +172,38 @@ async def test_dwa_rozne_pomiary_w_tej_samej_sekundzie_przechodza(api, db):
     assert await probki_o(db, now) >= 2
 
 
-# ------------------------------------------------------------- niezmiennik identity map
+# -------------------------------------------------------------- identity map invariant
 async def test_expire_all_zdejmuje_nieswiezy_obiekt_z_identity_map(tmp_path):
-    """Cudzy commit w szczelinie, gdy lock jest oddany miedzy transakcjami tego samego
-    zadania. Bez `db.expire_all()` w `_ingest_tx` sesja A trzyma obiekt `Machine` z
-    `batches=1`, nie widzi inkrementu sesji B i nadpisuje go swoim `1 + 1` — ostatnia
-    asercja pokazuje wtedy 2 zamiast 3. Zgubiony inkrement, zero bledu.
+    """Someone else's commit in the gap, when the lock is released between two transactions
+    of the same request. Without `db.expire_all()` in `_ingest_tx`, session A holds a
+    `Machine` object with `batches=1`, does not see session B's increment and overwrites it
+    with its own `1 + 1` — the last assertion then shows 2 instead of 3. A lost increment,
+    no error at all.
 
-    DWIE rzeczy w konstrukcji sa krytyczne i kazda z nich juz raz zepsula ten test:
+    TWO things in the construction are critical, and each has already broken this test once:
 
-    1. Referencje `trzymana` bierzemy WEWNATRZ `_ingest_tx`. Gdyby `select()` stal poza
-       nim, autobegin otwarlby na sesji A transakcje, ktorej nikt nie zamyka — snapshot
-       zostalby przypiety sprzed commitu B, a przy okazji ten odczyt odswiezylby obiekt,
-       ktory `expire_all()` wlasnie wygasil. Test padalby wtedy ZAWSZE, niezaleznie od
-       latki. Wartosc czytamy do zwyklego inta jeszcze przed wyjsciem z bloku, bo po
-       `expire_all()` dostep do atrybutu poszedlby po bazie.
-    2. Referencje trzymamy w ogole, bo produkcja tego nie robi: `ingest_one` zwraca same
-       skalary, wiec obiekt zwykle ginie razem z ramka i weak identity map go wyrzuca.
-       Wlasnie dlatego ta linia jest w latce — poprawnosc zalezna od tego, czy refcounting
-       zdazyl posprzatac, jest niezapisanym nigdzie warunkiem, ktorego nic nie chroni.
+    1. The `trzymana` reference is taken INSIDE `_ingest_tx`. Had the `select()` stood
+       outside it, autobegin would have opened a transaction on session A that nobody
+       closes — the snapshot would be pinned from before B's commit, and that read would
+       also refresh the very object `expire_all()` had just expired. The test would then
+       fail ALWAYS, patch or no patch. The value is read into a plain int before leaving
+       the block, because after `expire_all()` attribute access would go to the database.
+    2. The reference is held at all because the shipped code does not do it: `ingest_one`
+       returns only scalars, so the object usually dies with the frame and the weak
+       identity map evicts it. That is exactly why that line is in the patch — correctness
+       that depends on refcounting having cleaned up is a condition written down nowhere
+       and protected by nothing.
 
-    Baza jest PLIKOWA, zeby dwie sesje mialy dwa OSOBNE polaczenia: dla `:memory:`
-    SQLAlchemy bierze StaticPool i obie sesje siedza na jednym polaczeniu, wiec "commit
-    sesji B" zatwierdzalby tez prace sesji A. Sam mechanizm identity map dalby sie pokazac
-    i tam, ale modelowalby wtedy co innego niz cudze zadanie."""
+    The database is FILE-backed so that the two sessions get two SEPARATE connections: for
+    `:memory:` SQLAlchemy picks StaticPool and both sessions sit on one connection, so
+    "session B's commit" would commit session A's work as well. The identity map mechanism
+    itself could be shown there too, but it would model something other than a foreign
+    request."""
     url = "sqlite+aiosqlite:///%s" % (tmp_path / "ingest.db").as_posix()
     silnik = create_async_engine(url)
     async with silnik.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    fabryka = async_sessionmaker(silnik, expire_on_commit=False)   # jak produkcja
+    fabryka = async_sessionmaker(silnik, expire_on_commit=False)   # as shipped
 
     now = utcnow().replace(microsecond=0)
     try:
@@ -205,16 +214,16 @@ async def test_expire_all_zdejmuje_nieswiezy_obiekt_z_identity_map(tmp_path):
                 po_pierwszym = trzymana.batches
             assert po_pierwszym == 1
 
-            # Sesja B — inne polaczenie, wlasna transakcja, wlasny identity map.
+            # Session B — a different connection, its own transaction, its own identity map.
             async with _ingest_tx(b):
                 await ingest_one(b, machine_name="desktop",
                                  payload=payload(captured_at=now + timedelta(seconds=1)))
 
-            # Sesja A wraca do tego samego wiersza, tak jak przy drugim wpisie backlogu.
+            # Session A returns to the same row, just as with the second backlog entry.
             async with _ingest_tx(a):
                 await ingest_one(a, machine_name="desktop",
                                  payload=payload(captured_at=now + timedelta(seconds=2)))
-            assert trzymana is not None      # referencja musi dozyc do konca
+            assert trzymana is not None      # the reference must live to the end
 
         async with fabryka() as c:
             batches = (await c.execute(select(Machine.batches))).scalar_one()

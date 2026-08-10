@@ -1,16 +1,17 @@
-"""Datowanie pomiaru: dwa zrodla o roznym wieku, jedna kotwica po stronie serwera.
+"""Measurement dating: two sources of different age, one anchor on the server side.
 
-Pomiar sondy skleja wartosci z dwoch miejsc — zrzutu `claude -p "/usage"` (same procenty
-glownych okien) i cache'u Claude Code (wszystko, w tym `spend` i `extra_usage`). Zrodla maja
-ROZNY WIEK: zrzut wolno miec do 900 s, cache do 3600 s. Dopoki oba jechaly na jednym stemplu,
-wzietym ze zrzutu, `spend` i `extra_usage` byly odmladzane o cala te roznice.
+A probe measurement glues together values from two places — the `claude -p "/usage"` dump
+(percentages of the main windows only) and the Claude Code cache (everything, including
+`spend` and `extra_usage`). The sources have DIFFERENT AGES: a dump may be up to 900 s old,
+the cache up to 3600 s. As long as both rode on one stamp taken from the dump, `spend` and
+`extra_usage` were being rejuvenated by that entire difference.
 
-To nie jest kosmetyka. Backend rozstrzyga po tym stemplu, ktory odczyt jest BIEZACY
-(`newest`, services/ingest.py), a guard monotonicznosci wymaga znanej granicy okna po obu
-stronach — ktorej te dwie serie nie maja NIGDY. Sa wiec jedynymi dwiema seriami bez zadnej
-obrony, i akurat one sa wiazacym limitem na koncie Team.
+This is not cosmetics. The backend decides by that stamp which reading is CURRENT
+(`newest`, services/ingest.py), and the monotonicity guard requires a known window boundary
+on both ends — which these two series NEVER have. They are therefore the only two series
+with no defense at all, and they happen to be the binding limit on the Team account.
 
-Wystarcza DWIE maszyny i idealnie zsynchronizowane zegary.
+TWO machines and perfectly synchronized clocks are enough.
 """
 import copy
 import importlib.util
@@ -53,17 +54,17 @@ async def _state(db, series_key):
     )).scalars().first()
 
 
-# ------------------------------------------------------------------- regresja glowna
+# ------------------------------------------------------------------- main regression
 async def test_starszy_cache_nie_cofa_spend_mimo_swiezszego_zrzutu(db):
-    """SEDNO CALEJ ZMIANY.
+    """THE POINT OF THE WHOLE CHANGE.
 
-    Maszyna A: cache 3 min temu (spend 93%), zrzut 1 min temu.
-    Maszyna B: cache 4 min temu (spend 92%), zrzut 30 s temu.
+    Machine A: cache 3 min ago (spend 93%), dump 1 min ago.
+    Machine B: cache 4 min ago (spend 92%), dump 30 s ago.
 
-    B ma swiezszy ZRZUT, wiec jej okna sa nowsze i maja wygrac. Ale jej CACHE jest starszy,
-    wiec `spend` ma zostac po A. Przed ta zmiana jeden stempel na caly pomiar oddawal B
-    wszystko i stan cofal sie na odczyt starszy o minute — a przy realnych granicach wiekow
-    obu zrodel siegalo to godziny.
+    B has the fresher DUMP, so its windows are newer and must win. But its CACHE is older,
+    so `spend` must stay with A. Before this change one stamp for the whole measurement
+    handed B everything and the state fell back to a reading a minute older — and with the
+    real age limits of the two sources that reached hours.
     """
     t = utcnow().replace(microsecond=0)
 
@@ -89,7 +90,8 @@ async def test_starszy_cache_nie_cofa_spend_mimo_swiezszego_zrzutu(db):
     assert float(five.last_utilization) == 51.0, "swiezszy zrzut MA wygrac dla okna"
     assert five.last_captured_at == t - timedelta(seconds=30)
 
-    # Historia nie traci nic — probka B na `spend` jest w bazie, tylko nie rzadzi stanem.
+    # History loses nothing — B's sample on `spend` is in the database, it just does not
+    # govern the state.
     stamps = {s.captured_at for s in (await db.execute(
         select(LimitSample).where(LimitSample.series_id == spend.series_id)
     )).scalars()}
@@ -97,9 +99,9 @@ async def test_starszy_cache_nie_cofa_spend_mimo_swiezszego_zrzutu(db):
 
 
 async def test_bez_fresh_covered_wszystko_idzie_po_cache(db):
-    """Lagodna degradacja, nie galaz kompatybilnosci: payload bez `fresh_covered` datuje
-    sie w calosci po `captured_at`, czyli po cache. Tak przechodza wpisy w spoolu zapisane
-    przez sonde ponizej v5."""
+    """Graceful degradation, not a compatibility branch: a payload without `fresh_covered`
+    is dated entirely by `captured_at`, that is by the cache. This is how spool entries
+    written by a probe below v5 get through."""
     t = utcnow().replace(microsecond=0)
     await send(db, payload(account=ACCOUNT_TEAM_REAL, usage=team(),
                            captured_at=t - timedelta(seconds=300),
@@ -112,9 +114,10 @@ async def test_bez_fresh_covered_wszystko_idzie_po_cache(db):
 
 @pytest.mark.parametrize("smiec", [None, 7, "bucket:five_hour", {"a": 1}, [1, None, {}]])
 async def test_fresh_covered_zlego_typu_nie_wywraca_zapisu(db, smiec):
-    """`frozenset(None)` rzuca TypeError, a `ingest_one` nie ma try/except mimo obietnicy
-    w docstringu: dla rekordu biezacego to 500 na cale zadanie, dla wpisu backlogu `break`
-    i TRWALE zatkany ogon spoola. Endpoint jest wystawiony w internecie."""
+    """`frozenset(None)` raises TypeError, and `ingest_one` has no try/except despite the
+    promise in its docstring: for the current record that is a 500 on the whole request, for
+    a backlog entry a `break` and a PERMANENTLY blocked spool tail. The endpoint is exposed
+    on the internet."""
     p = payload(account=ACCOUNT_TEAM_REAL, usage=team())
     p["measurement"]["fresh_covered"] = smiec
     r = await send(db, p)
@@ -122,12 +125,13 @@ async def test_fresh_covered_zlego_typu_nie_wywraca_zapisu(db, smiec):
     assert r["ok"] and r["samples_written"] > 0
 
 
-# ------------------------------------------------------- zgodnosc kluczy sonda <-> backend
+# --------------------------------------------------- probe <-> backend key agreement
 def test_probe_key_zgadza_sie_z_kluczami_sondy(probe):
-    """Rozjazd tutaj jest CICHY: zbior nigdy sie nie dopasuje, `covered_by_fresh` nigdy sie
-    nie zapali i datowanie po cichu cofnie sie do stanu sprzed tej zmiany. Fixture ma limit
-    `weekly_scoped` z modelem "Fable" — czyli dokladnie ten przypadek, w ktorym slugowanie
-    (`limit_series_key` robi z tego `fable`) rozjechaloby oba konce."""
+    """A divergence here is SILENT: the sets would never match, `covered_by_fresh` would
+    never light up and dating would quietly fall back to the state from before this change.
+    The fixture carries a `weekly_scoped` limit with the model "Fable" — exactly the case in
+    which slugging (`limit_series_key` turns it into `fable`) would drive the two ends
+    apart."""
     u = usage(USAGE_ACTIVE)
     _, covered = probe.merge(copy.deepcopy(u),
                              {"session": 48, "weekly_all": 47, "scoped": {"Fable": 3}})
@@ -138,14 +142,14 @@ def test_probe_key_zgadza_sie_z_kluczami_sondy(probe):
 
 
 def test_probe_key_nie_sluguje_i_nie_zna_powierzchni():
-    """Trzy wlasciwosci, ktorych zlamanie nic nie wywroci, tylko wylaczy mechanizm."""
+    """Three properties whose breakage topples nothing — it only switches the mechanism off."""
     u = {"limits": [{"kind": "weekly_scoped", "group": "weekly", "percent": 3,
                      "scope": {"model": {"display_name": "Fable"},
                                "surface": {"display_name": "Cowork"}}}],
          "spend": {"percent": 93, "enabled": True}}
     by_source = {o.source: probe_key(o) for o in parse_usage(u).observations}
-    assert by_source["limit"] == "limit:weekly_scoped:Fable"      # surowa nazwa, bez slugu
-    assert by_source["spend"] is None                             # zrzut tego nie zna nigdy
+    assert by_source["limit"] == "limit:weekly_scoped:Fable"      # the raw name, no slug
+    assert by_source["spend"] is None                             # the dump never knows it
 
 
 def test_probe_key_dla_limitu_bez_modelu():
@@ -154,22 +158,23 @@ def test_probe_key_dla_limitu_bez_modelu():
     assert probe_key(o) == "limit:session:-"
 
 
-# --------------------------------------------------------------------------- kotwica
+# ---------------------------------------------------------------------------- anchor
 def test_measured_at_jest_czysta_funkcja():
     t = utcnow().replace(microsecond=0)
-    # Zegar klienta spozniony o godzine, pomiar 120 s stary w JEGO zegarze.
+    # The client clock is an hour behind; the measurement is 120 s old on ITS clock.
     zegar = t - timedelta(hours=1)
     assert measured_at(zegar - timedelta(seconds=120), t - zegar, t) == t - timedelta(seconds=120)
-    # Przyciecie: pomiar nie moze byc nowszy niz chwila odebrania.
+    # Clamping: a measurement cannot be newer than the moment it was received.
     assert measured_at(t + timedelta(seconds=10), timedelta(0), t) == t
-    # Brak czasu to niewiedza, nie "teraz".
+    # A missing time means "not known", not "now".
     assert measured_at(None, timedelta(0), t) is None
 
 
 async def test_kotwica_jest_wspolna_dla_calego_zadania(db):
-    """Kotwice zdejmuje handler PRZED lockiem zapisu. Liczona wewnatrz `ingest_one` — czyli
-    juz pod lockiem — dawalaby zadaniu, ktore przeczekalo cudzy backlog, stempel o czas
-    czekania za swiezy, a kazdy wpis backlogu wlasna, inna kotwice."""
+    """The handler takes the anchor BEFORE the write lock. Computed inside `ingest_one` —
+    that is, already under the lock — it would give a request that waited out someone else's
+    backlog a stamp too fresh by the waiting time, and every backlog entry its own, different
+    anchor."""
     arrived = utcnow().replace(microsecond=0) - timedelta(seconds=30)
     p = payload(account=ACCOUNT_TEAM_REAL, usage=team(),
                 captured_at=arrived, sent_at=arrived)
@@ -181,10 +186,11 @@ async def test_kotwica_jest_wspolna_dla_calego_zadania(db):
     assert b.clock_offset_s == 0
 
 
-# ------------------------------------------------------------------- stary backlog
+# ------------------------------------------------------------------ an old backlog
 async def test_wpis_sprzed_osmiu_dni_zostaje_stary(db):
-    """`BACKLOG_MAX_AGE_SEC` podstawialo pod taki pomiar czas serwera — czyli robilo
-    odwrotnosc ochrony: wpis stawal sie najnowszy i przejmowal stan biezacy."""
+    """`BACKLOG_MAX_AGE_SEC` used to substitute the server time for such a measurement —
+    the exact opposite of protection: the entry became the newest one and took over the
+    current state."""
     t = utcnow().replace(microsecond=0)
     dawno = t - timedelta(days=8)
 
@@ -192,9 +198,9 @@ async def test_wpis_sprzed_osmiu_dni_zostaje_stary(db):
                            captured_at=t - timedelta(seconds=60), sent_at=t), arrived_at=t)
     await db.commit()
 
-    # `offset` jest WSPOLNY dla zadania i pochodzi z rekordu zewnetrznego, nie z wpisu:
-    # to rekord biezacy zostal wyslany teraz. Wlasne `sent_at` wpisu sluzy tylko kontroli
-    # "pomiar nie powstal po wysylce".
+    # `offset` is SHARED by the request and comes from the outer record, not from the entry:
+    # it is the current record that was sent just now. The entry's own `sent_at` serves only
+    # the check "the measurement did not come into being after the send".
     p = payload(account=ACCOUNT_TEAM_REAL, usage=team(spend_percent=10),
                 captured_at=dawno, sent_at=dawno)
     await ingest_one(db, machine_name="desktop", payload=p, arrived_at=t,
@@ -208,8 +214,9 @@ async def test_wpis_sprzed_osmiu_dni_zostaje_stary(db):
 
 
 async def test_wpis_z_cofnietym_zegarem_jest_odrzucany_ale_policzony(db):
-    """Pomiar nie mogl powstac po wysylce. Odrzucamy calosc — inaczej wyladowalby na
-    kotwicy zadania, przeszedl `newest` i nadpisal stan starym odczytem."""
+    """A measurement cannot have come into being after the send. The whole entry is rejected
+    — otherwise it would land on the request's anchor, pass `newest` and overwrite the state
+    with an old reading."""
     t = utcnow().replace(microsecond=0)
     p = payload(account=ACCOUNT_TEAM_REAL, usage=team(spend_percent=10),
                 captured_at=t - timedelta(seconds=60),
@@ -227,9 +234,9 @@ async def test_wpis_z_cofnietym_zegarem_jest_odrzucany_ale_policzony(db):
 
 
 async def test_wpis_bez_sent_at_przechodzi_mimo_nowszej_daty(db):
-    """Wpis w spoolu zapisany przez sonde v4 niesie w `captured_at` czas ZRZUTU, rutynowo
-    NOWSZY niz `captured_at` rekordu biezacego (ktory od v5 jest czasem cache'u). Kryterium
-    odrzucania stoi na `sent_at` wlasnie po to, zeby takich wpisow nie skasowac."""
+    """A spool entry written by probe v4 carries the DUMP time in `captured_at`, routinely
+    NEWER than the `captured_at` of the current record (which since v5 is the cache time).
+    The rejection criterion stands on `sent_at` precisely so that such entries survive."""
     t = utcnow().replace(microsecond=0)
     p = payload(account=ACCOUNT_TEAM_REAL, usage=team(spend_percent=88),
                 captured_at=t - timedelta(seconds=10))
