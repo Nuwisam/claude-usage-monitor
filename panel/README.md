@@ -245,7 +245,7 @@ The presentation is two-stage, and that is a decision, not a phase:
    the band's full height. The state stops being *takeover*, it does not stop
    being *true* — usage comes back on screen, and the fact that something is
    waiting is still visible.
-   **There is no red in the project**: all the signalling stands on the accent
+   **There is no red in the project**: all the signalling runs on the accent
    ramp.
 
 The window is counted from the server's `since`, not from the moment the panel

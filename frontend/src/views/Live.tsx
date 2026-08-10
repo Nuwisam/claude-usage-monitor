@@ -24,7 +24,7 @@ export function Live() {
         <div className="state-block">
           <h4>No accounts</h4>
           <p>
-            No machine has reported anything yet. Accounts create themselves on the first
+            No machine has reported anything yet. An account is created automatically on its first
             measurement — check that the probe is wired into the hooks and has <code>config.json</code>.
           </p>
         </div>

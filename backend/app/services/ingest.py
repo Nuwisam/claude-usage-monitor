@@ -497,7 +497,7 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
     # TWO TIMES IN ONE PAYLOAD. `captured_at` is the time of the Claude Code cache and applies
     # to everything; `measurement.fresh_at` is the time of the `/usage` dump and applies ONLY
     # to the series listed in `fresh_covered`. The cache is sometimes an hour older than the
-    # dump, and `spend` and `extra_usage` always come from it — one stamp for both sources
+    # dump, and `spend` and `extra_usage` always come from the CACHE — one stamp for both sources
     # made them younger by exactly that difference.
     cache_ts = parse_ts(payload.get("captured_at"))
     fresh_ts = parse_ts(meas.get("fresh_at"))

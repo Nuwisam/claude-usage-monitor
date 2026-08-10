@@ -62,7 +62,7 @@ def test_inferred_reset_has_a_tilde():
 
 @pytest.mark.parametrize("freshness", ["live", "stale"])
 def test_live_and_stale_look_the_same(freshness):
-    """A DELIBERATE departure from the web: the reading age stands next to it and
+    """A DELIBERATE departure from the web: the reading age sits next to it and
     says the same thing more precisely. A second channel for the same information
     would be noise."""
     v = view.describe_series(series(freshness=freshness, utilization=31))

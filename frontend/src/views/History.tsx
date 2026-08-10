@@ -120,7 +120,7 @@ export function History() {
       )}
 
       {/* The note block about the `unknown` state was removed together with the notion itself
-          in the UI. Its true content — that a gap does not mean zero — stands in `Legend`. */}
+          in the UI. Its true content — that a gap does not mean zero — lives in `Legend`. */}
       <Legend bucket={bucketHint} />
     </>
   );

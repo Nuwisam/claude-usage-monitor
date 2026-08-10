@@ -151,7 +151,7 @@ docker compose up -d --build
 ```
 
 `AUTH_MODE` is **required and has no default**. Without it the container will not start —
-that's deliberate, because only you know whether anything stands in front of the backend.
+that's deliberate, because only you know whether anything sits in front of the backend.
 
 **Locally, with nothing in front of it.** `AUTH_MODE=none`. The port lands on
 `127.0.0.1:8080`, so the UI works at <http://127.0.0.1:8080/claude-usage/> and is unreachable

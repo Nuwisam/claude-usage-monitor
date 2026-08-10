@@ -1,9 +1,9 @@
 """Geometry of layout 4a. Every coordinate is DERIVED from a handful of constants.
 
-4a: two accounts in full-width bands; in each band the percentage stands in a narrow
-column BESIDE the block (label / bar / reset), and the credits sit at the bottom of
+4a: two accounts in full-width bands; in each band the percentage sits in a narrow
+column BESIDE the group (label / bar / reset), and the credits sit at the bottom of
 the band. The gain over a layout with the number above the bar: the label and the
-caption share the height with the number instead of standing above and below a bar
+caption share the height with the number instead of sitting above and below a bar
 that runs the full width.
 
 The font sizes and bar heights come from the mockup and are justified there: three
@@ -71,9 +71,9 @@ F_BANNER = 15
 BANNER_TRACK = 2        # 0.13em at 15 px
 F_BANNER_AT = 15
 
-# Rail on the left edge of the card, below the banner. It stands in BOTH frames:
-# `NEUTRAL_900` in the resting one, `ACCENT` in the full one — flooding repaints it,
-# it does not call it into being. The run of color takes the banner, and below that
+# Rail on the left edge of the card, below the banner. It is present in BOTH frames:
+# `NEUTRAL_900` in the resting one, `ACCENT` in the full one — flooding repaints the rail,
+# it does not conjure it into existence. The run of color takes up the banner's height, and below that
 # only these 6 px — the card background stays `theme.BG`, because a full-screen field
 # of accent at brightness 5 is a glare in the eyes and visible RGB565 banding.
 RAIL_W = 6
@@ -336,7 +336,7 @@ class Layout:
         self.width = width
         self.height = height
         # 319 px for two bands is 159.5 px each — the browser gives the extra pixel to
-        # the TOP band, so the divider stands on row 160, not 159.
+        # the TOP band, so the divider falls on row 160, not 159.
         band_h = (height - DIVIDER_H + 1) // 2
         self.band_a = Band(0, band_h, width)
         self.divider = (0, band_h, width, band_h + DIVIDER_H)

@@ -18,11 +18,11 @@ from .log import get as log
 BACKOFF = (1.0, 2.0, 5.0, 10.0, 30.0)
 
 # How many unreceived CSWs in a row mean "the panel went quiet". Well-formed full
-# frames are ALWAYS acknowledged, so a few in a row is no longer chance.
+# frames are ALWAYS acknowledged, so several in a row is no longer a coincidence.
 MISSED_CSW_LIMIT = 3
 
 # Errors this layer answers with backoff rather than with the death of the process.
-# Below `ensure()` and `blit()` sits raw ctypes into libusb-1.0.dll (find_all,
+# Below `ensure()` and `blit()` sits raw ctypes calling into libusb-1.0.dll (find_all,
 # libusb_open, libusb_claim_interface, bulk transfer). An unplugged module or a
 # driver drifting out of step reports from there with an OSError, not an
 # AX206Error — and such an exception travelled through tick() and run() all the

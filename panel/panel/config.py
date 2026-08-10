@@ -66,7 +66,7 @@ DEFAULTS = {
     # for the card's whole life, that is, up to `alert_takeover_sec`.
     #
     # The flood repaints the banner and the 6 px rail (~13% of the frame, about
-    # 0.24 s on the Turing) — the rail stands there at rest too, in `NEUTRAL_900`, so
+    # 0.24 s on the Turing) — the rail is there at rest too, in `NEUTRAL_900`, so
     # the color changes, not the layout. There is no stepped animation and there will
     # not be: the panel repaints line by line, so intermediate frames would tear over
     # the sweep. Every blink costs a full frame on the AX206 (355 ms), so "infinity"

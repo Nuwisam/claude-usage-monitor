@@ -36,7 +36,7 @@ function leaveTo(url: string): Promise<never> {
 
 /** A 401 with a login address = redirect. A 401 without one = an error on the spot.
  *
- *  We guess no fallback address. The backend knows whether it stands behind anything
+ *  We guess no fallback address. The backend knows whether it sits behind anything
  *  that logs users in, and the UI does not — sending the user by default to some typical
  *  path ends in a 404 or somebody else's login page and looks like an app failure. */
 async function handle401(body: unknown): Promise<never> {

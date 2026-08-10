@@ -111,7 +111,7 @@ def alert_title(blocked):
 
     "3 waiting" (the mockup's literal form) does not survive every count in the language
     this was written for: the bare verb WITHOUT a bound numeral is correct for any count,
-    while a numeral forces a form that changes with it. So the number stands after a dot
+    while a numeral forces a form that changes with it. So the number comes after a dot
     as a separate counter and not as a subject — a shape that reads the same at three and
     at five, which is why it stays.
     """
@@ -176,7 +176,7 @@ def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None,
     # times hours older than the last measurement (frontend/src/lib/freshness.ts:37-38).
     #
     # From the OLDER of the two windows, not from whichever comes first. This label
-    # is the ONLY carrier of freshness (see view.py) and it stands next to the
+    # is the ONLY carrier of freshness (see view.py) and it sits next to the
     # session row only — while the backend confirms every series SEPARATELY, so the
     # week is at times days older than the session. Taking the session's stamp, the
     # panel would write "3 s ago" right next to a confident-looking week bar from
@@ -311,7 +311,7 @@ class Renderer:
         tick; a full-screen flash would be a full frame, and that one takes 1.87 s on the
         Turing and comes out as a slow repaint instead of a flash.
 
-        The rail stands in BOTH frames — the flood only repaints it. A bar that appears
+        The rail is present in BOTH frames — the flood only repaints it. A bar that appears
         out of nothing and disappears is a stronger movement than a change of colour, and
         it gives the card a fixed left edge for its whole life, not only for
         `alert_flash_sec`.
@@ -619,7 +619,7 @@ class Renderer:
             right -= w + L.REASON_GAP
 
         if band.alert:
-            # The reason stands ON THE PLAN'S LINE, not by the name: the name gets
+            # The reason sits ON THE PLAN'S LINE, not next to the name: the name gets
             # shortened at times, and this caption must not vanish with its tail.
             f_reason = draw.font(L.F_REASON)
             word = band.alert.upper()

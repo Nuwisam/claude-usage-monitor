@@ -82,7 +82,7 @@ def cfg(**kw):
 
 def test_accounts_are_two_fields_in_band_order():
     """The shape of the configuration is the shape of the screen: a third account
-    cannot be added by inattention."""
+    cannot be added by accident."""
     c = cfg(account_1={"uuid": "a", "name": "top"},
             account_2={"uuid": "b", "name": "bottom"})
     assert [a.name for a in c.accounts] == ["top", "bottom"]

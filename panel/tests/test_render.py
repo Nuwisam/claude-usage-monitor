@@ -175,8 +175,8 @@ def test_three_link_states_give_three_different_images():
 
 
 def test_age_takes_the_older_of_two_series():
-    """The age label is the ONLY carrier of freshness here and stands next to the
-    session row alone. The backend confirms each series separately, so were it to take
+    """The age label is the ONLY carrier of freshness here and appears only next to
+    the session row. The backend confirms each series separately, so were it to take
     the session stamp, the panel would write "1 min ago" beside a confidently drawn
     week bar from three days back."""
     from panel import fmt

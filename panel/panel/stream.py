@@ -138,7 +138,7 @@ class StreamClient(threading.Thread):
         # read1(), NOT read(). `read(n)` waits until the WHOLE of n bytes has
         # gathered or the stream ends — and SSE is small frames arriving
         # irregularly, so later cards and pings stayed in the buffer and the panel
-        # stood on the first frame looking alive. read1() hands back what has
+        # was stuck on the first frame, looking alive. read1() hands back what has
         # already arrived.
         reader = getattr(resp, "read1", None) or resp.read
         while not self.stop.is_set():
@@ -234,7 +234,7 @@ class StreamClient(threading.Thread):
 
 
 def drain(q, handler):
-    """Takes off everything that is waiting. The model is swapped ONCE per tick,
+    """Drains everything that is waiting. The model is swapped ONCE per tick,
     so the panel never shows half of one frame next to half of another."""
     count = 0
     while True:

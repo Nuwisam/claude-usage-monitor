@@ -109,7 +109,7 @@ def parse_ts(v: Any) -> datetime | None:
     UTC TRUNCATED TO WHOLE SECONDS, because the database columns are naive and everything
     is kept in UTC.
 
-    Truncating the microseconds is not cosmetics and loses no information. Anthropic stamps
+    Truncating the microseconds is not cosmetic, and it loses no information. Anthropic stamps
     `resets_at` with the microseconds of ITS OWN RESPONSE, not of the window boundary — in
     one response `five_hour` ends at `00:59:59.056340` and `seven_day` at `15:59:59.056361`
     (21 us apart, because the fields are computed one after another). Measured effect: 63
@@ -199,7 +199,7 @@ def known_same_reset_window(a: datetime | None, b: datetime | None, eps_sec: flo
     `freshness()` degrades it, that is until `CLIENT_SILENT_SEC` (6 h by default,
     `app/config.py:38`), and for that whole time it is served as `live`/`stale`, that is as
     a value and not as ignorance. A frozen state lies for exactly as long, and on top of
-    that has nothing to come out of: for `spend:org` and `extra:usage` a boundary will NEVER
+    that has no way out of it: for `spend:org` and `extra:usage` a boundary will NEVER
     arrive. The sample reaches the database in both variants, so neither loses history. The
     guard therefore gets only proof, never a guess.
     """
@@ -258,7 +258,7 @@ def meter_withdrawn(block: Any) -> str | None:
     are told apart SOLELY by `disabled_reason` — the only discriminator we get.
 
     We do not interpret the CONTENT of the reason (rule 5): every non-empty string means
-    "withdrawn", and the string itself travels on verbatim, all the way to the UI. The set IS
+    "withdrawn", and the string itself travels verbatim, all the way to the UI. The set IS
     open — on a single account two different strings were observed within one day
     (`org_level_disabled_until`, `org_spend_cap_reached`).
 

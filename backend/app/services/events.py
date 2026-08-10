@@ -83,7 +83,7 @@ def bye_frame(reason: str) -> str:
 # for something that goes out the moment somebody clicks "yes".
 #
 # NOTE, a process restart is NOT transparent here, and a sentence claiming otherwise used
-# to stand in this spot. The map goes to zero, but the probe does not know that: it compares
+# to sit in this spot. The map goes to zero, but the probe does not know that: it compares
 # its own stamp against its OWN state directory, and those two agree, so it has no reason to
 # send anything. A live block is therefore not announced again — not until the next CHANGE
 # of the set on that machine. To fix it, the server would have to tell the probe what it

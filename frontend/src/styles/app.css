@@ -341,7 +341,7 @@
    wide     [label | track | number]      with the note under the label
    narrow   [label | number] / track / note                           */
 .series-row {
-  /* The anchor of the "?" panel is the ROW, not the dot. The dot stands after the label, and
+  /* The anchor of the "?" panel is the ROW, not the dot. The dot sits after the label, and
      labels run all the way to an ellipsis — a panel pinned to it would run past the card's
      right edge and get clipped by `overflow: hidden` on `.accounts`. Pinned to the row it
      has the row's width by definition and no way to run out. */
@@ -433,7 +433,7 @@
 }
 /* The panel OPENS UPWARDS, and that is not a matter of taste: the spend row lies in the
    card's last section, so downwards it would run outside `.accounts` with `overflow: hidden`.
-   Above it stand the hero and the cascade, always, so the room IS there — without measuring
+   The hero and the cascade always sit above it, so the room IS there — without measuring
    anything in JS. */
 .series-help-panel {
   position: absolute;

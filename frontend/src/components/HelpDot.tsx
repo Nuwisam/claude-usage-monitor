@@ -5,7 +5,7 @@ import { useEffect, useId, useRef, useState } from "react";
  *
  *  WHY A BUTTON AND NOT `title`: the `title` attribute is used in the repo for shorthands (a
  *  series label, the current-rung marker) and there it is enough, because it repeats text that
- *  stands right next to it.
+ *  sits right next to it.
  *  Here the content is the ONLY carrier of this information, and `title` opens neither from the
  *  keyboard nor by touch — so on a phone and under Tab the knowledge simply does not exist.
  *  `<button>` with `aria-expanded` gives both entry points without a single dependency; the repo

@@ -144,7 +144,7 @@ frames**:
 - **full** — banner flooded with `ACCENT` and rail in `ACCENT`, and the text in the banner
   drops to `BG` (5.51:1 instead of 2.69:1).
 
-**The rail stands in both frames** — the flood only repaints it. A bar appearing out of
+**The rail is present in both frames** — the flood only repaints it. A bar appearing out of
 nothing is a stronger movement than a change of color, and outside the `alert_flash_sec`
 window the card would be left without a left edge. The rail runs the full height under the
 banner, through the `Mode` strip and the list footers too — in the mockup it's `position:

@@ -236,7 +236,7 @@ def read_claude_json():
     # The credits-disabled reason from the CLIENT cache. On its own it tells apart three
     # states that the in-band data does not: null / `org_spend_cap_reached` (the OWN pool
     # exhausted, where `spend.disabled_reason` is null) / `org_level_disabled_until` (the
-    # organization ceiling). Collected FOR INSPECTION — the verdict stays on in-band data.
+    # organization ceiling). Collected FOR INSPECTION — the verdict still rests on in-band data.
     reason = _safe(_extract_scalar, text, "cachedExtraUsageDisabledReason")
     return acct, cached, os.path.dirname(path), reason
 
@@ -282,7 +282,7 @@ def spawn_refresh(cfg):
     flag works only with -p. Verified A/B: with the flag 0 files, without it 1 file, while
     the cachedUsageUtilization cache still refreshes (and the merge depends on it).
 
-    --model haiku is a safety belt, idle on the happy path: /usage returns
+    --model haiku is a safety net, idle on the happy path: /usage returns
     shouldQuery=false, so no model moves at all (measured: num_turns=0, cost 0, time
     unchanged). It matters only when the argument misses the local command — then a paid
     turn runs, which without this flag would go to the model from settings.json.
@@ -721,7 +721,7 @@ def account_uuid():
     Read ONLY on the entry path (a rare one), so it does not replace `read_claude_json` —
     that one reads the same file after the throttle and for considerably more. The panel
     puts the marker on one specific account band, so it has to know which band the alert
-    belongs to; rule 7 says identity comes from here and from here only.
+    belongs to; AGENTS.md rule 7 says identity comes from here and from here only.
     """
     path = _find(".claude.json")
     if not path:
@@ -928,7 +928,7 @@ def sweep_ttl(ttl_s, now):
 
 # ----------------------------------------------------- harness session registry
 # The harness keeps a registry of its sessions: `<pid>.json` with a `sessionId` field.
-# Measured on 2.1.223, and this whole section stands on it:
+# Measured on 2.1.223, and this whole section rests on it:
 #   * the record appears 0.2-1.0 s AFTER the session's first hook (13/13), so on
 #     `SessionStart` its absence means nothing;
 #   * on `SessionEnd` the record is still THERE (14/14) — it disappears 0.1-0.8 s later;
@@ -940,7 +940,7 @@ def sweep_ttl(ttl_s, now):
 #     not register at all (measured: 18 s of life, zero records). Hence `registry_seen`.
 #
 # FORBIDDEN: never `os.kill(pid, 0)` — on Windows it maps to `TerminateProcess`, i.e. the
-# probe would kill Claude Code sessions, in code that as a matter of rule does not raise.
+# probe would kill Claude Code sessions, in code that, as a rule, never raises.
 # Liveness is decided by the PRESENCE of a record and nothing else. The harness checks
 # `procStart` itself, so pid recycling is not ours to watch either.
 
@@ -964,7 +964,7 @@ REGDIR = registry_dir()         # at import time, without `stat` — as with STA
 def live_sessions():
     """The set of `sessionId` values from the registry, or None when the set may be PARTIAL.
 
-    None means "unknown" and NEVER means "empty" — that is rule 4 carried onto this set.
+    None means "unknown" and NEVER means "empty" — that is AGENTS.md rule 4 carried onto this set.
     A directory read only halfway would shorten the live list and delete foreign entries
     wholesale, i.e. clear LIVE blocks. Hence one exception on any record invalidates the
     WHOLE run.
@@ -1594,8 +1594,8 @@ def main():
 
     # The hook payload arrives in UTF-8, but `sys.stdin` in text mode decodes it with the
     # locale encoding (cp1250 here) and `errors=surrogateescape`. There were two effects,
-    # both silent: Polish characters reached the toast and the panel as two characters per
-    # one, and bytes with no counterpart in cp1250 (0x81 0x83 0x88 0x90 0x98 — that is,
+    # both silent: Polish characters reached the toast and the panel doubled up, with one
+    # character becoming two, and bytes with no counterpart in cp1250 (0x81 0x83 0x88 0x90 0x98 — that is,
     # among others, "L" with a stroke and the typographic apostrophe) became lone
     # surrogates, which broke `write_excl` on `.encode("utf-8")`. The block entry was then
     # created EMPTY, so the alert reached nowhere while the key was already taken. The rest
@@ -1608,7 +1608,7 @@ def main():
 
     # BEFORE the throttle. An alert has to arrive immediately, and the probe throttle is
     # 60 s — past that threshold a block would become visible only after a minute, or not
-    # at all. `_safe`, because of rule 3: the probe must not raise, and the signaller must
+    # at all. `_safe`, because of AGENTS.md rule 3: the probe must not raise, and the signaller must
     # not spoil the limit measurement.
     _safe(alert_dispatch, cfg, hook)
 
@@ -1670,7 +1670,7 @@ def main():
 
     # As in post(): a local import, because this point is already past the throttle. Do NOT
     # move it up — a use before this line is an UnboundLocalError, which the `except
-    # Exception` at :764 swallows into silence and the machine stops reporting without
+    # Exception` at :1766 swallows into silence and the machine stops reporting without
     # a single symptom.
     import socket, hashlib
 
@@ -1738,7 +1738,7 @@ def main():
     #
     # Set just before sending and written ALSO into `record`, which goes to the spool: for
     # a spooled entry `sent_at` comes from the moment of the failed attempt, so the age
-    # computes itself, at the right moment, without recomputing anything on the client side.
+    # falls out correctly on its own, with nothing to recompute on the client side.
     record["measurement"]["sent_at"] = _iso(time.time())
 
     payload = dict(record)

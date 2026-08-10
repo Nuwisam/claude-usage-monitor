@@ -1,4 +1,4 @@
-"""The /api/status v3 contract — what the UI stands on.
+"""The /api/status v3 contract — what the UI is built on.
 
 It guards three things whose breakage is invisible in the backend code and shows up only
 on the screen:

@@ -1,7 +1,7 @@
 """AX206 panel driver (VID 1908 / PID 0102) — Windows + libusb-1.0.
 
 Two things that are easy to confuse: the device DRIVER is still libusb-win32
-(`libusb0.sys`, the same one the ready-made tools for these displays use), while
+(`libusb0.sys`, the same one the off-the-shelf tools for these displays use), while
 the LIBRARY used to talk to it is libusb-1.0. The libusb-1.0 Windows backend
 handles devices bound to libusb0.sys — measured, see below. Switching the driver
 over to WinUSB is unnecessary and would break those tools.
@@ -26,7 +26,7 @@ source:
   1. The geometry query command (`0xCD .. byte5=2`) is UNRELIABLE: under the same
      conditions it once returns a correct 480x320 and once stays silent until the
      timeout, and a failed attempt costs one lost CSW in the NEXT command. Hence
-     the geometry is a parameter from the configuration, and `probe_geometry()`
+     the geometry is a configuration parameter, and `probe_geometry()`
      serves diagnostics only and is called last, never before the real work.
   2. The panel SOMETIMES stops returning CSWs even though it accepts and draws
      every frame correctly. A missing CSW is a warning here (the `missed_csw`
@@ -56,8 +56,8 @@ source:
      with zeros gave a BLACK window. The earlier "black frames" were exactly this
      effect, not a failure to draw.
 
-     There is no transfer to be saved this way: a 480x160 rectangle was given a
-     payload equal to exactly one filling of the window and was not acknowledged
+     This does not save any transfer: a 480x160 rectangle was given a
+     payload exactly large enough to fill the window once and was not acknowledged
      either. The number of bytes on the wire is constant, so every update costs
      307200 B regardless of how many pixels actually change. Hence
      `blit()` accepts the full screen only. Indirect confirmation: pyax206,
@@ -65,7 +65,7 @@ source:
 
   5. A missing CSW is NOT a whim of the panel — it is the EFFECT of an earlier
      badly formed transaction. A repeated, identical command was acknowledged
-     normally as long as no blit with the wrong byte count went before it; after
+     normally as long as it was not preceded by a blit with the wrong byte count; after
      one, the pipe went quiet until `reset()`. Given nothing but correct full
      frames, the panel acknowledges every one. The `missed_csw` count is therefore
      a signal of A BUG IN US, not of a hardware failure.
@@ -79,8 +79,8 @@ source:
          bands of saturated colors                514 ms
 
      Different dark payloads give the same time, so it is not a matter of
-     repeating the same frame. It looks like a cost on the LCD controller's side,
-     not the transport's. The practical conclusion: the number that holds for this
+     repeating the same frame. It looks like a cost inside the LCD controller, not
+     the transport. The practical conclusion: the number that holds for this
      screen is ~355 ms (~2.8 fps) — the layout is dark. Synthetic tests with
      saturated bands measure the worst case and their result (~515 ms) does not
      describe the client's work.
@@ -90,11 +90,11 @@ source:
      ~376 ms. There was no regression — the test payload had changed. libusb-win32
      on the same bands gave 503-533 ms (measured in parallel).
 
-  7. Out of the dpf-ax command set this firmware has ONLY blit and
+  7. Of the dpf-ax command set this firmware supports ONLY blit and
      SETPROPERTY/BRIGHTNESS. Checked after a reset, on a clean pipe: FILLRECT
      (0x11), COPYRECT (0x13) and SETPROPERTY with the FGCOLOR token (0x02) are not
-     acknowledged. A pity, because FILLRECT would draw the bars with no payload at
-     all — but it is not there. That also explains why the ready-made tools push
+     acknowledged. It is a shame: FILLRECT would draw the bars with no payload at
+     all — but it is not there. That also explains why the off-the-shelf tools push
      nothing but full frames here.
 """
 import ctypes as C

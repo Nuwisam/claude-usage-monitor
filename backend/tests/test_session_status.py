@@ -147,7 +147,7 @@ def test_permission_request_does_not_duplicate_entry_for_those_two(ss):
 
 
 def test_posttooluse_closes_by_call_key(ss):
-    """`PermissionRequest` has no `tool_use_id`, so the entry stands on `call_key`.
+    """`PermissionRequest` has no `tool_use_id`, so the entry is keyed on `call_key`.
     The exit computes BOTH candidates and deletes both — not knowing which mode made it."""
     ti = {"command": "git status"}
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash", tool_input=ti))
@@ -402,7 +402,7 @@ def test_ttl_deletes_but_never_hides(ss):
 @pytest.fixture
 def tdir(tmp_path):
     """The transcript directory. The name MUST stay the project slug, because `project` is
-    computed from it and the other tests' assertions stand on that."""
+    computed from it and the other tests' assertions rely on that."""
     d = tmp_path / "z--projects-claude-usage-monitor"
     d.mkdir()
     return d
@@ -930,7 +930,7 @@ def _run_probe(ss, monkeypatch, payload, throttle_fresh=True):
 
 def test_alert_fires_before_throttle(ss, monkeypatch):
     """A regression on the ordering inside `main()`. The probe throttle is 60 s; were the
-    alert to stand behind it, a block would be visible only after a minute or — on dense
+    alert to run after it, a block would be visible only after a minute or — on dense
     events — not at all."""
     assert _run_probe(ss, monkeypatch,
                     hook("PermissionRequest", tool_name="Bash",
@@ -988,8 +988,7 @@ class _Stdin:
 
     The real `sys.stdin` in a hook process gets UTF-8 bytes and decodes them with
     the locale encoding (cp1250 on the machine where this was measured) — `.read()`
-    reproduces exactly that, while `.buffer` carries the truth. A double returning
-    a ready-made `str` was a convenient fiction: it passed the same before the fix
+    reproduces exactly that, while `.buffer` carries the truth. A double that simply returned a fixed `str` was a convenient fiction: it passed the same before the fix
     and after it.
 
     `surrogateescape`, not `strict`: measured on a child process started the way

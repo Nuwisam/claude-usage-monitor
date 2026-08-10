@@ -15,7 +15,7 @@ Three modes, selected by AUTH_MODE:
 In `header` and `verify` mode there is still a separate ALLOWED_EMAILS allowlist on top
 (empty = deny all, fail-safe): authentication says WHO, the allowlist says who is PERMITTED.
 
-NOTE: this module is the ONLY gate — no separate `auth_request` stands in front of the
+NOTE: this module is the ONLY gate — no separate `auth_request` sits in front of the
 backend. Its "401 with redirect_url" response is part of the public API contract, because the
 UI has to react to it on its own. Nobody will hand it a 302.
 """

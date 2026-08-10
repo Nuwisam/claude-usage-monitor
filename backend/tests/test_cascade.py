@@ -1,6 +1,6 @@
 """The limit cascade: 5 h -> week -> credits -> hard block.
 
-EVERY case stands on REAL payloads: Max on `usage_max.json`, Team on three dumps from one
+EVERY case rests on REAL payloads: Max on `usage_max.json`, Team on three dumps from one
 account (`tests/team.py`) — credits working, the own pool exhausted, the meter withdrawn
 by the organization. Team used to be made up here (USD, a threshold of 9000), because at
 the time of writing there was no way to observe credits switched on; now there is, so the
@@ -45,7 +45,7 @@ def test_max_credits_off_hard_block_right_behind_weekly():
     assert c[WEEKLY].state == ON and c[WEEKLY].utilization == 30.0
     # spend.enabled = false => credits SWITCHED OFF, and not "unknown"
     assert c[CREDITS].state == OFF
-    # without credits the hard block stands right behind the weekly one — no threshold amount
+    # without credits the hard block sits right behind the weekly one — no threshold amount
     assert c[HARD_BLOCK].state == ON and c[HARD_BLOCK].limit_minor is None
 
 
@@ -78,7 +78,7 @@ def test_team_credit_amounts_in_minor_units_without_flattening():
     c = by_key(build_cascade(facts_from_payload(usage(USAGE_ACTIVE))))
     k = c[CREDITS]
     assert (k.used_minor, k.limit_minor, k.currency, k.exponent) == (27795, 30000, "EUR", 2)
-    # the hard block stands on the same threshold that limits credits
+    # the hard block is pinned to the same threshold that limits credits
     assert c[HARD_BLOCK].limit_minor == 30000
 
 
@@ -141,7 +141,7 @@ def test_cascade_on_withdrawn_meter_does_not_promise_a_way_out():
 
 def test_withdrawn_credits_are_skipped_even_without_spend_limit_reached_flag():
     """`spend_limit_reached` is sometimes `true` on withdrawal, but leaning on it is
-    guesswork: with the own pool exhausted it stands at `false`. Sliding down to the hard
+    guesswork: with the own pool exhausted it reads `false`. Sliding down to the hard
     block has to follow from the rung being SWITCHED OFF, not from the flag."""
     p = usage(USAGE_WITHDRAWN)
     p["extra_usage"]["spend_limit_reached"] = False

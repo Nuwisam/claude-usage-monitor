@@ -39,7 +39,7 @@ function flag(extra: Record<string, unknown> | null, key: string): boolean | nul
 }
 
 /** Full precision, unlike `pct()` from lib/format.ts, which cuts to a single decimal place.
- *  Here the precision IS the content: the bar stands on a rounded `spend.percent` (93),
+ *  Here the precision IS the content: the bar is drawn from a rounded `spend.percent` (93),
  *  while the measurement was 92.656 — and that is the whole difference between the two series. */
 function exact(v: number): string {
   return String(Number(v.toFixed(3)));
@@ -96,7 +96,7 @@ export function creditsFacts(spend: SeriesStatus, eu: SeriesStatus | undefined):
     out.push({ term: "Disabled by", value: "you" });
   }
   // Only when `unavailableReason` did not already say so above — otherwise the same fact would
-  // stand in the panel twice, once with the in-band code, once with the pre-withdrawal one.
+  // appear in the panel twice, once with the in-band code, once with the pre-withdrawal one.
   const reason = x?.disabled_reason;
   if (withdrawn === null && typeof reason === "string") {
     out.push({ term: "Disabled by", value: "the organization", code: reason });

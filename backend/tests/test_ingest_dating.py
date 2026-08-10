@@ -236,7 +236,7 @@ async def test_entry_with_clock_turned_back_is_rejected_but_counted(db):
 async def test_entry_without_sent_at_passes_despite_newer_date(db):
     """A spool entry written by probe v4 carries the DUMP time in `captured_at`, routinely
     NEWER than the `captured_at` of the current record (which since v5 is the cache time).
-    The rejection criterion stands on `sent_at` precisely so that such entries survive."""
+    The rejection criterion rests on `sent_at` precisely so that such entries survive."""
     t = utcnow().replace(microsecond=0)
     p = payload(account=ACCOUNT_TEAM_REAL, usage=team(spend_percent=88),
                 captured_at=t - timedelta(seconds=10))

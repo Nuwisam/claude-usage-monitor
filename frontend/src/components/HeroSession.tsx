@@ -18,7 +18,7 @@ export function pickSession(series: SeriesStatus[]): SeriesStatus | null {
   );
 }
 
-/** The hero stands on the 5 h session for good. Were it to jump after `isActive`, the same
+/** The hero is pinned to the 5 h session for good. Were it to jump after `isActive`, the same
  *  screen would mean something different depending on the day of the week. */
 export function HeroSession({ s, nowMs }: { s: SeriesStatus; nowMs: number }) {
   const v = describeSeries(s, nowMs);

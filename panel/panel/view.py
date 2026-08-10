@@ -30,7 +30,7 @@ class SeriesView:
     # only threshold in this UI. There is no `outline` field here, because NOBODY
     # read it: not draw.bar, not render, not a single test. `stub`/`ghost`/
     # `ghost_pct` stay even though the running panel never lights them — the
-    # `--probe` test card stands on them (panel/README.md).
+    # `--probe` test card depends on them (panel/README.md).
     __slots__ = ("measured", "hatch", "stub", "ghost", "ghost_pct",
                  "bar_pct", "full", "number", "words")
 
@@ -117,7 +117,7 @@ def reset_note(s, now_ms):
 
 
 def pick_session(series):
-    """The hero stands on the 5 h session PERMANENTLY. Were it to follow `isActive`,
+    """The hero is permanently anchored to the 5 h session. Were it to follow `isActive`,
     the same screen would mean something else depending on the day of the week
     (HeroSession.tsx)."""
     primary = [s for s in series if s.primary]

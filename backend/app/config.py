@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     ingest_tokens_raw: str = Field("", alias="INGEST_TOKENS")
     max_ingest_body_bytes: int = Field(262144, alias="MAX_INGEST_BODY_BYTES")
     max_backlog_entries: int = Field(200, alias="MAX_BACKLOG_ENTRIES")
-    # Threshold for the `clock_skew` EVENT, nothing more. Dating stands on the `sent_at - ts`
+    # Threshold for the `clock_skew` EVENT, nothing more. Dating rests on the `sent_at - ts`
     # difference within the client's own clock, so drift against the server does not break it
     # and there is no reason to reject anything on account of it.
     #

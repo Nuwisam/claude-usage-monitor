@@ -16,7 +16,7 @@ REASONS = {
 }
 
 # The same reason in short form — for the list, where a sentence does not fit.
-# The renderer is what uppercases it, because the same word also stands in the
+# The renderer is what uppercases it, because the same word also appears in the
 # account band once the card collapses.
 SHORT = {
     "permission": "allow",

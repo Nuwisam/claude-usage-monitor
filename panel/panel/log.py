@@ -3,7 +3,7 @@
 The client runs under `pythonw.exe` from a scheduled task, so there is NO console.
 Without catching exceptions and without faulthandler, a restart loop firing every
 minute would leave behind not a single line — and that is exactly the failure
-one wants to see after coming back to the machine.
+you most need visibility into once you are back at the machine.
 """
 import faulthandler
 import logging

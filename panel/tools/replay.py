@@ -47,7 +47,7 @@ def main():
             continue
         if payload.get("serverNow"):
             clock.anchor(payload["serverNow"])
-        # `alert` frames MUST get through this filter. What stood here before was
+        # `alert` frames MUST get through this filter. The line that used to be here was
         # `if event != "account": continue`, so recorded alerts were invisible to
         # this tool — meaning the one scene that cannot be summoned on demand
         # would also be the only one that cannot be replayed.

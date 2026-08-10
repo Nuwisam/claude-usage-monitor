@@ -49,7 +49,7 @@ def line_height(f):
 
 
 def baseline_for_centre(f, sample, centre_y):
-    """Baseline position at which `sample` stands vertically centered.
+    """Baseline position at which `sample` sits centered vertically.
 
     Computed from the ACTUAL bounding box, not from the nominal size: digits reach
     neither the ascender nor the descender, so centering by the font metrics lies

@@ -475,7 +475,7 @@ def _fraction(a, b):
 
 
 def test_transition_to_card_fits_under_full_frame_threshold():
-    """Pins the number `FULL_AT = 0.85` stands on.
+    """Pins the number that `FULL_AT = 0.85` rests on.
 
     At the old threshold of 0.60 this transition landed 2 points ABOVE it and turned
     45 crops into a full frame — that is 1.16 s into 1.87 s, for no gain at all.
@@ -659,7 +659,7 @@ def test_banner_and_strip_ink_sits_where_the_mockup_says():
 @pytest.mark.parametrize("count", [1, 2, 3, 5])
 @pytest.mark.parametrize("flooded,color", [(False, "NEUTRAL_900"), (True, "ACCENT")])
 def test_rail_stands_in_both_frames_of_every_layout(count, flooded, color):
-    """The rail is not a property of the full frame: it always stands below the banner, and
+    """The rail is not a property of the full frame: it always sits below the banner, and
     flooding only repaints it. A bar appearing out of nothing would be a stronger movement
     than a change of color, and outside the `alert_flash_sec` window the card would be left
     with no left edge.
