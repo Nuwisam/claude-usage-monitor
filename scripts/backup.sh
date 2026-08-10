@@ -1,6 +1,6 @@
 #!/bin/sh
-# Zrzut bazy do ./backups/. Kopiowanie goracego datadiru InnoDB NIE daje spojnego
-# backupu — niezaleznie od systemu plikow.
+# Database dump into ./backups/. Copying a hot InnoDB datadir does NOT give a consistent
+# backup — regardless of the file system.
 #
 # Cron:  0 3 * * *  /var/lib/claude-usage-monitor/scripts/backup.sh
 set -e
@@ -8,7 +8,7 @@ set -e
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$DIR"
 
-[ -f .env ] || { echo "brak .env w $DIR"; exit 1; }
+[ -f .env ] || { echo "no .env in $DIR"; exit 1; }
 DB=$(grep -oP '^MARIADB_DATABASE=\K.*' .env)
 PW=$(grep -oP '^MARIADB_ROOT_PASSWORD=\K.*' .env)
 KEEP=${KEEP_DAYS:-14}
@@ -16,7 +16,7 @@ KEEP=${KEEP_DAYS:-14}
 mkdir -p backups
 OUT="backups/claude_usage_$(date -u +%Y%m%d_%H%M%S).sql.gz"
 
-# Haslo przez defaults-file, NIE w argv — inaczej widzi je kazdy przez `ps`.
+# The password via defaults-file, NOT in argv — otherwise anyone can see it via `ps`.
 CNF=$(mktemp); chmod 600 "$CNF"
 printf '[client]\nuser=root\npassword=%s\n' "$PW" > "$CNF"
 trap 'rm -f "$CNF"' EXIT INT TERM
@@ -26,9 +26,9 @@ docker exec -i claude_usage_monitor_mariadb sh -c \
      --single-transaction --quick --routines --events '$DB'; rm -f /tmp/.bk.cnf" \
   < "$CNF" | gzip -9 > "$OUT"
 
-# Zrzut bez tresci to blad, ktory latwo przeoczyc do momentu, gdy backup jest potrzebny.
+# A dump with no content is an error that is easy to miss until the backup is needed.
 SIZE=$(stat -c%s "$OUT")
-[ "$SIZE" -gt 1024 ] || { echo "BLAD: zrzut ma tylko $SIZE B — nie ufam mu"; rm -f "$OUT"; exit 1; }
+[ "$SIZE" -gt 1024 ] || { echo "ERROR: the dump is only $SIZE B — not trustworthy"; rm -f "$OUT"; exit 1; }
 
 find backups -name 'claude_usage_*.sql.gz' -mtime "+$KEEP" -delete
 echo "OK  $OUT  ($(numfmt --to=iec "$SIZE" 2>/dev/null || echo "$SIZE B"))"

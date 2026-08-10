@@ -1,20 +1,20 @@
-# Kontekst budowania to KATALOG REPO (nie ./backend) — etap `ui` musi widziec frontend/.
-# Patrz docker-compose.yml: build.context = "." , build.dockerfile = "backend/Dockerfile".
+# The build context is the REPO DIRECTORY (not ./backend) — the `ui` stage must see frontend/.
+# See docker-compose.yml: build.context = "." , build.dockerfile = "backend/Dockerfile".
 
 # --------------------------------------------------------------------------- UI
 FROM node:22-alpine AS ui
 
-# Publiczna sciezka montowania. Musi zgadzac sie z APP_BASE_PATH backendu i z regula
-# ProxyPass w Apache — jedna wartosc, trzech konsumentow.
+# The public mount path. It must agree with the backend's APP_BASE_PATH and with the
+# ProxyPass rule in Apache — one value, three consumers.
 ARG VITE_BASE_PATH=/claude-usage/
 ENV VITE_BASE_PATH=${VITE_BASE_PATH}
 
 WORKDIR /ui
 
 COPY frontend/package.json frontend/package-lock.json* ./
-# NIE dawaj --omit=optional: rollup wozi natywne binaria (np. @rollup/rollup-linux-x64-musl)
-# jako optionalDependencies, a bez nich build sie nie uruchomi.
-# Dlugie timeouty sa konieczne — z tej sieci npm regularnie zrywa na pierwszym podejsciu.
+# Do NOT add --omit=optional: rollup carries native binaries (e.g. @rollup/rollup-linux-x64-musl)
+# as optionalDependencies, and without them the build will not run.
+# Long timeouts are necessary — npm regularly drops on the first attempt from some networks.
 RUN npm install --no-audit --no-fund --fetch-timeout=600000 --fetch-retries=5
 
 COPY frontend/ ./
@@ -38,7 +38,7 @@ COPY backend/alembic ./alembic
 COPY backend/app ./app
 COPY backend/entrypoint.sh ./
 
-# Statyki UI. Backend montuje /assets i oddaje index.html jako fallback SPA (app/main.py).
+# UI statics. The backend mounts /assets and serves index.html as the SPA fallback (app/main.py).
 COPY --from=ui /ui/dist ./static
 
 RUN chmod +x entrypoint.sh

@@ -1,6 +1,6 @@
-# Kontekst budowania to caly katalog repo (etap `ui` potrzebuje frontend/), a w repo
-# lezy TAKZE katalog danych MariaDB — bez tego pliku kazdy `docker compose build`
-# przesylalby setki MB bazy do daemona.
+# The build context is the whole repo directory (the `ui` stage needs frontend/), and the
+# repo ALSO holds the MariaDB data directory — without this file every `docker compose build`
+# would ship hundreds of MB of database to the daemon.
 data/
 backups/
 .git/
@@ -16,10 +16,10 @@ logs/
 *.log
 *.jsonl
 
-# Sekrety nie maja prawa wejsc do obrazu.
+# Secrets have no business entering the image.
 .env
 
-# Rzeczy nieuzywane przy budowaniu obrazu.
+# Things unused when building the image.
 docs/
 scripts/
 deploy/

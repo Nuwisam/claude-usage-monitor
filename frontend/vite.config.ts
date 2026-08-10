@@ -1,14 +1,14 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// Aplikacja wisi pod prefiksem (/claude-usage/), a Apache ten prefiks OBCINA — backend
-// widzi tylko /api/... i /assets/... Dlatego `base` musi byc publiczna sciezka: adresy
-// assetow w index.html sa absolutne i Apache mapuje je z powrotem na korzen kontenera.
+// The application hangs under a prefix (/claude-usage/), and Apache STRIPS that prefix — the
+// backend sees only /api/... and /assets/... That is why `base` must be the public path: the
+// asset addresses in index.html are absolute and Apache maps them back to the container root.
 //
-// Jedna wartosc, trzech konsumentow (base -> import.meta.env.BASE_URL):
-// basename routera, prefiks API i favicon. Nie czytaj VITE_BASE_PATH nigdzie indziej.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- konfiguracja biegnie w Node,
-// a projekt nie ciagnie @types/node tylko dla tej jednej linii.
+// One value, three consumers (base -> import.meta.env.BASE_URL):
+// the router basename, the API prefix and the favicon. Read VITE_BASE_PATH nowhere else.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the config runs in Node,
+// and the project does not pull in @types/node just for this one line.
 const base = (globalThis as any).process?.env?.VITE_BASE_PATH || "/claude-usage/";
 
 export default defineConfig({
@@ -17,8 +17,8 @@ export default defineConfig({
   build: { outDir: "dist", sourcemap: false, chunkSizeWarningLimit: 700 },
   server: {
     port: 5173,
-    // Dev bez backendu: VITE_MOCKS=1 i dane z makiety. Proxy jest tu dla przypadku,
-    // gdyby ktos podniosl backend lokalnie — produkcja nie ma CORS ani portu na hoscie.
+    // Dev without a backend: VITE_MOCKS=1 and data from the mockup. The proxy is here in case
+    // someone brings a backend up locally — a real deployment has no CORS and no host port.
     proxy: {
       [`${base}api`]: {
         target: "http://127.0.0.1:8000",

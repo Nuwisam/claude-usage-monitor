@@ -28,8 +28,9 @@ services:
       start_period: 30s
 
   claude_usage_monitor_backend:
-    # Kontekst to katalog repo, nie ./backend — etap `ui` w Dockerfile buduje frontend/.
-    # Bez tego COPY frontend/... nie widzi zrodel. Wielkosc kontekstu trzyma .dockerignore.
+    # The context is the repo directory, not ./backend — the `ui` stage in the Dockerfile
+    # builds frontend/. Without it COPY frontend/... sees no sources. .dockerignore keeps
+    # the context small.
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -41,8 +42,8 @@ services:
       DATABASE_URL: mysql+aiomysql://${MARIADB_USER}:${MARIADB_PASSWORD}@claude_usage_monitor_mariadb:3306/${MARIADB_DATABASE}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TZ: UTC
-      # Bez wartosci domyslnej — celowo. Nieustawione AUTH_MODE zatrzymuje kontener na
-      # starcie zamiast wybrac za instalujacego, czy dane maja byc otwarte.
+      # No default value — deliberately. An unset AUTH_MODE stops the container at
+      # startup instead of deciding for the installer whether the data is to be open.
       AUTH_MODE: ${AUTH_MODE}
       ALLOWED_EMAILS: ${ALLOWED_EMAILS}
       AUTH_EMAIL_HEADER: ${AUTH_EMAIL_HEADER:-X-Forwarded-Email}
@@ -72,14 +73,14 @@ services:
     networks:
       - claude-usage-monitor_internal
       - claude-usage-monitor_edge
-    # Domyslnie na PETLI ZWROTNEJ: instalacja lokalna dziala od razu pod
-    # http://127.0.0.1:8080/claude-usage/, a jednoczesnie nic nie wychodzi na swiat, dopoki
-    # nie postawisz przed tym proxy z TLS-em i logowaniem.
+    # On the LOOPBACK by default: a local installation works right away at
+    # http://127.0.0.1:8080/claude-usage/, and at the same time nothing goes out to the world
+    # until a proxy with TLS and a login is put in front of it.
     #
-    # Za reverse proxy publikowanie portu jest zbedne — proxy siega kontenera po sieci
-    # dockerowej. Zdjac je mozna TYLKO przez `ports: !reset []` w docker-compose.override.yml
-    # (Compose >= 2.24). `BACKEND_BIND=` nie wystarczy: `:-` odpala sie takze na wartosci
-    # pustej, wiec port wroci na domyslny.
+    # Behind a reverse proxy publishing the port is unnecessary — the proxy reaches the
+    # container over the Docker network. It can be taken away ONLY through `ports: !reset []`
+    # in docker-compose.override.yml (Compose >= 2.24). `BACKEND_BIND=` is not enough: `:-`
+    # fires on an empty value too, so the port comes back to the default.
     ports:
       - "${BACKEND_BIND:-127.0.0.1:8080}:8000"
     healthcheck:
@@ -90,14 +91,14 @@ services:
       start_period: 30s
 
 networks:
-  # DB nieosiagalna z niczego poza backendem — brak egress, brak dostepu z hosta.
+  # The DB is unreachable from anything but the backend — no egress, no access from the host.
   claude-usage-monitor_internal:
     name: claude-usage-monitor_internal
     driver: bridge
     internal: true
-  # Backend potrzebuje drugiej sieci, bo `internal: true` odcina takze ruch WYCHODZACY:
-  # bez niej AUTH_MODE=verify nie mialby jak zapytac uslugi tozsamosci, a publikowanie
-  # portu nie mialoby czego publikowac.
+  # The backend needs a second network, because `internal: true` also cuts OUTBOUND traffic:
+  # without it AUTH_MODE=verify would have no way to ask the identity service, and publishing
+  # the port would have nothing to publish.
   claude-usage-monitor_edge:
     name: claude-usage-monitor_edge
     driver: bridge

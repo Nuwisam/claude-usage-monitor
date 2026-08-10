@@ -7,9 +7,9 @@
     "jsx": "react-jsx",
     "types": ["vite/client"],
 
-    /* Po to jest tu TypeScript: kontrakt ma `utilization: number | null`, gdzie null
-       znaczy "nie wiem" i NIE WOLNO go wyrenderowac jako 0%. strictNullChecks sprawia,
-       ze kompilator nie przepusci pominietego przypadku. */
+    /* This is what TypeScript is here for: the contract has `utilization: number | null`,
+       where null means "unknown" and MUST NOT be rendered as 0%. strictNullChecks makes
+       the compiler refuse to pass a case that was left out. */
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noUnusedLocals": true,
