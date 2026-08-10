@@ -1,46 +1,46 @@
 <#
-    Instalacja panelu AX206 jako zadania harmonogramu.
+    Installation of the AX206 panel as a scheduled task.
 
-    .\deploy\install-task.ps1              instaluje / aktualizuje
-    .\deploy\install-task.ps1 -Uninstall   usuwa zadanie (venv i konfiguracje zostawia)
+    .\deploy\install-task.ps1              installs / updates
+    .\deploy\install-task.ps1 -Uninstall   removes the task (leaves the venv and configuration)
 
-    Co robi:
-      1. tworzy venv POZA repo (%LOCALAPPDATA%\claude-usage-monitor\panel-venv)
-      2. instaluje z requirements.txt
-      3. klade przekierowanie panel-run.pyw obok konfiguracji, wskazujace na repo
-      4. rejestruje zadanie "Claude Panel AX206" na logowanie uzytkownika
-      5. uruchamia je i czeka, az log potwierdzi, ze panel rysuje
+    What it does:
+      1. creates a venv OUTSIDE the repo (%LOCALAPPDATA%\claude-usage-monitor\panel-venv)
+      2. installs from requirements.txt
+      3. places a panel-run.pyw redirection next to the configuration, pointing at the repo
+      4. registers the task "Claude Panel AX206" on user logon
+      5. starts it and waits until the log confirms that the panel is drawing
 
-    Uwagi:
-      * "Uruchom tylko gdy uzytkownik jest zalogowany" jest WYMAGANE: dysk sieciowy to dysk
-        mapowany per sesja, a dostep do USB wymaga sesji interaktywnej.
-      * ExecutionTimeLimit MUSI byc zerowy. Domyslne "zatrzymaj po 3 dniach"
-        zabijaloby panel co tydzien, bez sladu w logu.
-      * pythonw.exe, nie python.exe - inaczej przy kazdym logowaniu wyskakuje konsola.
-      * Ten plik trzymamy w CZYSTYM ASCII. PowerShell 5.1 czyta plik bez BOM jako
-        ANSI, wiec myslnik U+2014 rozpada sie na trzy bajty, z ktorych 0x94 to
-        cudzyslow zamykajacy U+201D - a parser uznaje go za koniec stringa i
-        przewraca sie kilkadziesiat linii dalej, w miejscu bez zwiazku z
-        przyczyna. Zaden myslnik nie jest tego wart.
-      * REJESTRACJA TO NIE URUCHOMIENIE. Wyzwalacz jest na logowanie, wiec przy
-        instalacji na juz zalogowanej sesji zadanie po prostu stoi. Skrypt, ktory
-        konczyl sie na "zarejestrowane", zostawial przy ciemnym ekranie bez
-        zadnej wskazowki - i kusil, zeby odpalic go drugi raz.
-      * Uchwyt do panelu jest WYLACZNY. Gdy trzyma go inny program, klient probuje co
-        30 s i pisze o tym w logu RAZ (nie co sekunde), a na szkle zostaje cudzy
-        obraz. Z zewnatrz wyglada to identycznie jak nieudana instalacja, wiec
-        skrypt czyta log po starcie i nazywa ten stan wprost.
+    Notes:
+      * "Run only when user is logged on" is REQUIRED: a network drive is a drive
+        mapped per session, and USB access requires an interactive session.
+      * ExecutionTimeLimit MUST be zero. The default "stop after 3 days"
+        would kill the panel once a week, without a trace in the log.
+      * pythonw.exe, not python.exe -- otherwise a console pops up at every logon.
+      * This file is kept in PURE ASCII. PowerShell 5.1 reads a file without a BOM
+        as ANSI, so the U+2014 dash breaks apart into three bytes, of which 0x94 is
+        the closing quote U+201D -- and the parser takes it for the end of a string
+        and falls over a few dozen lines further on, in a spot with no connection
+        to the cause. No dash is worth that.
+      * REGISTRATION IS NOT A START. The trigger is on logon, so during an
+        installation on an already logged-on session the task simply sits idle. A script
+        that ended at "registered" left the screen dark without
+        any hint at all -- and tempted a second run.
+      * The handle to the panel is EXCLUSIVE. While another program holds it, the client
+        retries every 30 s and writes about it in the log ONCE (not every second), and
+        another program's image stays on the glass. From outside this looks exactly like
+        a failed installation, so the script reads the log after start and names it outright.
 #>
 [CmdletBinding()]
 param(
     [switch]$Uninstall,
-    # Nazwa zostaje z czasow jednego ekranu. Zmiana nazwy NIE przenosi zadania:
-    # stare zostaloby zarejestrowane obok nowego i dwa klienty bilyby sie o ten
-    # sam wyswietlacz.
+    # The name is a leftover from the single-screen days. Renaming does NOT move the task:
+    # the old one would stay registered next to the new one and two clients would fight
+    # over the same display.
     [string]$TaskName = "Claude Panel AX206",
-    # Ile ekranow deklaruje panel.json. Skrypt tego pliku nie czyta (przy
-    # pierwszej instalacji jeszcze go nie ma), a bez tej liczby "OK" po
-    # pierwszej zglaszajacej sie linii znaczyloby "rysuje jeden z dwoch".
+    # How many screens panel.json declares. The script does not read that file (at
+    # the first installation it does not exist yet), and without this number an "OK"
+    # after the first line to report in would mean "drawing one screen out of two".
     [int]$Panels = 1
 )
 
@@ -53,9 +53,9 @@ $Pythonw  = Join-Path $VenvDir "Scripts\pythonw.exe"
 $Launcher = Join-Path $AppDir "panel-run.pyw"
 
 function Get-PanelProcess {
-    # Po wierszu polecen, nie po nazwie: pythonw.exe uruchamia
-    # takze inne rzeczy, a zabicie cudzego procesu byloby gorsze niz problem,
-    # ktory rozwiazujemy. Instancji sa zwykle dwie - stub venv i jego dziecko.
+    # By command line, not by name: pythonw.exe also runs
+    # other things, and killing an unrelated process would be worse than the problem
+    # being solved here. There are usually two instances -- the venv stub and its child.
     @(Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -like "*panel-run.pyw*" })
 }
@@ -87,17 +87,17 @@ if ($LASTEXITCODE -ne 0) { throw "pip: aktualizacja pip nie przeszla" }
 & (Join-Path $VenvDir "Scripts\python.exe") -m pip install --quiet -r (Join-Path $PanelDir "requirements.txt")
 if ($LASTEXITCODE -ne 0) { throw "pip install -r requirements.txt nie przeszedl" }
 
-# --- 2. przekierowanie ----------------------------------------------------
-# Ta sama konwencja co przy sondzie: w repo zostaje zrodlo, tutaj lezy kilka
-# linijek, ktore je uruchamiaja. Edycja w repo dziala natychmiast.
+# --- 2. redirection -------------------------------------------------------
+# The same convention as with the probe: the source stays in the repo, here sit a
+# few lines that run it. Editing in the repo takes effect at once.
 $launcherBody = @"
-# Wygenerowane przez panel/deploy/install-task.ps1 - nie edytuj recznie.
-# Panel zyje w repo; tutaj jest tylko przekierowanie.
+# Generated by panel/deploy/install-task.ps1 -- do not edit by hand.
+# The panel lives in the repo; this is only a redirection.
 import os, runpy, sys, time
 
 SRC = r"$PanelDir"
 
-# Dysk sieciowy bywa niezamapowany, gdy zadanie odpala sie tuz po zalogowaniu.
+# A network drive can be unmapped when the task fires right after logon.
 waited = 0
 while not os.path.isdir(SRC) and waited < 120:
     time.sleep(2)
@@ -109,19 +109,19 @@ runpy.run_path(os.path.join(SRC, "run.pyw"), run_name="__main__")
 Set-Content -Path $Launcher -Value $launcherBody -Encoding utf8
 Write-Host "przekierowanie: $Launcher"
 
-# --- 3. zadanie -----------------------------------------------------------
-# Zatrzymanie PRZED rejestracja, nie po: -Force na dzialajacym zadaniu zostawia
-# stary proces przy zyciu. Bez tego dalej biegloby to, co bylo, a nie to, co
-# wlasnie zainstalowalismy - i to milczkiem, bo obraz na panelu wyglada tak samo.
+# --- 3. task --------------------------------------------------------------
+# Stop BEFORE registering, not after: -Force on a running task leaves the old
+# process alive. Without this, what was there before would keep running instead of
+# what was just installed -- and silently, because the image on the panel looks the same.
 $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($existing -and $existing.State -eq "Running") {
     Write-Host "zatrzymuje poprzednia instancje"
     Stop-ScheduledTask -TaskName $TaskName
-    # Czekamy na SMIERC PROCESU, nie na stan zadania. Harmonogram melduje
-    # "Ready", gdy tylko wysle sygnal, a pythonw zyje jeszcze chwile i trzyma
-    # blokade panel.lock. Nowa instancja weszlaby wtedy na zajeta blokade,
-    # cicho by wyszla i dalej rysowalby STARY kod - czyli instalacja
-    # wygladalaby na udana, nie zmieniajac niczego.
+    # Wait for the PROCESS TO DIE, not for the task state. The scheduler reports
+    # "Ready" as soon as it sends the signal, while pythonw lives on a moment longer and
+    # holds the panel.lock lock. A new instance would then walk into a taken lock,
+    # quietly exit, and the OLD code would keep drawing -- that is, the installation
+    # would look successful while changing nothing.
     $deadline = (Get-Date).AddSeconds(20)
     while ((Get-Date) -lt $deadline -and (Get-PanelProcess)) {
         Start-Sleep -Milliseconds 500
@@ -142,7 +142,7 @@ $settings = New-ScheduledTaskSettingsSet `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -RestartCount 99 `
     -MultipleInstances IgnoreNew `
-    -ExecutionTimeLimit (New-TimeSpan -Seconds 0)   # 0 = bez limitu; patrz naglowek
+    -ExecutionTimeLimit (New-TimeSpan -Seconds 0)   # 0 = no limit; see the header
 
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
     -LogonType Interactive -RunLevel Limited
@@ -151,10 +151,10 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Settings $settings -Principal $principal -Force `
     -Description "Limity Claude na panelu USB AX206 (repo: $PanelDir)" | Out-Null
 
-# --- 4. start i potwierdzenie --------------------------------------------
-# Czekamy na LINIE W LOGU, nie na "State = Running". Zadanie potrafi byc
-# uruchomione i jednoczesnie nic nie rysowac: zajety panel, zly token, brak
-# sieci. "Running" powiedzialoby wtedy nieprawde.
+# --- 4. start and confirmation --------------------------------------------
+# Wait for a LINE IN THE LOG, not for "State = Running". A task can be
+# running and at the same time draw nothing: a busy panel, a bad token, no
+# network. "Running" would be telling an untruth then.
 $LogPath = Join-Path $AppDir "panel.log"
 $before = 0
 if (Test-Path $LogPath) { $before = @(Get-Content $LogPath).Count }
@@ -164,9 +164,9 @@ Write-Host ""
 Write-Host "zadanie '$TaskName' zarejestrowane i uruchomione"
 Write-Host -NoNewline "czekam na potwierdzenie z logu "
 
-# Ile ekranow ma sie zglosic. Skrypt NIE czyta panel.json - przy instalacji
-# tego pliku czesto jeszcze nie ma (jest na to osobna galaz nizej), wiec liczbe
-# podaje sie z reki: .\install-task.ps1 -Panels 2
+# How many screens must report in. The script does NOT read panel.json -- during
+# installation that file often does not exist yet (there is a separate branch for it
+# below), so the number is given by hand: .\install-task.ps1 -Panels 2
 $deadline = (Get-Date).AddSeconds(30)
 $opened = @(); $unacked = @(); $busy = $null; $dup = $null; $bad = $null
 while ((Get-Date) -lt $deadline) {
@@ -174,13 +174,13 @@ while ((Get-Date) -lt $deadline) {
     Write-Host -NoNewline "."
     $new = @()
     if (Test-Path $LogPath) { $new = @(Get-Content $LogPath | Select-Object -Skip $before) }
-    # Czekamy na PIERWSZA KLATKE, nie na "otwarty". Uchwyt do urzadzenia
-    # jeszcze niczego nie rysuje, a to jego brak byl objawem, ktory kazal
-    # instalowac wszystko po raz drugi.
+    # Wait for the FIRST FRAME, not for "opened". A handle to the device
+    # does not draw anything yet, and it was the missing frame that was the symptom
+    # which had everything installed a second time.
     #
-    # Zbieramy WSZYSTKIE linie, nie ostatnia: przy dwoch ekranach jeden moze
-    # rysowac, a drugi byc zajety - i "OK" po pierwszej pasujacej linii
-    # zamiatalby to pod dywan.
+    # Collect ALL the lines, not the last one: with two screens one may be
+    # drawing while the other is busy -- and an "OK" after the first matching line
+    # would sweep that under the rug.
     $opened  = @($new | Where-Object { $_ -match "pierwsza klatka po otwarciu" })
     $unacked = @($new | Where-Object { $_ -match "bez potwierdzenia" })
     $busy    = $new | Where-Object { $_ -match "zajety przez inny proces" } | Select-Object -Last 1
@@ -200,9 +200,9 @@ if ($opened.Count + $unacked.Count -gt 0) {
     }
     foreach ($line in $opened) { Write-Host "  $line" }
     foreach ($line in $unacked) {
-        # Ten sterownik NICZEGO nie potwierdza: linia mowi tylko, ze bajty
-        # wyszly. Ekran niepodlaczony, obrocony albo rozjechany zapisze
-        # dokladnie to samo, wiec tu nie ma czego uznac za "rysuje".
+        # This driver acknowledges NOTHING: the line only says that the bytes
+        # went out. A screen unplugged, rotated or skewed will write down
+        # exactly the same, so there is nothing here to count as "drawing".
         Write-Host "  $line"
         Write-Host "    ^ bez potwierdzenia - sprawdz wzrokiem, czy cos widac"
     }
