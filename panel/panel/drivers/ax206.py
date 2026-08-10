@@ -1,93 +1,101 @@
-"""Sterownik panelu AX206 (VID 1908 / PID 0102) — Windows + libusb-1.0.
+"""AX206 panel driver (VID 1908 / PID 0102) — Windows + libusb-1.0.
 
-Dwie rzeczy, ktore latwo pomylic: STEROWNIK urzadzenia to nadal libusb-win32
-(`libusb0.sys`, ten sam, ktorego uzywaja gotowe narzedzia do tych wyswietlaczy), a BIBLIOTEKA, przez ktora z nim
-rozmawiamy, to libusb-1.0. Backend windowsowy libusb-1.0 obsluguje urzadzenia
-zwiazane z libusb0.sys — zmierzone, patrz nizej. Przepinanie sterownika na
-WinUSB nie jest potrzebne i zerwaloby tamte narzedzia.
+Two things that are easy to confuse: the device DRIVER is still libusb-win32
+(`libusb0.sys`, the same one the ready-made tools for these displays use), while
+the LIBRARY used to talk to it is libusb-1.0. The libusb-1.0 Windows backend
+handles devices bound to libusb0.sys — measured, see below. Switching the driver
+over to WinUSB is unnecessary and would break those tools.
 
-Powod zmiany biblioteki jest jeden: `libusb_get_port_numbers()` podaje LANCUCH
-PORTOW z tego samego uchwytu, ktory otwieramy. API legacy 0.1 z libusb-win32 nie
-podawalo zadnej topologii (`bus-0`, `devnum=0`), wiec modul trzeba bylo szukac
-w rejestrze Windows i laczyc jedno z drugim po kolejnosci — czyli zgadywac.
-Szczegoly w naglowku device.py.
+There is one reason for the change of library: `libusb_get_port_numbers()` reports
+the PORT CHAIN from the very handle being opened. The legacy 0.1 API from
+libusb-win32 reported no topology at all (`bus-0`, `devnum=0`), so the module had
+to be looked up in the Windows registry and matched to the other by order — that
+is, guessed. Details in the header of device.py.
 
-Protokol wg dpf-ax (hackfin/dreamlayers): firmowa komenda SCSI 0xCD opakowana
-w pare CBW/CSW transportu USB Bulk-Only Mass Storage, EP 0x01 OUT / 0x81 IN.
+Protocol after dpf-ax (hackfin/dreamlayers): the vendor SCSI command 0xCD wrapped
+in a CBW/CSW pair of the USB Bulk-Only Mass Storage transport, EP 0x01 OUT /
+0x81 IN.
 
-Swiadomie sa tu TYLKO set-property i blit. Komend flash (0xCB, kasowanie
-i zapis SPI) w tym pliku nie ma i byc nie moze — to one potrafia zabic panel.
+Deliberately ONLY set-property and blit are here. The flash commands (0xCB, SPI
+erase and write) are not in this file and must not be — those are the ones that
+can kill a panel.
 
-Trzy wlasciwosci TEGO egzemplarza, zmierzone, ktorych nie ma w zadnym zrodle
-referencyjnym:
+Three properties of this display model, measured, that appear in no reference
+source:
 
-  1. Komenda odpytania o geometrie (`0xCD .. bajt5=2`) jest ZAWODNA: w tych samych
-     warunkach raz zwraca poprawne 480x320, raz milczy az do przeterminowania,
-     a nieudana proba kosztuje jedno zgubione CSW w NASTEPNEJ komendzie. Dlatego
-     geometria jest parametrem z konfiguracji, a `probe_geometry()` sluzy tylko
-     diagnostyce i wola sie ja na koncu, nigdy przed wlasciwa praca.
-  2. Panel BYWA, ze przestaje odsylac CSW, choc kazda ramke przyjmuje i rysuje
-     poprawnie. Brak CSW jest tu ostrzezeniem (licznik `missed_csw`), nigdy
-     bledem — inaczej klient wywala sie na dzialajacym sprzecie.
+  1. The geometry query command (`0xCD .. byte5=2`) is UNRELIABLE: under the same
+     conditions it once returns a correct 480x320 and once stays silent until the
+     timeout, and a failed attempt costs one lost CSW in the NEXT command. Hence
+     the geometry is a parameter from the configuration, and `probe_geometry()`
+     serves diagnostics only and is called last, never before the real work.
+  2. The panel SOMETIMES stops returning CSWs even though it accepts and draws
+     every frame correctly. A missing CSW is a warning here (the `missed_csw`
+     count), never an error — otherwise the client would fall over on working
+     hardware.
 
-     Jeden przypadek jest POWTARZALNY, nie losowy: PIERWSZA klatka po zimnym
-     otwarciu uchwytu nigdy nie dostaje CSW. Zmierzone po trzy razy na obu
-     bibliotekach — libusb-win32 i libusb-1.0 zachowuja sie identycznie, wiec to
-     wlasciwosc firmware'u, nie warstwy transportu. Powtorka po `clear_halt` tego
-     nie ratuje. Kolejne klatki potwierdzaja sie normalnie: 1200 pod rzad,
-     `missed_csw == 0`. Czyli `missed_csw == 1` zaraz po starcie klienta jest
-     stanem NORMALNYM i nie znaczy bledu w nas.
-  3. Reset urzadzenia niezawodnie przywraca potwierdzenia. Uchwyt po resecie jest
-     niewazny, wiec `reset()` MUSI otworzyc urzadzenie ponownie.
-  4. FULL_FRAME_ONLY — i to jest najdrozej okupione ustalenie tego pliku.
+     One case is REPEATABLE, not random: the FIRST frame after a cold open of the
+     handle never gets a CSW. Measured three times each on both libraries —
+     libusb-win32 and libusb-1.0 behave identically, so it is a property of the
+     firmware, not of the transport layer. A retry after `clear_halt` does not
+     rescue it. Later frames are acknowledged normally: 1200 in a row,
+     `missed_csw == 0`. So `missed_csw == 1` right after the client starts is a
+     NORMAL state and does not mean a bug in us.
+  3. A device reset reliably restores acknowledgements. The handle is invalid
+     after a reset, so `reset()` MUST open the device again.
+  4. FULL_FRAME_ONLY — and this is the most dearly bought finding in this file.
 
-     Prostokat w komendzie NIE jest "obszarem do przerysowania". Ustawia OKNO
-     rysowania, w ktore firmware wlewa CALY otrzymany strumien, ZAWIJAJAC go.
-     Transfer musi miec dokladnie 307200 B (pelna klatka) — inaczej transakcja
-     nie domyka sie, nie ma CSW i nie ma rysunku.
+     The rectangle in the command is NOT "the area to repaint". It sets the
+     drawing WINDOW, into which the firmware pours the WHOLE stream it receives,
+     WRAPPING it. The transfer must be exactly 307200 B (a full frame) — otherwise
+     the transaction does not close, there is no CSW and there is no drawing.
 
-     Skutek dla okna mniejszego niz ekran: pelna klatka wchodzi w nie wielokrotnie,
-     wiec na ekranie zostaje OGON ladunku, nie jego poczatek. Zmierzone: okno
-     480x60 z ladunkiem, ktory na dole miał napis "DOL", pokazalo wlasnie ten
-     napis; ladunek dopelniony zerami dawal okno CZARNE. Wczesniejsze "czarne
-     ramki" to byl dokladnie ten efekt, nie brak rysowania.
+     The consequence for a window smaller than the screen: a full frame goes into
+     it several times over, so what stays on the glass is the TAIL of the payload,
+     not its start. Measured: a 480x60 window with a payload carrying the word
+     "DOL" ("bottom") along its foot showed exactly that word; a payload padded
+     with zeros gave a BLACK window. The earlier "black frames" were exactly this
+     effect, not a failure to draw.
 
-     Nie da sie na tym zaoszczedzic transferu: prostokat 480x160 dostal ladunek
-     rowny dokladnie jednemu wypelnieniu okna i tez nie zostal potwierdzony.
-     Ilosc bajtow na drucie jest stala, wiec kazda aktualizacja kosztuje 307200 B
-     niezaleznie od tego, ile pikseli faktycznie sie zmienia. Dlatego
-     `blit()` przyjmuje wylacznie pelny ekran. Posrednie potwierdzenie: pyax206,
-     zrzucony z tego samego modelu, ma pelnoekranowy prostokat zaszyty na sztywno.
+     There is no transfer to be saved this way: a 480x160 rectangle was given a
+     payload equal to exactly one filling of the window and was not acknowledged
+     either. The number of bytes on the wire is constant, so every update costs
+     307200 B regardless of how many pixels actually change. Hence
+     `blit()` accepts the full screen only. Indirect confirmation: pyax206,
+     dumped from the same model, has a full-screen rectangle hardwired into it.
 
-  5. Brak CSW NIE jest kaprysem panelu — to SKUTEK wczesniejszej zle uformowanej
-     transakcji. Powtorzona, identyczna komenda potwierdzala sie normalnie, dopoki
-     przed nia nie poszedl blit o zlej liczbie bajtow; potem potok milkl az do
-     `reset()`. Przy samych poprawnych pelnych klatkach panel potwierdza kazda.
-     Licznik `missed_csw` jest wiec sygnalem BLEDU W NAS, nie awarii sprzetu.
+  5. A missing CSW is NOT a whim of the panel — it is the EFFECT of an earlier
+     badly formed transaction. A repeated, identical command was acknowledged
+     normally as long as no blit with the wrong byte count went before it; after
+     one, the pipe went quiet until `reset()`. Given nothing but correct full
+     frames, the panel acknowledges every one. The `missed_csw` count is therefore
+     a signal of A BUG IN US, not of a hardware failure.
 
-  6. Czas klatki ZALEZY OD TRESCI, mimo ze liczba bajtow na drucie jest stala.
-     Zmierzone na tym module, ten sam blit 307200 B, po resecie, po pieć powtorzen:
+  6. Frame time DEPENDS ON CONTENT, even though the number of bytes on the wire is
+     constant. Measured on this model, the same 307200 B blit, after a reset, over
+     five repetitions:
 
-         karta testowa (ciemna, jak uklad docelowy)   354 ms
-         pelna czern                              356 ms
-         pasy nasyconych kolorow                  514 ms
+         test card (dark, like the target layout)    354 ms
+         full black                               356 ms
+         bands of saturated colors                514 ms
 
-     Rozne ladunki ciemne daja ten sam czas, wiec to nie jest kwestia powtarzania
-     tej samej klatki. Wyglada na koszt po stronie kontrolera LCD, nie transportu.
-     Praktyczny wniosek: liczba, ktora obowiazuje dla tego ekranu, to ~355 ms
-     (~2,8 kl./s) — uklad jest ciemny. Syntetyczne testy nasyconymi pasami mierza
-     najgorszy przypadek i ich wynik (~515 ms) nie opisuje pracy klienta.
+     Different dark payloads give the same time, so it is not a matter of
+     repeating the same frame. It looks like a cost on the LCD controller's side,
+     not the transport's. The practical conclusion: the number that holds for this
+     screen is ~355 ms (~2.8 fps) — the layout is dark. Synthetic tests with
+     saturated bands measure the worst case and their result (~515 ms) does not
+     describe the client's work.
 
-     Uwaga na pulapke pomiarowa: pierwsze pomiary migracji na libusb-1.0 dawaly
-     515 ms i wygladaly na regresje wobec udokumentowanych ~376 ms. Regresji nie
-     bylo — zmienil sie ladunek testowy. libusb-win32 na tych samych pasach
-     dawal 503-533 ms (pomiar rownolegly).
+     Beware the measurement pitfall: the first measurements of the migration to
+     libusb-1.0 gave 515 ms and looked like a regression against the documented
+     ~376 ms. There was no regression — the test payload had changed. libusb-win32
+     on the same bands gave 503-533 ms (measured in parallel).
 
-  7. Z zestawu komend dpf-ax ten firmware ma TYLKO blit i SETPROPERTY/BRIGHTNESS.
-     Sprawdzone po resecie, na czystym potoku: FILLRECT (0x11), COPYRECT (0x13)
-     ani SETPROPERTY z tokenem FGCOLOR (0x02) nie sa potwierdzane. Szkoda, bo
-     FILLRECT rysowalby paski bez zadnego ladunku — ale go nie ma. To tez tlumaczy,
-     czemu gotowe narzedzia pchaja tu wylacznie pelne klatki.
+  7. Out of the dpf-ax command set this firmware has ONLY blit and
+     SETPROPERTY/BRIGHTNESS. Checked after a reset, on a clean pipe: FILLRECT
+     (0x11), COPYRECT (0x13) and SETPROPERTY with the FGCOLOR token (0x02) are not
+     acknowledged. A pity, because FILLRECT would draw the bars with no payload at
+     all — but it is not there. That also explains why the ready-made tools push
+     nothing but full frames here.
 """
 import ctypes as C
 import time
@@ -101,14 +109,14 @@ EP_OUT, EP_IN = 0x01, 0x81
 
 DIR_OUT, DIR_IN = 0, 1
 
-# Kody bledow libusb-1.0, ktore obslugujemy z nazwy. Reszta idzie przez
-# libusb_strerror i lezy w komunikacie.
+# libusb-1.0 error codes handled by name. The rest go through libusb_strerror and
+# end up inside the message.
 LIBUSB_ERROR_NOT_FOUND = -5
 LIBUSB_ERROR_TIMEOUT = -7
 LIBUSB_ERROR_PIPE = -9
 
-# Glebokosc drzewa USB: libusb dokumentuje maksimum 7 hubow miedzy hostem
-# a urzadzeniem, wiec 8 bajtow starcza na kazdy realny lancuch.
+# Depth of the USB tree: libusb documents a maximum of 7 hubs between the host and
+# the device, so 8 bytes are enough for any real chain.
 MAX_PORT_DEPTH = 8
 
 USBCMD_SETPROPERTY = 0x01
@@ -127,18 +135,18 @@ class AX206Error(DriverError):
 
 NAME = "ax206"
 
-# Measured on this unit, our (dark) layout: 307200 B in ~355 ms. Used for write
-# timeouts, so it is deliberately the throughput we actually see rather than any
-# nominal bus figure.
+# Measured on this model with the (dark) layout: 307200 B in ~355 ms. Used for
+# write timeouts, so it is deliberately the throughput actually observed rather
+# than any nominal bus figure.
 BYTES_PER_SEC = 870_000
 
 
-# --- struktury i wiazania libusb-1.0 ----------------------------------------
+# --- libusb-1.0 structures and bindings -------------------------------------
 
 
 class DevDesc(C.Structure):
-    """`libusb_device_descriptor`. Uklad jest ten sam co w API 0.1 — to po prostu
-    deskryptor z normy USB, bajt w bajt."""
+    """`libusb_device_descriptor`. The layout is the same as in the 0.1 API — it is
+    simply the descriptor from the USB standard, byte for byte."""
 
     _fields_ = [
         ("bLength", C.c_ubyte), ("bDescriptorType", C.c_ubyte),
@@ -156,12 +164,12 @@ _ctx = None
 
 
 def _dll_candidates(dll_path):
-    """Skad brac libusb-1.0.dll, w kolejnosci prob.
+    """Where to take libusb-1.0.dll from, in the order tried.
 
-    Pakiet `libusb` z PyPI niesie binarke dla win-amd64 i to on jest droga
-    domyslna — dzieki temu instalacja panelu jest jednym `pip install -r`,
-    bez krokow recznych na nowej maszynie. Jawna sciezka bije wszystko, bo
-    zadanie harmonogramu startuje z innym PATH niz powloka.
+    The `libusb` package from PyPI carries a win-amd64 binary and is the default
+    route — thanks to that, installing the panel is one `pip install -r`, with
+    no manual steps on a new machine. An explicit path beats everything, because
+    the scheduled task starts with a different PATH than the shell.
     """
     if dll_path:
         yield dll_path
@@ -175,7 +183,7 @@ def _dll_candidates(dll_path):
 
 
 def load(dll_path=None):
-    """libusb-1.0.dll, raz na proces."""
+    """libusb-1.0.dll, once per process."""
     global _dll
     if _dll is not None:
         return _dll
@@ -225,9 +233,9 @@ def load(dll_path=None):
 
 
 def context(dll_path=None):
-    """Kontekst libusb, raz na proces. `libusb_exit` nie jest wolane celowo:
-    kontekst zyje tyle, co proces, a zamykanie go w trakcie unieważniloby
-    wskazniki urzadzen trzymane przez otwarte uchwyty."""
+    """The libusb context, once per process. `libusb_exit` is deliberately not
+    called: the context lives as long as the process, and closing it midway would
+    invalidate the device pointers held by open handles."""
     global _ctx
     dll = load(dll_path)
     if _ctx is None:
@@ -244,23 +252,24 @@ def strerror(dll, code):
 
 
 def format_port_path(ports):
-    """Lancuch portow w postaci, ktora idzie do panel.json: "3.4".
+    """The port chain in the form that goes into panel.json: "3.4".
 
-    Numer magistrali celowo NIE wchodzi do klucza. Jest syntetycznym indeksem
-    kontrolera nadawanym przy enumeracji — czyli tej samej natury, co `Hub_#`
-    z rejestru, ktory wywalil poprzednia wersje selektora. Lancuch portow opisuje
-    fizyczne gniazda i tego problemu nie ma.
+    The bus number deliberately does NOT go into the key. It is a synthetic
+    controller index assigned at enumeration — the same nature as the registry's
+    `Hub_#`, which broke the previous version of the selector. The port chain
+    describes physical sockets and does not have that problem.
     """
     return ".".join(str(p) for p in ports)
 
 
 class Found:
-    """Znaleziony modul: TRZYMA referencje do urzadzenia libusb.
+    """A module that was found: it HOLDS a reference to the libusb device.
 
-    Referencja jest wlasnoscia tego obiektu i musi zostac oddana przez
-    `release()` — inaczej kazda enumeracja (a jest ich tyle, co otwarc panelu)
-    zostawia po sobie urzadzenie, ktorego libusb nie zwolni. W API 0.1 problemu
-    nie bylo, bo lista urzadzen zyla w bibliotece; tutaj zyje u nas.
+    The reference belongs to this object and has to be handed back through
+    `release()` — otherwise every enumeration (and there are as many of those as
+    there are panel opens) leaves behind a device libusb will not free. The 0.1
+    API had no such problem, because the device list lived in the library; here
+    it lives in the client.
     """
 
     __slots__ = ("ptr", "bus", "ports", "address", "iserial", "index", "_dll")
@@ -279,8 +288,8 @@ class Found:
         return format_port_path(self.ports)
 
     def release(self):
-        """Oddaje referencje. Idempotentne — wolane i po udanym otwarciu,
-        i przy odrzuceniu modulu, wiec nie moze bolec przy powtorce."""
+        """Hands the reference back. Idempotent — called both after a successful
+        open and when a module is rejected, so a repeat must not hurt."""
         if self.ptr is not None:
             self._dll.libusb_unref_device(self.ptr)
             self.ptr = None
@@ -291,11 +300,11 @@ class Found:
 
 
 def find_all(dll_path=None):
-    """Wszystkie pasujace moduly, w kolejnosci enumeracji libusb.
+    """Every matching module, in libusb enumeration order.
 
-    Za kazdym wywolaniem odswieza liste — po resecie stare wskazniki sa niewazne
-    i trzeba szukac od nowa. KAZDY zwrocony `Found` niesie referencje; ten, kto
-    ich nie uzyje, ma obowiazek wolac `release()` (robi to `release_all`).
+    Refreshes the list on every call — after a reset the old pointers are invalid
+    and the search has to start over. EVERY `Found` returned carries a reference;
+    whoever does not use one is obliged to call `release()` (`release_all` does).
     """
     dll = load(dll_path)
     ctx = context(dll_path)
@@ -320,13 +329,13 @@ def find_all(dll_path=None):
                              dll.libusb_get_device_address(dev),
                              desc.iSerialNumber, len(out)))
     finally:
-        # Lista znika, ale zatrzymane urzadzenia zyja dzieki wlasnym referencjom.
+        # The list goes away, but the devices kept live on their own references.
         dll.libusb_free_device_list(lst, 1)
     return out
 
 
 def release_all(found, keep=None):
-    """Oddaje referencje wszystkich modulow poza `keep`."""
+    """Hands back the references of every module except `keep`."""
     for f in found:
         if f is not keep:
             f.release()
@@ -406,11 +415,11 @@ def open_panel(selector, options=None):
 
 
 def first_finder(dll_path=None):
-    """Domyslny selektor: pierwszy pasujacy modul.
+    """The default selector: the first matching module.
 
-    Dla jednego panelu w zupelnosci wystarcza. Przy dwoch modulach NIE uzywaj
-    tego w kliencie — patrz device.py; wybor musi byc jawny, inaczej klient
-    potrafi przejac panel nalezacy do innego programu.
+    For a single panel this is entirely enough. With two modules do NOT use this
+    in the client — see device.py; the choice has to be explicit, or the client
+    can take over a panel belonging to another program.
     """
     def finder():
         found = find_all(dll_path)
@@ -453,24 +462,24 @@ class AX206:
         self.serial = None
         self.port_path = None
 
-    # -- cykl zycia --------------------------------------------------------
+    # -- lifecycle ---------------------------------------------------------
 
     def open(self):
         found = self.finder()
         if found is None:
             raise AX206Error("nie znalazlem wskazanego modulu %04x:%04x" % (VID, PID))
-        # Referencja `found` jest nasza i musi wrocic do libusb w KAZDYM
-        # zakonczeniu tej funkcji. Udane `libusb_open` bierze wlasna referencje,
-        # wiec uchwyt zyje dalej bez naszej — a przy bledzie tym bardziej nie ma
-        # czego trzymac.
+        # The `found` reference belongs to this function and must go back to libusb
+        # on EVERY exit from it. A successful `libusb_open` takes a reference of
+        # its own, so the handle lives on without this one — and on an error there
+        # is all the less to hold.
         try:
             handle = C.c_void_p()
             rc = self.dll.libusb_open(found.ptr, C.byref(handle))
             if rc != 0:
                 raise AX206Error("libusb_open: %s" % self._err(rc))
             self.h = handle
-            # Bez libusb_set_configuration(): zeruje bity toggle i kosztuje
-            # pierwsze CSW. dpf-ax tez tylko przejmuje interfejs.
+            # No libusb_set_configuration(): it zeroes the toggle bits and costs
+            # the first CSW. dpf-ax likewise only claims the interface.
             rc = self.dll.libusb_claim_interface(self.h, 0)
             if rc != 0:
                 err = self._err(rc)
@@ -486,18 +495,18 @@ class AX206:
         return self
 
     def reset(self, settle=1.5):
-        """libusb_reset_device + ponowne otwarcie. Lekarstwo na panel, ktory
-        przestal odsylac CSW. Uchwyt po resecie moze byc niewazny — stad ponowne
-        szukanie za kazdym razem.
+        """libusb_reset_device + a reopen. The remedy for a panel that has stopped
+        returning CSWs. The handle can be invalid after a reset — hence the fresh
+        search every time.
 
-        `LIBUSB_ERROR_NOT_FOUND` nie jest tu awaria: znaczy, ze urzadzenie zostalo
-        re-enumerowane i trzeba je otworzyc na nowo. Dokladnie to robimy nizej.
+        `LIBUSB_ERROR_NOT_FOUND` is not a failure here: it means the device was
+        re-enumerated and has to be opened anew. That is exactly what happens below.
         """
         if self.h:
             rc = self.dll.libusb_reset_device(self.h)
             if rc not in (0, LIBUSB_ERROR_NOT_FOUND):
-                # Nie przerywamy: ponowne otwarcie i tak jest nasza jedyna
-                # sciezka wyjscia, a komunikat przyda sie w logu.
+                # No abort here: a reopen is the only way out regardless, and
+                # the message is useful in the log.
                 pass
             try:
                 self.dll.libusb_close(self.h)
@@ -516,7 +525,7 @@ class AX206:
         raise AX206Error("modul nie wrocil po resecie: %s" % last)
 
     def resync(self):
-        """Czysci zatory i wypija odpowiedzi zostawione przez poprzedni proces."""
+        """Clears halts and drains the replies left behind by a previous process."""
         self.dll.libusb_clear_halt(self.h, EP_IN)
         self.dll.libusb_clear_halt(self.h, EP_OUT)
         drained = 0
@@ -553,12 +562,12 @@ class AX206:
         return buf.value.decode(errors="replace") if n > 0 else None
 
     def _bulk(self, endpoint, data, length, timeout):
-        """Jeden transfer. Zwraca (rc, liczba_bajtow, bufor).
+        """One transfer. Returns (rc, byte_count, buffer).
 
-        To jest miejsce, w ktorym libusb-1.0 rozni sie od API 0.1 najbardziej:
-        kod bledu i liczba przeslanych bajtow to DWIE osobne wartosci, a nie
-        jedna liczba ze znakiem. Kazde wywolanie musi patrzec na obie — samo
-        `n == length` nie wystarczy, a samo `rc == 0` tym bardziej.
+        This is where libusb-1.0 differs from the 0.1 API most: the error code
+        and the number of bytes transferred are TWO separate values, not one
+        signed number. Every call has to look at both — `n == length` alone is
+        not enough, and `rc == 0` alone even less so.
         """
         n = C.c_int(0)
         buf = data if data is not None else C.create_string_buffer(length)
@@ -569,11 +578,11 @@ class AX206:
     # -- transport ---------------------------------------------------------
 
     def _scsi(self, cmd, direction=DIR_OUT, data=None, length=0, timeout=15000):
-        """Opakowanie Bulk-Only Mass Storage. `cmd` to 16-bajtowa komenda firmowa.
+        """The Bulk-Only Mass Storage wrapper. `cmd` is a 16-byte vendor command.
 
-        Odwzorowuje emulate_scsi() z dpf-ax, razem z zostawieniem bmCBWFlags na 0
-        takze dla transferow do hosta — firmware ignoruje ten bit, a ustawienie
-        go poprawnie konczy sie zatorem na EP IN (sprawdzone).
+        Mirrors emulate_scsi() from dpf-ax, including leaving bmCBWFlags at 0 for
+        transfers to the host as well — the firmware ignores that bit, and setting
+        it correctly ends in a stall on EP IN (checked).
         """
         if not self.h:
             raise AX206Error("panel nie jest otwarty")
@@ -602,25 +611,26 @@ class AX206:
                     raise AX206Error("odczyt danych nieudany: %s" % self._err(rc))
                 out = buf.raw[:n]
 
-        # Pelna klatka idzie ~0,5 s, wiec zdrowe CSW miesci sie w 1,5 s. Ciasny
-        # limit ma znaczenie: uchwyt przejety w zabrudzonym stanie gubi pierwsze
-        # jedno-dwa CSW, a dlugi timeout zamienia to w kilkusekundowy przestoj.
+        # A full frame takes ~0.5 s, so a healthy CSW fits inside 1.5 s. The tight
+        # limit matters: a handle taken over in a dirty state loses the first one
+        # or two CSWs, and a long timeout turns that into a stall of several seconds.
         rc, n, csw = self._bulk(EP_IN, None, 13, 1500)
         if rc != 0:
-            # Zator trzeba wyczyscic, zanim CSW da sie odczytac (procedura BOT).
-            # Powtorka idzie po KAZDYM bledzie, nie tylko po LIBUSB_ERROR_PIPE:
-            # zmierzone, ze zawieszone CSW wraca po clear_halt takze wtedy, gdy
-            # pierwsza proba skonczyla sie zwyklym przeterminowaniem.
+            # The stall has to be cleared before the CSW can be read (the BOT
+            # procedure). The retry follows EVERY error, not only after
+            # LIBUSB_ERROR_PIPE: measured, a hung CSW comes back after clear_halt
+            # also when the first attempt ended in a plain timeout.
             self.dll.libusb_clear_halt(self.h, EP_IN)
             rc, n, csw = self._bulk(EP_IN, None, 13, 500)
         if rc != 0 or n != 13 or csw.raw[:4] != b"USBS":
-            # Ten firmware bywa, ze pomija CSW, mimo ze dane przyjal i narysowal.
-            # Odnotuj, ale NIE przerywaj klatki — patrz naglowek modulu.
+            # This firmware sometimes skips the CSW even though it took the data
+            # and drew it. Note it, but do NOT abort the frame — see the module
+            # header.
             self.missed_csw += 1
             return None, out
         return csw.raw[12], out
 
-    # -- komendy -----------------------------------------------------------
+    # -- commands ----------------------------------------------------------
 
     def _excmd(self, sub):
         cmd = bytearray(16)
@@ -638,7 +648,7 @@ class AX206:
         return self._scsi(cmd, DIR_OUT)[0]
 
     def set_brightness(self, level):
-        """0 (przygaszony) .. 7 (najjasniejszy)."""
+        """0 (dimmed) .. 7 (brightest)."""
         return self.set_property(PROPERTY_BRIGHTNESS, max(0, min(7, int(level))))
 
     @property
@@ -653,11 +663,11 @@ class AX206:
         return self.blit(rgb565, rect)
 
     def blit(self, rgb565, rect=None):
-        """Wysyla piksele RGB565. rect = (x0, y0, x1, y1), x1/y1 wylaczne.
+        """Sends RGB565 pixels. rect = (x0, y0, x1, y1), x1/y1 exclusive.
 
-        TYLKO pelny ekran — patrz FULL_FRAME_ONLY w naglowku modulu. Prostokat
-        czesciowy jest odrzucany celowo: firmware przyjmuje go bez mrugniecia
-        i NIE rysuje, a cichy no-op jest tu najgorszym mozliwym zachowaniem.
+        The full screen ONLY — see FULL_FRAME_ONLY in the module header. A partial
+        rectangle is rejected deliberately: the firmware takes it without blinking
+        and does NOT draw, and a silent no-op is the worst behavior possible here.
         """
         if rect is None:
             rect = (0, 0, self.width, self.height)
@@ -687,19 +697,19 @@ class AX206:
         return self._scsi(cmd, DIR_OUT, rgb565, expect)[0]
 
     def blit_image(self, img, at=(0, 0)):
-        """Wysyla obraz PIL w punkcie `at`."""
+        """Sends a PIL image at the point `at`."""
         x0, y0 = at
         return self.blit(image_to_rgb565(img),
                          (x0, y0, x0 + img.width, y0 + img.height))
 
     def probe_geometry(self):
-        """Diagnostyka: zapytaj modul o wlasna geometrie.
+        """Diagnostics: ask the module about its own geometry.
 
-        TEN egzemplarz tego nie obsluguje — odczyt danych sie przeterminowuje,
-        wiec zwracamy None. Zostawione, bo inny modul moze odpowiedziec i wtedy
-        warto to zobaczyc w `--probe`. Po nieudanej probie MUSI byc resync:
-        transakcja zostaje urwana w polowie i nastepna komenda trafialaby
-        w zabrudzony endpoint (tak wlasnie zawieszal sie panel w rozpoznaniu).
+        THIS model does not support it — the data read times out, so None is
+        returned. Kept because another module may answer, and then it is worth
+        seeing in `--probe`. A failed attempt MUST be followed by a resync: the
+        transaction is left torn in half and the next command would hit a dirty
+        endpoint (that is exactly how the panel used to hang during the survey).
         """
         try:
             _, buf = self._scsi(bytes([0xCD, 0, 0, 0, 0, 2] + [0] * 10),

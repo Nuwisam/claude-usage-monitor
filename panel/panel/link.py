@@ -1,13 +1,13 @@
-"""Nadzor nad panelem: jedyne miejsce w kliencie, ktore dotyka libusb-1.0.dll.
+"""Panel supervision: the only place in the client that touches libusb-1.0.dll.
 
-Rzeczy, ktore ta warstwa ma zalatwiac same z siebie:
-  * wskazany modul jest zajety albo wypiety      -> backoff, log RAZ na zmiane stanu
-  * panel przestal potwierdzac                   -> reset i pelne przerysowanie
-  * obraz sie nie zmienil                        -> nie wysylamy nic
+Things this layer is meant to settle on its own:
+  * the named module is busy or unplugged        -> backoff, log ONCE per state change
+  * the panel stopped acknowledging              -> reset and a full repaint
+  * the image did not change                     -> nothing is sent
 
-Czego NIE robi: nie czysci ekranu przy zamknieciu. Panel trzyma ostatnia klatke
-bez podlaczonego hosta i to jest zamierzone — po wylaczeniu komputera na biurku
-zostaje ostatni znany stan limitow.
+What it does NOT do: it does not clear the screen on close. The panel holds its
+last frame with no host attached and that is intended — after the computer is
+switched off, the last known limit state stays on the glass.
 """
 import time
 
@@ -17,20 +17,21 @@ from .log import get as log
 
 BACKOFF = (1.0, 2.0, 5.0, 10.0, 30.0)
 
-# Ile nieodebranych CSW pod rzad znaczy "panel zamilkl". Poprawnie uformowane
-# pelne klatki potwierdzaja sie ZAWSZE, wiec kilka z rzedu to juz nie przypadek.
+# How many unreceived CSWs in a row mean "the panel went quiet". Well-formed full
+# frames are ALWAYS acknowledged, so a few in a row is no longer chance.
 MISSED_CSW_LIMIT = 3
 
-# Bledy, na ktore ta warstwa odpowiada backoffem, a nie smiercia procesu.
-# Ponizej `ensure()` i `blit()` siedzi surowe ctypes do libusb-1.0.dll (find_all,
-# libusb_open, libusb_claim_interface, bulk transfer). Wypiety modul albo
-# rozjezdzajacy sie sterownik zglasza sie stamtad OSError-em, nie AX206Error-em
-# — i taki wyjatek szedl przez tick() i run() az do excepthooka, konczac proces.
-# `drop()` i `close()` byly na to odporne od poczatku; sciezka otwarcia nie.
+# Errors this layer answers with backoff rather than with the death of the process.
+# Below `ensure()` and `blit()` sits raw ctypes into libusb-1.0.dll (find_all,
+# libusb_open, libusb_claim_interface, bulk transfer). An unplugged module or a
+# driver drifting out of step reports from there with an OSError, not an
+# AX206Error — and such an exception travelled through tick() and run() all the
+# way to the excepthook, ending the process. `drop()` and `close()` were proof
+# against that from the start; the open path was not.
 #
-# Swiadomie NIE ma tu ctypes.ArgumentError: on znaczy zla sygnature wywolania,
-# czyli blad w nas. Taki ma dojsc do excepthooka i zostac naprawiony, nie
-# wpasc w petle ponawiania.
+# ctypes.ArgumentError is deliberately NOT here: it means a bad call signature,
+# that is, a bug in us. That one is to reach the excepthook and be fixed, not to
+# fall into a retry loop.
 DEVICE_ERRORS = (DriverError, OSError)
 
 
@@ -63,14 +64,14 @@ class PanelLink:
         self._last_error = None
         self._missed_run = 0
 
-    # -- polaczenie --------------------------------------------------------
+    # -- connection --------------------------------------------------------
 
     @property
     def up(self):
         return self.dev is not None
 
     def ensure(self):
-        """Otwiera modul, jesli trzeba. Zwraca True, gdy panel jest gotowy."""
+        """Opens the module if need be. Returns True when the panel is ready."""
         if self.dev is not None:
             return True
         now = time.monotonic()
@@ -123,8 +124,8 @@ class PanelLink:
         return True
 
     def _fail(self, message):
-        # Log RAZ na zmiane stanu. Panel zajety przez inny program potrafi byc zajety
-        # godzinami i linia co sekunde zalalaby plik.
+        # Log ONCE per state change. A panel held by another program can stay held
+        # for hours, and a line every second would flood the file.
         if message != self._last_error:
             log().warning("%s: %s", self.tag, message)
             self._last_error = message
@@ -144,8 +145,8 @@ class PanelLink:
         self._fail(why)
 
     def reset(self, why):
-        """Twarde odzyskanie panelu. Po nim ekran jest nieznany, wiec kasujemy
-        pamiec ostatniej klatki."""
+        """Hard recovery of the panel. Afterwards the screen is unknown, so the
+        memory of the last frame is cleared."""
         log().warning("%s: reset (%s)", self.tag, why)
         try:
             self.dev.reset()
@@ -154,14 +155,15 @@ class PanelLink:
             self._missed_run = 0
             return True
         except DEVICE_ERRORS + (AttributeError,) as e:
-            # AttributeError: self.dev bywa None, gdy reset zbiegnie sie z drop().
-            # DEVICE_ERRORS: AX206.reset() otwiera modul OD NOWA, wiec idzie przez
-            # te same surowe wywolania ctypes co ensure() — a odkad prog CSW
-            # osiaga sie w sekundach, reset zdarza sie czesciej, nie rzadziej.
+            # AttributeError: self.dev is sometimes None when a reset coincides
+            # with a drop(). DEVICE_ERRORS: AX206.reset() opens the module FROM
+            # SCRATCH, so it goes through the same raw ctypes calls as ensure() —
+            # and since the CSW threshold is reached in seconds, a reset happens
+            # more often, not less.
             self.drop("reset nieudany: %s: %s" % (type(e).__name__, e))
             return False
 
-    # -- wysylka -----------------------------------------------------------
+    # -- sending -----------------------------------------------------------
 
     def send(self, frame, force=False):
         """Put `frame` on the glass, writing as little as the display allows.
@@ -239,7 +241,7 @@ class PanelLink:
         return True
 
     def close(self):
-        """Zamyka uchwyt, ale NIE czysci ekranu — ostatnia klatka ma zostac."""
+        """Closes the handle, but does NOT clear the screen — the last frame stays."""
         if self.dev is not None:
             try:
                 self.dev.close()

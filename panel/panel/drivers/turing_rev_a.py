@@ -1,6 +1,6 @@
 """Turing Smart Screen rev A over a USB serial port (VID 1A86 / PID 5722).
 
-Measured on the unit on this desk, because none of it is documented:
+Measured on this display model, because none of it is documented:
 
   * 320x480 portrait natively. Our 480x320 layout is rotated 90 degrees HOST-SIDE
     and fills it exactly. SET_ORIENTATION is never sent - see below.
