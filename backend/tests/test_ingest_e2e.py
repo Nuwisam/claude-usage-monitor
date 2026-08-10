@@ -31,15 +31,15 @@ ACCOUNT_MAX = {
 }
 ACCOUNT_TEAM = {
     "uuid": "aaaabbbb-0000-1111-2222-333344445555",
-    "email": "praca@example.com", "org_type": "claude_team",
+    "email": "work@example.com", "org_type": "claude_team",
     "seat_tier": "premium", "org_rate_limit_tier": "team_premium",
 }
 
 
-_DOMYSLNE = object()
+_DEFAULT = object()
 
 
-def payload(usage=None, account=_DOMYSLNE, captured_at=None, event="PostToolUse",
+def payload(usage=None, account=_DEFAULT, captured_at=None, event="PostToolUse",
             sent_at=None, fresh_at=None, fresh_covered=None):
     # a sentinel, not `account or ACCOUNT_MAX` — an empty dict is falsy and would put
     # the default account in its place, making the test "payload with no account" test
@@ -55,7 +55,7 @@ def payload(usage=None, account=_DOMYSLNE, captured_at=None, event="PostToolUse"
     if fresh_covered is not None:
         meas["fresh_covered"] = fresh_covered
     return {
-        "account": ACCOUNT_MAX if account is _DOMYSLNE else account,
+        "account": ACCOUNT_MAX if account is _DEFAULT else account,
         "token_meta": {"subscription_type": "max"},
         "captured_at": (captured_at or utcnow()).isoformat(),
         "client": {"host": "DESKTOP-X", "script_version": 5, "exec_ms": 36},
@@ -106,7 +106,7 @@ async def count(db, model) -> int:
 
 
 # ----------------------------------------------------------------------------- basics
-async def test_pierwszy_pomiar_tworzy_konto_serie_i_probki(db):
+async def test_first_measurement_creates_account_series_and_samples(db):
     r = await ingest_one(db, machine_name="desktop", payload=payload())
     await db.commit()
     assert r["ok"] and r["samples_written"] > 0
@@ -119,18 +119,18 @@ async def test_pierwszy_pomiar_tworzy_konto_serie_i_probki(db):
     # 3 non-empty buckets (five_hour, seven_day) + 3 limits + extra_usage + spend
     keys = {s.series_key for s in (await db.execute(select(UsageSeries))).scalars()}
     assert "bucket:five_hour" in keys
-    assert "spend:org" in keys, "spend musi byc seria — na Team to JEST wiazacy limit"
+    assert "spend:org" in keys, "spend must be a series — on Team it IS the binding limit"
     assert any(k.startswith("limit:weekly_all") for k in keys)
 
 
-async def test_puste_buckety_nie_tworza_probek(db):
+async def test_empty_buckets_create_no_samples(db):
     await ingest_one(db, machine_name="desktop", payload=payload())
     await db.commit()
     keys = {s.series_key for s in (await db.execute(select(UsageSeries))).scalars()}
     assert "bucket:seven_day_opus" not in keys       # null in the real payload
 
 
-async def test_surowy_payload_jest_zachowany(db):
+async def test_raw_payload_is_preserved(db):
     r = await ingest_one(db, machine_name="desktop", payload=payload())
     await db.commit()
     b = (await db.execute(select(IngestBatch).where(IngestBatch.id == r["batch_id"]))).scalar_one()
@@ -141,21 +141,21 @@ async def test_surowy_payload_jest_zachowany(db):
 # Measurement stamps lie in the PAST, because `measured_at` clamps them to `arrived_at`:
 # a measurement cannot be newer than the moment it arrived. Intervals counted from the
 # future would collapse to a single point and the test would pass while checking nothing.
-def _t0(sekund_wstecz=600):
-    return utcnow().replace(microsecond=0) - timedelta(seconds=sekund_wstecz)
+def _t0(seconds_ago=600):
+    return utcnow().replace(microsecond=0) - timedelta(seconds=seconds_ago)
 
 
-async def test_dedup_nie_pisze_identycznych_wierszy(db):
+async def test_dedup_does_not_write_identical_rows(db):
     now = _t0()
     await send(db, payload(captured_at=now))
-    po_pierwszym = await count(db, LimitSample)
+    after_first = await count(db, LimitSample)
     # the same payload 60 s later — below the heartbeat (300 s)
     await send(db, payload(captured_at=now + timedelta(seconds=60)))
     await db.commit()
-    assert await count(db, LimitSample) == po_pierwszym, "identyczna wartosc nie moze dublowac wierszy"
+    assert await count(db, LimitSample) == after_first, "identical value must not duplicate rows"
 
 
-async def test_dedup_dziala_gdy_zmienily_sie_TYLKO_mikrosekundy_resets_at(db):
+async def test_dedup_works_when_ONLY_resets_at_microseconds_changed(db):
     """Regression on a real defect that quietly killed dedup for a full day.
 
     The test above uses a fixture, so `resets_at` is byte-identical and dedup
@@ -169,7 +169,7 @@ async def test_dedup_dziala_gdy_zmienily_sie_TYLKO_mikrosekundy_resets_at(db):
     u1["five_hour"]["resets_at"] = "2026-07-27T00:59:59.056340+00:00"
     u1["seven_day"]["resets_at"] = "2026-08-01T15:59:59.056361+00:00"
     await send(db, payload(usage=u1, captured_at=now))
-    po_pierwszym = await count(db, LimitSample)
+    after_first = await count(db, LimitSample)
 
     # the same window boundary, different response microseconds — NOT a data change
     u2 = json.loads(json.dumps(u1))
@@ -178,11 +178,11 @@ async def test_dedup_dziala_gdy_zmienily_sie_TYLKO_mikrosekundy_resets_at(db):
     await send(db, payload(usage=u2, captured_at=now + timedelta(seconds=60)))
     await db.commit()
 
-    assert await count(db, LimitSample) == po_pierwszym, \
-        "mikrosekundy odpowiedzi nie sa zmiana wartosci i nie moga tworzyc wierszy"
+    assert await count(db, LimitSample) == after_first, \
+        "response microseconds are not a value change and must not create rows"
 
 
-async def test_guard_monotonicznosci_dziala_przy_szumie_mikrosekund(db):
+async def test_monotonicity_guard_works_under_microsecond_noise(db):
     """The same defect disabled the monotonicity guard: it fired only on an UNCHANGED
     `resets_at`, and that changed every time. The effect was worse than a bloated table —
     a stale reading from a second machine could roll `series_state` and the Live view
@@ -201,16 +201,16 @@ async def test_guard_monotonicznosci_dziala_przy_szumie_mikrosekund(db):
     await db.commit()
 
     types = {e.event_type for e in (await db.execute(select(IngestEvent))).scalars()}
-    assert "stale_read" in types, "spadek przy tej samej granicy okna to nieaktualny odczyt"
+    assert "stale_read" in types, "a drop at the same window boundary is a stale read"
 
     st = (await db.execute(
         select(SeriesState).join(UsageSeries, UsageSeries.id == SeriesState.series_id)
         .where(UsageSeries.series_key == "bucket:five_hour")
     )).scalars().first()
-    assert st is not None and float(st.last_utilization) == 60.0, "stan nie moze sie cofnac"
+    assert st is not None and float(st.last_utilization) == 60.0, "state must not roll back"
 
 
-async def test_heartbeat_zapisuje_mimo_braku_zmiany(db):
+async def test_heartbeat_writes_despite_no_change(db):
     """A gap larger than the heartbeat (300 s) writes a sample even though the value did
     not change.
 
@@ -224,7 +224,7 @@ async def test_heartbeat_zapisuje_mimo_braku_zmiany(db):
     assert await count(db, LimitSample) > n1
 
 
-async def test_captured_at_w_przyszlosci_jest_przycinany(db):
+async def test_captured_at_in_the_future_is_clamped(db):
     """A payload WITHOUT `sent_at` (a probe below v5): the offset is zero, so the client's
     stamp goes through untouched — except that it cannot be newer than the moment it
     arrived. Previously the server time was substituted; the effect is the same, but only
@@ -237,7 +237,7 @@ async def test_captured_at_w_przyszlosci_jest_przycinany(db):
     assert stamps and max(stamps) <= arrived
 
 
-async def test_pomiar_datowany_po_wysylce_jest_odrzucany(db):
+async def test_measurement_dated_after_send_is_rejected(db):
     """The client clock moved backwards between recording the measurement and sending it.
     `sent_at - ts` is then negative, i.e. the measurement supposedly came into being AFTER
     the send — the dating is unreliable, and the stamp would land on the request's anchor
@@ -252,10 +252,10 @@ async def test_pomiar_datowany_po_wysylce_jest_odrzucany(db):
     types = {e.event_type for e in (await db.execute(select(IngestEvent))).scalars()}
     assert "clock_backwards" in types
     b = (await db.execute(select(IngestBatch))).scalars().one()
-    assert b.raw_payload_id is not None, "surowy payload musi zostac zapisany"
+    assert b.raw_payload_id is not None, "raw payload must be saved"
 
 
-async def test_zmiana_wartosci_zawsze_zapisuje(db):
+async def test_value_change_always_writes(db):
     now = _t0()
     await send(db, payload(captured_at=now))
     n1 = await count(db, LimitSample)
@@ -266,7 +266,7 @@ async def test_zmiana_wartosci_zawsze_zapisuje(db):
 
 
 # --------------------------------------------------------------------------- guard
-async def test_nieaktualny_odczyt_nie_cofa_stanu(db):
+async def test_stale_read_does_not_roll_back_state(db):
     """Two machines on the same account each have their OWN cache. An older reading from
     machine B must not roll the indicator back — it would look like a window reset."""
     now = _t0()
@@ -283,15 +283,15 @@ async def test_nieaktualny_odczyt_nie_cofa_stanu(db):
     st = (await db.execute(
         select(SeriesState).where(SeriesState.series_id == series.id)
     )).scalar_one()
-    assert float(st.last_utilization) == 40.0, "stan biezacy nie moze sie cofnac"
+    assert float(st.last_utilization) == 40.0, "current state must not roll back"
 
     stale = (await db.execute(
         select(LimitSample).where(LimitSample.stale_read.is_(True))
     )).scalars().all()
-    assert stale, "nieaktualny odczyt ma byc zapisany, tylko oflagowany"
+    assert stale, "a stale read must be saved, only flagged"
 
 
-async def test_realny_spadek_przy_zmianie_resets_at_przechodzi(db):
+async def test_real_drop_with_changed_resets_at_passes(db):
     """A drop with a CHANGED resets_at is a real window reset, not a stale reading."""
     now = _t0()
     await send(db, payload(usage=with_util(five_hour=90.0), captured_at=now))
@@ -310,7 +310,7 @@ async def test_realny_spadek_przy_zmianie_resets_at_przechodzi(db):
 
 
 # ------------------------------------------------------------------------ accounts
-async def test_przelaczenie_konta_jest_wykrywane(db):
+async def test_account_switch_is_detected(db):
     await ingest_one(db, machine_name="desktop", payload=payload(account=ACCOUNT_MAX))
     await db.commit()
     await ingest_one(db, machine_name="desktop", payload=payload(account=ACCOUNT_TEAM))
@@ -322,7 +322,7 @@ async def test_przelaczenie_konta_jest_wykrywane(db):
     assert "new_account_for_token" in types
 
 
-async def test_team_zachowuje_seat_tier(db):
+async def test_team_keeps_seat_tier(db):
     await ingest_one(db, machine_name="desktop", payload=payload(account=ACCOUNT_TEAM))
     await db.commit()
     a = (await db.execute(
@@ -331,7 +331,7 @@ async def test_team_zachowuje_seat_tier(db):
     assert a.org_type == "claude_team" and a.seat_tier == "premium"
 
 
-async def test_payload_bez_konta_jest_odrzucany(db):
+async def test_payload_without_account_is_rejected(db):
     r = await ingest_one(db, machine_name="desktop", payload=payload(account={}))
     await db.commit()
     assert not r["ok"] and r["samples_written"] == 0
@@ -340,17 +340,17 @@ async def test_payload_bez_konta_jest_odrzucany(db):
 
 
 # --------------------------------------------------------------------------- drift
-async def test_nowy_bucket_rejestruje_serie_i_zglasza(db):
+async def test_new_bucket_registers_series_and_reports_it(db):
     u = json.loads(json.dumps(REAL))
-    u["calkiem_nowy_limit"] = {"utilization": 55.5, "resets_at": "2026-08-02T00:00:00+00:00"}
+    u["brand_new_limit"] = {"utilization": 55.5, "resets_at": "2026-08-02T00:00:00+00:00"}
     r = await ingest_one(db, machine_name="desktop", payload=payload(usage=u))
     await db.commit()
-    assert "bucket:calkiem_nowy_limit" in r["series_registered"]
+    assert "bucket:brand_new_limit" in r["series_registered"]
 
 
-async def test_uszkodzone_pole_nie_przerywa_pomiaru(db):
+async def test_corrupted_field_does_not_interrupt_measurement(db):
     u = json.loads(json.dumps(REAL))
-    u["five_hour"] = "nagle string"
+    u["five_hour"] = "suddenly a string"
     r = await ingest_one(db, machine_name="desktop", payload=payload(usage=u))
     await db.commit()
     assert r["ok"] and r["samples_written"] > 0     # the other series got through
@@ -358,7 +358,7 @@ async def test_uszkodzone_pole_nie_przerywa_pomiaru(db):
     assert "schema_drift" in types
 
 
-async def test_rozjechany_zegar_klienta_nie_psuje_datowania(db):
+async def test_skewed_client_clock_does_not_break_dating(db):
     """The client clock is 5 h behind. The measurement is 120 s old on ITS clock — and must
     be just as old after the write, because age is a difference within one clock while the
     anchor is the server's.
@@ -367,9 +367,9 @@ async def test_rozjechany_zegar_klienta_nie_psuje_datowania(db):
     server time for the moment of MEASUREMENT, i.e. it claimed the value had been measured
     a moment ago. The event stays — as diagnostics, with no influence on the write."""
     arrived = utcnow().replace(microsecond=0)
-    zegar_klienta = arrived - timedelta(hours=5)
-    await send(db, payload(captured_at=zegar_klienta - timedelta(seconds=120),
-                           sent_at=zegar_klienta), arrived_at=arrived)
+    client_clock = arrived - timedelta(hours=5)
+    await send(db, payload(captured_at=client_clock - timedelta(seconds=120),
+                           sent_at=client_clock), arrived_at=arrived)
     await db.commit()
 
     types = {e.event_type for e in (await db.execute(select(IngestEvent))).scalars()}
@@ -382,7 +382,7 @@ async def test_rozjechany_zegar_klienta_nie_psuje_datowania(db):
 
 
 # --------------------------------------------------------------------------- status
-async def test_status_pokazuje_konto_z_planem_i_aktywnym_limitem(db):
+async def test_status_shows_account_with_plan_and_active_limit(db):
     await ingest_one(db, machine_name="desktop", payload=payload())
     await db.commit()
     st = await build_status(db)
@@ -397,18 +397,18 @@ async def test_status_pokazuje_konto_z_planem_i_aktywnym_limitem(db):
     assert by["bucket:five_hour"].freshness == "live"
     assert by["bucket:five_hour"].utilization == pytest.approx(REAL["five_hour"]["utilization"])
 
-    aktywne = [s for s in a.series if s.is_active]
-    assert len(aktywne) == 1
-    assert aktywne[0].kind == "weekly_all"
+    active = [s for s in a.series if s.is_active]
+    assert len(active) == 1
+    assert active[0].kind == "weekly_all"
 
     # Series semantics, without which the UI would have to guess which series is the
     # 5 h window.
     assert by["bucket:five_hour"].bucket_key == "five_hour"
-    sesja = [s for s in a.series if s.kind == "session"]
-    assert len(sesja) == 1 and sesja[0].group == "session"
+    session_series = [s for s in a.series if s.kind == "session"]
+    assert len(session_series) == 1 and session_series[0].group == "session"
 
 
-async def test_duplikaty_bucket_limit_sa_wykrywane_z_danych(db):
+async def test_bucket_limit_duplicates_are_detected_from_data(db):
     """The API reports the same limit twice: as a bucket and as an entry in limits[].
     Pairing goes by the data, not by a hardcoded map — the limits[] entry wins,
     because it carries is_active and severity."""
@@ -426,7 +426,7 @@ async def test_duplikaty_bucket_limit_sa_wykrywane_z_danych(db):
     assert by["spend:org"].primary is True
 
 
-async def test_rozjazd_wartosci_nie_jest_traktowany_jak_duplikat(db):
+async def test_value_divergence_is_not_treated_as_duplicate(db):
     """The reference repo documents that newer responses zero out older per-model fields.
     When the values diverge, both series must stay visible — showing the divergence is
     better than hiding it."""
@@ -439,7 +439,7 @@ async def test_rozjazd_wartosci_nie_jest_traktowany_jak_duplikat(db):
     assert by["bucket:five_hour"].primary is True
 
 
-async def test_status_nie_pokazuje_pustych_serii(db):
+async def test_status_does_not_show_empty_series(db):
     await ingest_one(db, machine_name="desktop", payload=payload())
     await db.commit()
     st = await build_status(db)
@@ -456,7 +456,7 @@ async def _five_hour_state(db):
     return row
 
 
-async def test_niezmienna_wartosc_nadal_odswieza_potwierdzenie(db):
+async def test_unchanged_value_still_refreshes_confirmation(db):
     """The heart of the matter: dedup writes no sample when the value has not changed. Were
     freshness computed from the time of the last SAMPLE, a stable reading would start to
     look like a broken connection after 5 minutes — even though the client reports every
@@ -473,11 +473,11 @@ async def test_niezmienna_wartosc_nadal_odswieza_potwierdzenie(db):
     await db.commit()
 
     st1 = await _five_hour_state(db)
-    assert st1.last_captured_at == t0, "probka celowo NIE zostala zapisana (dedup)"
-    assert st1.last_confirmed_at == t1, "ale pomiar sie odbyl i musi to byc widoczne"
+    assert st1.last_captured_at == t0, "sample deliberately NOT written (dedup)"
+    assert st1.last_confirmed_at == t1, "but the measurement happened and must be visible"
 
 
-async def test_swiezosc_liczy_sie_z_potwierdzenia_a_nie_z_probki(db):
+async def test_freshness_is_computed_from_confirmation_not_from_sample(db):
     """The same scenario seen through /api/status: the series must stay `live`."""
     t0 = utcnow() - timedelta(minutes=8)
     await ingest_one(db, machine_name="desktop", payload=payload(captured_at=t0))
@@ -492,7 +492,7 @@ async def test_swiezosc_liczy_sie_z_potwierdzenia_a_nie_z_probki(db):
     assert five.utilization is not None
 
 
-async def test_value_since_nie_przesuwa_sie_przy_niezmienionej_wartosci(db, monkeypatch):
+async def test_value_since_does_not_move_on_unchanged_value(db, monkeypatch):
     """"Unchanged since" must point at the start of the constant value. Were a heartbeat
     write to move it, the counter would reset on every heartbeat and show an untruth."""
     monkeypatch.setattr(settings, "sample_heartbeat_sec", 60)
@@ -505,11 +505,11 @@ async def test_value_since_nie_przesuwa_sie_przy_niezmienionej_wartosci(db, monk
     await db.commit()
 
     st = await _five_hour_state(db)
-    assert st.last_captured_at == t1, "heartbeat zapisal nowa probke"
-    assert st.value_since == t0, "ale wartosc trwa niezmiennie od pierwszego pomiaru"
+    assert st.last_captured_at == t1, "heartbeat wrote a new sample"
+    assert st.value_since == t0, "but the value has stayed unchanged since the first measurement"
 
 
-async def test_value_since_przesuwa_sie_przy_zmianie_wartosci(db):
+async def test_value_since_moves_on_value_change(db):
     t0 = _t0(600)
     await send(db, payload(captured_at=t0))
     await db.commit()
@@ -522,7 +522,7 @@ async def test_value_since_przesuwa_sie_przy_zmianie_wartosci(db):
     assert st.value_since == t1
 
 
-async def test_zrodlo_pomiaru_trafia_do_probki_i_batcha(db):
+async def test_measurement_source_reaches_sample_and_batch(db):
     await ingest_one(db, machine_name="desktop", payload=payload())
     await db.commit()
     batch = (await db.execute(select(IngestBatch))).scalars().first()
@@ -532,7 +532,7 @@ async def test_zrodlo_pomiaru_trafia_do_probki_i_batcha(db):
     assert sample.source == "cli_merged"
 
 
-async def test_payload_bez_measurement_ladzie_jako_probe(db):
+async def test_payload_without_measurement_lands_as_probe(db):
     """Backward compatibility: spool entries written by probe v2 have no measurement block."""
     p = payload()
     del p["measurement"]
@@ -541,7 +541,7 @@ async def test_payload_bez_measurement_ladzie_jako_probe(db):
     assert (await db.execute(select(LimitSample))).scalars().first().source == "probe"
 
 
-async def test_brak_token_meta_nie_wywraca_zapisu(db):
+async def test_missing_token_meta_does_not_break_write(db):
     """macOS keeps credentials in the Keychain — since probe version 3 the measurement
     does not need them."""
     p = payload()
@@ -553,7 +553,7 @@ async def test_brak_token_meta_nie_wywraca_zapisu(db):
     assert acc.subscription_type is None      # no plan tag, but the data is there
 
 
-async def test_poprawiona_etykieta_dochodzi_do_serii_zarejestrowanej_wczesniej(db):
+async def test_corrected_label_reaches_series_registered_earlier(db):
     """A label is a DESCRIPTION, not an identity — which is why `get_or_create_series`
     refreshes it on every measurement. Without that, a wording fix would never reach series
     already registered and the UI would show the old text for the rest of the database's

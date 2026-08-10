@@ -42,14 +42,14 @@ Last 24h · 1104 requests · 5 sessions
 """
 
 
-def test_parsuje_realne_wyjscie(probe):
+def test_parses_real_output(probe):
     r = probe.parse_usage_text(REAL_OUTPUT)
     assert r["session"] == 48
     assert r["weekly_all"] == 47
     assert r["scoped"] == {"Fable": 0, "Sonnet only": 12}
 
 
-def test_ignoruje_sekcje_atrybucji(probe):
+def test_ignores_attribution_section(probe):
     """The '100% of your usage came from...' lines carry a percentage but have no colon
     before it. Were they to match, 100% would land as a limit reading."""
     r = probe.parse_usage_text(REAL_OUTPUT)
@@ -57,13 +57,14 @@ def test_ignoruje_sekcje_atrybucji(probe):
     assert 100 not in r["scoped"].values()
 
 
-@pytest.mark.parametrize("bad", ["", None, "zupelnie co innego", "Current session: brak"])
-def test_smieci_nie_wywracaja_parsera(probe, bad):
+@pytest.mark.parametrize("bad", ["", None, "something completely different",
+                                 "Current session: missing"])
+def test_garbage_does_not_crash_the_parser(probe, bad):
     r = probe.parse_usage_text(bad)
     assert r == {"session": None, "weekly_all": None, "scoped": {}}
 
 
-def test_odrzuca_absurdalny_procent(probe):
+def test_rejects_absurd_percentage(probe):
     """Defect #52326 in Claude Code can put the epoch from resets_at into the percentage
     field. Clamping to 100 would turn a failure into a believable false alarm, so it is
     rejected instead."""
@@ -92,7 +93,7 @@ def _cache(five=40, weekly=41, resets="2099-01-01T00:00:00+00:00"):
     }
 
 
-def test_merge_nadpisuje_swiezymi_procentami(probe):
+def test_merge_overwrites_with_fresh_percentages(probe):
     usage, covered = probe.merge(_cache(), {"session": 48, "weekly_all": 47,
                                             "scoped": {"Fable": 3}})
     assert usage["five_hour"]["utilization"] == 48
@@ -105,7 +106,7 @@ def test_merge_nadpisuje_swiezymi_procentami(probe):
                             "limit:weekly_all:-", "limit:weekly_scoped:Fable"}
 
 
-def test_pokrycie_to_nie_zmiana_wartosci(probe):
+def test_coverage_is_not_a_value_change(probe):
     """A fresh reading EQUAL to the cached value is a confirmation, not a missing event.
     Previously only changes counted, so a series with an unchanged percentage and an expired
     window dropped out of the measurement instead of getting `reset-w-toku` — losing the one
@@ -115,19 +116,19 @@ def test_pokrycie_to_nie_zmiana_wartosci(probe):
     assert "bucket:five_hour" in covered and "bucket:seven_day" in covered
 
 
-def test_merge_nie_pada_na_dziwnym_scope(probe):
+def test_merge_does_not_crash_on_odd_scope(probe):
     """`scope` as a string instead of a dictionary: `merge` runs before `log_local` and
     before the spool, so an exception here would wipe out the whole run without a trace —
     on every cycle, for as long as the cache has that shape."""
     c = _cache()
     c["limits"][2]["scope"] = "global"
-    c["limits"][0]["scope"] = ["cos", "zupelnie", "innego"]
+    c["limits"][0]["scope"] = ["something", "completely", "different"]
     usage, covered = probe.merge(c, {"session": 48, "weekly_all": 47, "scoped": {"Fable": 3}})
     assert usage["limits"][0]["percent"] == 48
-    assert "limit:weekly_scoped:-" not in covered, "bez modelu nie ma dopasowania procentu"
+    assert "limit:weekly_scoped:-" not in covered, "without a model there is no percentage match"
 
 
-def test_zrzut_starszy_od_cache_jest_odrzucany(probe):
+def test_dump_older_than_cache_is_rejected(probe):
     """A dump may be up to 900 s old, and ordinary work refreshes the cache in that time —
     the order can invert. When a window reset falls between the dump and the cache, laying
     the dump over it gives a percentage from BEFORE the reset against a boundary from AFTER
@@ -135,13 +136,13 @@ def test_zrzut_starszy_od_cache_jest_odrzucany(probe):
     the boundary is valid."""
     assert probe.dump_outdated(1000.0, 1120.0) is True
     assert probe.dump_outdated(1120.0, 1000.0) is False
-    assert probe.dump_outdated(1000.0, 1000.0) is False, "rowny wiek to nie inwersja"
+    assert probe.dump_outdated(1000.0, 1000.0) is False, "equal age is not an inversion"
     # A missing stamp on either side is not proof of an inversion.
     assert probe.dump_outdated(None, 1000.0) is False
     assert probe.dump_outdated(1000.0, 0) is False
 
 
-def test_merge_zachowuje_pola_ktorych_stdout_nie_ma(probe):
+def test_merge_keeps_fields_stdout_does_not_have(probe):
     """This is the entire reason for two sources: stdout gives the percentages, but spend/
     extra_usage/severity/is_active exist only in the cache."""
     usage, _ = probe.merge(_cache(), {"session": 48, "weekly_all": 47, "scoped": {}})
@@ -150,13 +151,13 @@ def test_merge_zachowuje_pola_ktorych_stdout_nie_ma(probe):
     assert usage["limits"][0]["is_active"] is True
 
 
-def test_merge_bez_swiezych_zwraca_cache_bez_zmian(probe):
+def test_merge_without_fresh_data_returns_cache_unchanged(probe):
     src = _cache()
     usage, covered = probe.merge(src, None)
     assert usage == src and covered == []
 
 
-def test_merge_nie_mutuje_zrodla(probe):
+def test_merge_does_not_mutate_the_source(probe):
     src = _cache()
     probe.merge(src, {"session": 99, "weekly_all": 99, "scoped": {}})
     assert src["five_hour"]["utilization"] == 40
@@ -166,7 +167,7 @@ def test_merge_nie_mutuje_zrodla(probe):
 PAST = "2020-01-01T00:00:00+00:00"
 
 
-def test_wygasle_okno_bez_swiezych_wypada(probe):
+def test_expired_window_without_fresh_data_drops_out(probe):
     """A percentage from a window that has already reset is simply untrue — the real figure
     now is close to zero. Publishing the former 95% would be a gross error."""
     usage, _ = probe.merge(_cache(five=95, resets=PAST), None)
@@ -176,7 +177,7 @@ def test_wygasle_okno_bez_swiezych_wypada(probe):
     assert all(l["kind"] != "session" for l in usage["limits"])
 
 
-def test_wygasle_okno_ze_swiezym_zachowuje_procent_ale_gubi_czas_resetu(probe):
+def test_expired_window_with_fresh_data_keeps_percent_but_loses_reset_time(probe):
     """The fresh percentage is true; only the cached resets_at is stale. The time is zeroed
     instead of discarding a good measurement — the next cache write will supply a new one."""
     usage, covered = probe.merge(_cache(five=95, resets=PAST),
@@ -187,7 +188,7 @@ def test_wygasle_okno_ze_swiezym_zachowuje_procent_ale_gubi_czas_resetu(probe):
     assert any("reset-w-toku" in e for e in events)
 
 
-def test_przyszly_reset_nie_jest_ruszany(probe):
+def test_future_reset_is_left_untouched(probe):
     usage, covered = probe.merge(_cache(), {"session": 48, "weekly_all": 47, "scoped": {}})
     usage, events = probe.sanitize(usage, covered, time.time())
     assert usage["five_hour"]["resets_at"] == "2099-01-01T00:00:00+00:00"
@@ -195,12 +196,12 @@ def test_przyszly_reset_nie_jest_ruszany(probe):
     assert len(usage["limits"]) == 3
 
 
-def test_absurdalna_wartosc_w_cache_wypada(probe):
+def test_absurd_value_in_cache_drops_out(probe):
     usage, _ = probe.sanitize(_cache(five=1785143542), [], time.time())
     assert usage["five_hour"] is None
 
 
-def test_swiezy_procent_rowny_cache_ratuje_serie_z_wygaslym_oknem(probe):
+def test_fresh_percent_equal_to_cache_saves_series_with_expired_window(probe):
     """Regression: `sanitize` asks about COVERAGE, not about change. When the dump confirmed
     the same value while the window in the cache had already expired, the series must get
     `reset-w-toku` — it used to drop out of the measurement entirely, losing the one true
@@ -213,7 +214,7 @@ def test_swiezy_procent_rowny_cache_ratuje_serie_z_wygaslym_oknem(probe):
     assert any("reset-w-toku" in e for e in events)
 
 
-def test_sanitize_nie_pada_na_dziwnym_scope(probe):
+def test_sanitize_does_not_crash_on_odd_scope(probe):
     """`sanitize` also derives the limit's model, so the same shape must survive here too."""
     c = _cache(resets=PAST)
     c["limits"][2]["scope"] = "global"
@@ -223,7 +224,7 @@ def test_sanitize_nie_pada_na_dziwnym_scope(probe):
     assert events
 
 
-def test_sanitize_znosi_brakujacy_resets_at(probe):
+def test_sanitize_tolerates_missing_resets_at(probe):
     usage, events = probe.sanitize(_cache(resets=None), [], time.time())
     assert usage["five_hour"]["utilization"] == 40
     assert events == []
@@ -235,43 +236,43 @@ def test_sanitize_znosi_brakujacy_resets_at(probe):
 # files from a Team account in three credit states — with identities scrubbed, but with the
 # case-differing duplicate key and the real size preserved, because `_extract_block` walks
 # the text with `text.find`.
-def test_powod_wylaczenia_kredytow_rozroznia_trzy_stany(probe):
+def test_credits_disabled_reason_distinguishes_three_states(probe):
     """The only field that on its own tells an exhausted OWN pool from the organization
     ceiling: in `spend.disabled_reason` an exhausted pool leaves it `null`."""
     from tests.team import CLAUDE_JSON_STATES
 
-    for path, oczekiwany in CLAUDE_JSON_STATES:
+    for path, expected in CLAUDE_JSON_STATES:
         text = path.read_text("utf-8")
-        assert probe._extract_scalar(text, "cachedExtraUsageDisabledReason") == oczekiwany, \
+        assert probe._extract_scalar(text, "cachedExtraUsageDisabledReason") == expected, \
             path.name
 
 
-def test_wyciag_skalara_nie_rzuca_na_uszkodzonym_pliku(probe):
+def test_extract_scalar_does_not_raise_on_corrupted_file(probe):
     """Rule 3: the probe never raises. Every input must yield a value or None."""
     import json
 
     from tests.team import CLAUDE_JSON_COMPANY_EXHAUSTED
 
-    KLUCZ = "cachedExtraUsageDisabledReason"
-    pelny = CLAUDE_JSON_COMPANY_EXHAUSTED.read_text("utf-8")
-    urwane_w_wartosci = pelny[: pelny.find(KLUCZ) + len(KLUCZ) + 8]
-    for tekst in ("", "{", '{"inny": 1}', pelny[: pelny.find(KLUCZ)], urwane_w_wartosci,
-                  pelny[: len(pelny) // 2]):
-        assert probe._safe(probe._extract_scalar, tekst, KLUCZ) is None
+    KEY = "cachedExtraUsageDisabledReason"
+    full_text = CLAUDE_JSON_COMPANY_EXHAUSTED.read_text("utf-8")
+    truncated_in_value = full_text[: full_text.find(KEY) + len(KEY) + 8]
+    for text in ("", "{", '{"other": 1}', full_text[: full_text.find(KEY)], truncated_in_value,
+                 full_text[: len(full_text) // 2]):
+        assert probe._safe(probe._extract_scalar, text, KEY) is None
 
     # A truncated TAIL of the file no longer spoils the value, and that is the whole edge of
     # the manual extraction over `json.load`, which returns NOTHING on a truncated file.
-    assert probe._extract_scalar(pelny[:-3], KLUCZ) == "org_level_disabled_until"
-    assert probe._safe(json.loads, pelny[:-3]) is None
+    assert probe._extract_scalar(full_text[:-3], KEY) == "org_level_disabled_until"
+    assert probe._safe(json.loads, full_text[:-3]) is None
 
     # Non-string values must get through without an exception too — the contract is open.
-    for surowe, oczekiwane in (('{"k": null}', None), ('{"k": 7}', 7),
-                               ('{"k": true}', True), ('{"k":   "x"}', "x"),
-                               ('{"k": "a\\"b"}', 'a"b')):
-        assert probe._extract_scalar(surowe, "k") == oczekiwane
+    for raw, expected in (('{"k": null}', None), ('{"k": 7}', 7),
+                          ('{"k": true}', True), ('{"k":   "x"}', "x"),
+                          ('{"k": "a\\"b"}', 'a"b')):
+        assert probe._extract_scalar(raw, "k") == expected
 
 
-def test_wyciag_bloku_daje_to_samo_co_pelne_parsowanie(probe):
+def test_extract_block_matches_full_parse(probe):
     """The manual slicing must return EXACTLY what a parser of the whole file would give —
     otherwise the probe sends something other than what Claude Code wrote. It also pins down
     the behavior on the case-differing duplicate key that these files really carry."""
@@ -281,22 +282,22 @@ def test_wyciag_bloku_daje_to_samo_co_pelne_parsowanie(probe):
 
     for path, _ in CLAUDE_JSON_STATES:
         text = path.read_text("utf-8")
-        pelne = json.loads(text)
-        for klucz in ("oauthAccount", "cachedUsageUtilization"):
-            assert probe._extract_block(text, klucz) == pelne[klucz], "%s / %s" % (
-                path.name, klucz)
+        parsed = json.loads(text)
+        for key in ("oauthAccount", "cachedUsageUtilization"):
+            assert probe._extract_block(text, key) == parsed[key], "%s / %s" % (
+                path.name, key)
 
-        klucze = [k for k in pelne["projects"]]
-        assert any(k.lower() == j.lower() and k != j for k in klucze for j in klucze), \
-            "%s stracil duplikat klucza — fixture przestal testowac to, po co powstal" % path.name
+        keys = [k for k in parsed["projects"]]
+        assert any(k.lower() == j.lower() and k != j for k in keys for j in keys), \
+            "%s lost the duplicate key — fixture no longer tests what it was built for" % path.name
 
 
-def test_read_claude_json_zwraca_konto_pomiar_i_powod_dla_kazdego_stanu(probe, monkeypatch):
+def test_read_claude_json_returns_account_measurement_and_reason_for_each_state(probe, monkeypatch):
     """The whole read path together, on three real states. A missing file is not an error —
     on a fresh machine Claude Code has not written it yet."""
     from tests.team import CLAUDE_JSON_STATES
 
-    for path, oczekiwany in CLAUDE_JSON_STATES:
+    for path, expected in CLAUDE_JSON_STATES:
         monkeypatch.setattr(probe, "_find", lambda name, in_claude_dir=False, p=path: str(p))
         acct, cached, cfg_dir, reason = probe.read_claude_json()
 
@@ -305,7 +306,7 @@ def test_read_claude_json_zwraca_konto_pomiar_i_powod_dla_kazdego_stanu(probe, m
         assert isinstance(cached["utilization"]["spend"], dict)
         # Rule 7: ingest keys by accountUuid and both sides must agree.
         assert cached["accountUuid"] == acct["accountUuid"]
-        assert reason == oczekiwany
+        assert reason == expected
 
     monkeypatch.setattr(probe, "_find", lambda name, in_claude_dir=False: None)
     assert probe.read_claude_json() == (None, None, None, None)

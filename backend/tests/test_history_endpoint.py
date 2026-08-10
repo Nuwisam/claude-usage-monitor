@@ -12,7 +12,7 @@ Unit tests did not catch it, because they call `_find_gaps` directly, passing na
 datetimes — that is, they bypass exactly the layer in which the bug arises. Which is why
 these tests go over HTTP: the parameter must pass FastAPI validation, as from a browser.
 
-The second, worse case is covered by `test_offset_inny_niz_utc...`: the MySQL driver
+The second, worse case is covered by `test_a_non_utc_offset_is_converted_not_truncated`: the MySQL driver
 formats datetimes with `strftime` and IGNORES tzinfo, so a parameter carrying '+02:00'
 would not blow up — it would quietly shift the whole range by two hours.
 """
@@ -48,7 +48,7 @@ async def api(db):
 
 
 @pytest_asyncio.fixture
-async def dane(db):
+async def data(db):
     """A few samples in the 5 h window. The query range is far wider than the data, so a
     `client_silent` gap appears — precisely the path that used to fall over."""
     now = utcnow()
@@ -66,33 +66,33 @@ def _iso(dt, suffix="Z"):
     return dt.isoformat() + suffix
 
 
-async def test_zakres_ze_strefa_nie_wywraca_endpointu(api, dane):
+async def test_a_range_with_a_zone_does_not_crash_the_endpoint(api, data):
     """Exactly what the browser sends: `Date.toISOString()`, that is, the 'Z' suffix."""
     r = await api.get("/api/history", params={
-        "account": dane["account"], "seriesId": dane["seriesId"],
-        "from": _iso(dane["now"] - timedelta(hours=2)),
-        "to": _iso(dane["now"]),
+        "account": data["account"], "seriesId": data["seriesId"],
+        "from": _iso(data["now"] - timedelta(hours=2)),
+        "to": _iso(data["now"]),
     })
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["points"], "probki z okna musza sie znalezc w zakresie"
+    assert body["points"], "samples from the window must be found in the range"
     assert any(g["kind"] == "client_silent" for g in body["gaps"]), \
-        "pusty poczatek zakresu to cisza klienta — i to ta sciezka sie wywracala"
+        "an empty start of the range is client silence — and that was the path that used to crash"
 
 
-async def test_zapis_ze_strefa_i_bez_strefy_daje_ten_sam_wynik(api, dane):
+async def test_writing_with_and_without_a_zone_gives_the_same_result(api, data):
     """Naive UTC already worked and must keep working — conversion must not change meaning."""
-    args = {"account": dane["account"], "seriesId": dane["seriesId"]}
-    frm, to = dane["now"] - timedelta(hours=2), dane["now"]
+    args = {"account": data["account"], "seriesId": data["seriesId"]}
+    frm, to = data["now"] - timedelta(hours=2), data["now"]
 
-    ze = await api.get("/api/history", params={**args, "from": _iso(frm), "to": _iso(to)})
-    bez = await api.get("/api/history", params={**args, "from": frm.isoformat(),
+    with_zone = await api.get("/api/history", params={**args, "from": _iso(frm), "to": _iso(to)})
+    without_zone = await api.get("/api/history", params={**args, "from": frm.isoformat(),
                                                 "to": to.isoformat()})
-    assert ze.status_code == bez.status_code == 200
-    assert ze.json() == bez.json()
+    assert with_zone.status_code == without_zone.status_code == 200
+    assert with_zone.json() == without_zone.json()
 
 
-async def test_offset_inny_niz_utc_jest_przeliczany_a_nie_obcinany(api, dane):
+async def test_a_non_utc_offset_is_converted_not_truncated(api, data):
     """The same INSTANT written in a different zone must give the same answer.
 
     This is the silent case: if the offset were ignored instead of converted, the range
@@ -100,8 +100,8 @@ async def test_offset_inny_niz_utc_jest_przeliczany_a_nie_obcinany(api, dane):
     correct. No symptom, wrong data — the very failure mode this whole project
     defends against.
     """
-    args = {"account": dane["account"], "seriesId": dane["seriesId"]}
-    frm, to = dane["now"] - timedelta(hours=2), dane["now"]
+    args = {"account": data["account"], "seriesId": data["seriesId"]}
+    frm, to = data["now"] - timedelta(hours=2), data["now"]
 
     utc = await api.get("/api/history", params={**args, "from": _iso(frm), "to": _iso(to)})
     # the same instant, written as local time
@@ -114,12 +114,12 @@ async def test_offset_inny_niz_utc_jest_przeliczany_a_nie_obcinany(api, dane):
     assert utc.json() == plus2.json()
 
 
-async def test_brak_zakresu_dalej_dziala(api, dane):
+async def test_missing_range_still_works(api, data):
     """The default takes `utcnow()`, i.e. a NAIVE time — this path must not suffer as a
     side effect of the fix. `bucket=raw` explicitly, because downsampling rests on
     MariaDB functions (`unix_timestamp`, `group_concat ... ORDER BY`) SQLite lacks."""
     r = await api.get("/api/history", params={
-        "account": dane["account"], "seriesId": dane["seriesId"], "bucket": "raw",
+        "account": data["account"], "seriesId": data["seriesId"], "bucket": "raw",
     })
     assert r.status_code == 200, r.text
     assert r.json()["points"]

@@ -56,7 +56,7 @@ Twojej pracy — błąd tutaj psuje sesję, nie tylko wykres.
 `app/freshness.py` rozróżnia „okno się zresetowało i nikt nie pracował" (można wnioskować 0%)
 od „klient działa, ale brak próbek" (awaria → `utilization: null`). Fałszywe, pewnie wyglądające
 zero jest najgorszym trybem awarii tego narzędzia — użytkownik odpali duże zadanie i trafi
-w ścianę. Test regresyjny: `test_dzialajacy_klient_bez_probek_daje_unknown`.
+w ścianę. Test regresyjny: `test_a_live_client_with_no_samples_gives_unknown`.
 
 W pikselach niesie tę zasadę **etykieta wieku odczytu**, nie osobny rysunek toru. UI liczy
 wartość jako `utilization ?? rawUtilization` — czyli przy `unknown` pokazuje **ostatni

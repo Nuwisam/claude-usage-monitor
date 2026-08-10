@@ -52,14 +52,14 @@ def spend(percent):
     return u
 
 
-async def stan(db, series_key) -> SeriesState:
+async def state(db, series_key) -> SeriesState:
     return (await db.execute(
         select(SeriesState).join(UsageSeries, UsageSeries.id == SeriesState.series_id)
         .where(UsageSeries.series_key == series_key)
     )).scalars().one()
 
 
-async def probki(db, series_key) -> int:
+async def samples(db, series_key) -> int:
     return (await db.execute(
         select(func.count()).select_from(LimitSample)
         .join(UsageSeries, UsageSeries.id == LimitSample.series_id)
@@ -67,7 +67,7 @@ async def probki(db, series_key) -> int:
     )).scalar_one()
 
 
-async def flagi_stale(db, series_key) -> list[bool]:
+async def stale_flags(db, series_key) -> list[bool]:
     return list((await db.execute(
         select(LimitSample.stale_read)
         .join(UsageSeries, UsageSeries.id == LimitSample.series_id)
@@ -75,17 +75,17 @@ async def flagi_stale(db, series_key) -> list[bool]:
     )).scalars().all())
 
 
-async def zdarzenia(db) -> set[str]:
+async def events(db) -> set[str]:
     return {e.event_type for e in (await db.execute(select(IngestEvent))).scalars()}
 
 
-async def seria_w_status(db, series_key):
+async def series_in_status(db, series_key):
     st = await build_status(db)
     return {s.series_key: s for s in st.accounts[0].series}[series_key]
 
 
 # ------------------------------------------------------------------------ F1: no proof
-async def test_reset_bez_granicy_nie_zamraza_stanu(db):
+async def test_reset_without_boundary_does_not_freeze_state(db):
     """A replay of the live incident, three steps and all three are needed.
 
     t0  the boundary is known and usage is 92% — a normal window in progress;
@@ -97,27 +97,27 @@ async def test_reset_bez_granicy_nie_zamraza_stanu(db):
     as Anthropic said nothing about the new boundary.
     """
     t0 = (utcnow() - timedelta(seconds=240)).replace(microsecond=0)
-    granica = t0 + timedelta(seconds=30)          # passes between t0 and t1
+    boundary = t0 + timedelta(seconds=30)          # passes between t0 and t1
     t1, t2 = t0 + timedelta(seconds=60), t0 + timedelta(seconds=120)
 
-    for ts, u in ((t0, five_hour(92.0, granica)),
+    for ts, u in ((t0, five_hour(92.0, boundary)),
                   (t1, five_hour(92.0, None)),
                   (t2, five_hour(0.0, None))):
         await ingest_one(db, machine_name="desktop", payload=payload(usage=u, captured_at=ts))
         await db.commit()
 
-    st = await stan(db, "bucket:five_hour")
+    st = await state(db, "bucket:five_hour")
     assert float(st.last_utilization) == 0.0, \
-        "brak granicy po obu stronach nie jest dowodem, ze to wciaz to samo okno"
+        "no boundary on either side is not proof that it is still the same window"
     assert st.last_captured_at == t2
-    assert "stale_read" not in await zdarzenia(db)
+    assert "stale_read" not in await events(db)
 
     # The same seen through /api/status, i.e. the symptom the operator reported:
     # "limit usage at the ceiling" next to "reset time unknown".
-    assert (await seria_w_status(db, "bucket:five_hour")).utilization == 0.0
+    assert (await series_in_status(db, "bucket:five_hour")).utilization == 0.0
 
 
-async def test_seria_bez_granicy_moze_spasc(db):
+async def test_series_without_boundary_can_drop(db):
     """`spend:org` and `extra:usage` NEVER have a boundary — for them the freeze was PERMANENT.
     The first true drop (a monthly settlement, a credits top-up) would have stopped the state
     forever, because the boundary that releases it never arrives."""
@@ -129,15 +129,15 @@ async def test_seria_bez_granicy_moze_spasc(db):
                      payload=payload(usage=spend(5), captured_at=t0 + timedelta(seconds=60)))
     await db.commit()
 
-    assert float((await stan(db, "spend:org")).last_utilization) == 5.0, \
-        "seria bez granicy nie moze zamarznac na zawsze"
+    assert float((await state(db, "spend:org")).last_utilization) == 5.0, \
+        "a series without a boundary must not freeze forever"
     # The state alone is not everything: a sample with `stale_read` also drops out of the
     # history and out of the delta baseline (services/status.py, `_recent_samples` filters
     # on that flag).
-    assert not any(await flagi_stale(db, "spend:org"))
+    assert not any(await stale_flags(db, "spend:org"))
 
 
-async def test_guard_nadal_zamraza_gdy_obie_granice_sa_znane(db):
+async def test_guard_still_freezes_when_both_boundaries_are_known(db):
     """The F1 fix has no right to disable the guard. The simplest "fix" — never fire it —
     strips away the only protection against a machine that holds an older token cache while
     its reading only looks fresh (its own `captured_at`, so `newest` will not stop it).
@@ -145,21 +145,21 @@ async def test_guard_nadal_zamraza_gdy_obie_granice_sa_znane(db):
     The boundary on the laptop's side differs by a second: that is the WOBBLE, not another
     window (rule 9)."""
     t0 = (utcnow() - timedelta(seconds=180)).replace(microsecond=0)
-    granica = t0 + timedelta(hours=3)
+    boundary = t0 + timedelta(hours=3)
     await ingest_one(db, machine_name="desktop",
-                     payload=payload(usage=five_hour(60.0, granica), captured_at=t0))
+                     payload=payload(usage=five_hour(60.0, boundary), captured_at=t0))
     await db.commit()
     await ingest_one(db, machine_name="laptop",
-                     payload=payload(usage=five_hour(40.0, granica + timedelta(seconds=1)),
+                     payload=payload(usage=five_hour(40.0, boundary + timedelta(seconds=1)),
                                      captured_at=t0 + timedelta(seconds=30)))
     await db.commit()
 
-    assert float((await stan(db, "bucket:five_hour")).last_utilization) == 60.0, \
-        "spadek przy DOWODNIE tym samym oknie to nieaktualny odczyt, stan sie nie cofa"
-    assert "stale_read" in await zdarzenia(db)
+    assert float((await state(db, "bucket:five_hour")).last_utilization) == 60.0, \
+        "a drop at a PROVABLY identical window is a stale read, state does not roll back"
+    assert "stale_read" in await events(db)
 
 
-async def test_brak_granicy_po_obu_stronach_nadal_deduplikuje(db):
+async def test_no_boundary_on_either_side_still_deduplicates(db):
     """The line the fix must not cross: `same_reset_window(None, None) is True` is CORRECT
     for dedup. Had the guard been fixed by changing this function's answer (instead of adding
     a separate question about proof), `spend:org` and `extra:usage` would get a row on EVERY
@@ -171,12 +171,12 @@ async def test_brak_granicy_po_obu_stronach_nadal_deduplikuje(db):
                                          captured_at=t0 + timedelta(seconds=60 * i)))
         await db.commit()
 
-    assert await probki(db, "spend:org") == 1, \
-        "seria bez granicy o niezmienionej wartosci to jeden wiersz, nie trzy"
+    assert await samples(db, "spend:org") == 1, \
+        "a series without a boundary at an unchanged value is one row, not three"
 
 
 # -------------------------------------------------- F2: what has to keep the state
-async def test_wciaz_wazna_granica_przezywa_pomiar_bez_granicy(db):
+async def test_still_valid_boundary_survives_measurement_without_boundary(db):
     """A measurement with no boundary does not erase a boundary that HAS NOT PASSED YET —
     that one still describes the window in progress, and off it live the countdown,
     `secondsToReset`, clamping the delta to the window and the `inferred_reset` inference.
@@ -185,26 +185,26 @@ async def test_wciaz_wazna_granica_przezywa_pomiar_bez_granicy(db):
     does not execute at all and the boundary would stay in the state of its own accord — the
     test would pass vacuously, whatever the guarded line does."""
     t0 = (utcnow() - timedelta(seconds=180)).replace(microsecond=0)
-    granica = t0 + timedelta(hours=3)
+    boundary = t0 + timedelta(hours=3)
     await ingest_one(db, machine_name="desktop",
-                     payload=payload(usage=five_hour(40.0, granica), captured_at=t0))
+                     payload=payload(usage=five_hour(40.0, boundary), captured_at=t0))
     await db.commit()
     await ingest_one(db, machine_name="desktop",
                      payload=payload(usage=five_hour(45.0, None),
                                      captured_at=t0 + timedelta(seconds=60)))
     await db.commit()
 
-    st = await stan(db, "bucket:five_hour")
-    assert float(st.last_utilization) == 45.0, "blok stanu MUSIAL sie wykonac"
-    assert st.last_resets_at == granica, "granica z przyszlosci opisuje TRWAJACE okno"
+    st = await state(db, "bucket:five_hour")
+    assert float(st.last_utilization) == 45.0, "the state block MUST have executed"
+    assert st.last_resets_at == boundary, "a boundary in the future describes the ONGOING window"
 
     # The operator's symptom from the other side: `resetNote()` in the UI says "reset time
     # unknown" exactly when `resetsAt` is null with non-zero usage.
-    seria = await seria_w_status(db, "bucket:five_hour")
-    assert seria.resets_at == granica and seria.seconds_to_reset > 0
+    series = await series_in_status(db, "bucket:five_hour")
+    assert series.resets_at == boundary and series.seconds_to_reset > 0
 
 
-async def test_przedawniona_granica_nie_zostaje_w_stanie(db):
+async def test_expired_boundary_does_not_stay_in_state(db):
     """The other side of the same trade-off, and the line that must not be crossed.
 
     ONLY a boundary that has not passed yet is carried forward. A boundary that has passed
@@ -212,35 +212,35 @@ async def test_przedawniona_granica_nie_zostaje_w_stanie(db):
     ("the reset passed at 20:00" against 95% usage in a window that ends 5 hours later), that
     is exactly what rule 4 forbids. Visible ignorance beats a confident wrong number."""
     t0 = (utcnow() - timedelta(seconds=180)).replace(microsecond=0)
-    granica = t0 + timedelta(seconds=30)          # passes before the second measurement
+    boundary = t0 + timedelta(seconds=30)          # passes before the second measurement
     await ingest_one(db, machine_name="desktop",
-                     payload=payload(usage=five_hour(92.0, granica), captured_at=t0))
+                     payload=payload(usage=five_hour(92.0, boundary), captured_at=t0))
     await db.commit()
     await ingest_one(db, machine_name="desktop",
                      payload=payload(usage=five_hour(95.0, None),
                                      captured_at=t0 + timedelta(seconds=60)))
     await db.commit()
 
-    st = await stan(db, "bucket:five_hour")
-    assert float(st.last_utilization) == 95.0, "blok stanu MUSIAL sie wykonac"
-    assert st.last_resets_at is None, "przedawniona granica nie opisuje biezacego okna"
+    st = await state(db, "bucket:five_hour")
+    assert float(st.last_utilization) == 95.0, "the state block MUST have executed"
+    assert st.last_resets_at is None, "an expired boundary does not describe the current window"
 
-    seria = await seria_w_status(db, "bucket:five_hour")
-    assert seria.resets_at is None and seria.seconds_to_reset is None
+    series = await series_in_status(db, "bucket:five_hour")
+    assert series.resets_at is None and series.seconds_to_reset is None
 
 
-async def test_pomiar_bez_granicy_nie_lamie_dedupu(db):
+async def test_measurement_without_boundary_does_not_break_dedup(db):
     """Dedup asks "will the STATE CHANGE". Were it comparing against the raw `o.resets_at`,
     then with a carried-forward boundary every subsequent measurement without a boundary would
     look like a change (a known boundary in the state vs NULL in the measurement) and would
     write a row every ~60 s — the F2 fix would break the mechanism it has to coexist with."""
     t0 = (utcnow() - timedelta(seconds=240)).replace(microsecond=0)
-    granica = t0 + timedelta(hours=3)
+    boundary = t0 + timedelta(hours=3)
     await ingest_one(db, machine_name="desktop",
-                     payload=payload(usage=five_hour(40.0, granica), captured_at=t0))
+                     payload=payload(usage=five_hour(40.0, boundary), captured_at=t0))
     await db.commit()
-    po_pierwszym = await probki(db, "bucket:five_hour")
-    assert po_pierwszym == 1
+    after_first = await samples(db, "bucket:five_hour")
+    assert after_first == 1
 
     for i in (1, 2):
         await ingest_one(db, machine_name="desktop",
@@ -248,5 +248,5 @@ async def test_pomiar_bez_granicy_nie_lamie_dedupu(db):
                                          captured_at=t0 + timedelta(seconds=60 * i)))
         await db.commit()
 
-    assert await probki(db, "bucket:five_hour") == po_pierwszym, \
-        "niezmieniona wartosc przy przeniesionej granicy to nadal brak zmiany"
+    assert await samples(db, "bucket:five_hour") == after_first, \
+        "an unchanged value with a carried-forward boundary is still no change"

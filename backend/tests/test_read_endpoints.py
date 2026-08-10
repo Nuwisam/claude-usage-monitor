@@ -43,7 +43,7 @@ async def api(db):
 
 
 @pytest_asyncio.fixture
-async def dane(db):
+async def data(db):
     now = utcnow()
     for offset in (120, 0):
         await ingest_one(db, machine_name="desktop",
@@ -51,7 +51,7 @@ async def dane(db):
     await db.commit()
 
 
-async def test_kazdy_endpoint_odczytu_odpowiada(api, dane):
+async def test_every_read_endpoint_responds(api, data):
     """One loop over them all — a 500 from a dead column shows up here immediately."""
     for path in ("/api/me", "/api/accounts", "/api/machines", "/api/series",
                  "/api/batches", "/api/events", "/api/stats"):
@@ -59,7 +59,7 @@ async def test_kazdy_endpoint_odczytu_odpowiada(api, dane):
         assert r.status_code == 200, "%s -> %s %s" % (path, r.status_code, r.text)
 
 
-async def test_batches_niosa_proweniencje_pomiaru_zamiast_kodow_http(api, dane):
+async def test_batches_carry_measurement_provenance_instead_of_http_codes(api, data):
     """The only place that shows whether a measurement had fresh percentages from stdout
     (`cli_merged`) or only the cache went out (`cli_usage_cache`, up to 5 min old). Without
     it a resolution drop from one minute to five is undetectable — data keeps flowing."""
@@ -72,7 +72,7 @@ async def test_batches_niosa_proweniencje_pomiaru_zamiast_kodow_http(api, dane):
     assert not ({"httpStatus", "requestId", "rlStatus", "ccVersion"} & set(b[0]))
 
 
-async def test_machines_nie_udaje_ze_zna_wersje_claude_code(api, dane):
+async def test_machines_does_not_pretend_to_know_claude_code_version(api, data):
     """`cc_version` came from the probe's UA_VERSION, i.e. from a constant baked into the
     code — the same value for every machine, independent of what actually runs there.
     `scriptVersion` stays because it tells the truth: it shows the probe's rollout state."""

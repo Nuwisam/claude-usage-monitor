@@ -22,14 +22,14 @@ def kinds(gaps):
     return [(g.kind, g.from_, g.to) for g in gaps]
 
 
-def test_brak_batchy_to_cisza_klienta():
+def test_no_batches_means_client_silence():
     # batches every 5 min until 12:20, then nothing; the samples likewise
     ts = m(0, 5, 10, 15, 20)
     gaps = _find_gaps(T0, END, batch_times=ts, sample_times=ts, threshold=PROG)
     assert kinds(gaps) == [("client_silent", T0 + timedelta(minutes=20), END)]
 
 
-def test_batche_sa_ale_brak_probek_serii_to_awaria_nie_bezczynnosc():
+def test_batches_exist_but_no_series_samples_is_a_failure_not_idleness():
     """The heart of this test: the client is alive, the series is silent."""
     batches = m(*range(0, 481, 5))          # batches across the whole range, every 5 min
     samples = m(0, 5, 10)                   # the series' samples end at 12:10
@@ -40,7 +40,7 @@ def test_batche_sa_ale_brak_probek_serii_to_awaria_nie_bezczynnosc():
     assert gaps[0].to == END
 
 
-def test_cisza_klienta_nie_jest_liczona_drugi_raz_jako_brak_probek():
+def test_client_silence_is_not_counted_twice_as_no_samples():
     """When the client is silent there are no samples either — but that is one fact, not
     two. Without the subtraction every silence would be painted twice, in both patterns."""
     ts = m(0, 5, 10)
@@ -48,7 +48,7 @@ def test_cisza_klienta_nie_jest_liczona_drugi_raz_jako_brak_probek():
     assert [g.kind for g in gaps] == ["client_silent"]
 
 
-def test_oba_rodzaje_w_jednym_zakresie_w_kolejnosci_czasu():
+def test_both_gap_kinds_in_one_range_in_time_order():
     # 12:00-12:10 data, 12:10-13:00 client silence, then batches with no samples to the end
     batches = m(0, 5, 10) + m(*range(60, 481, 5))
     samples = m(0, 5, 10)
@@ -61,7 +61,7 @@ def test_oba_rodzaje_w_jednym_zakresie_w_kolejnosci_czasu():
     assert gaps[1].to == END
 
 
-def test_drzazgi_krotsze_niz_prog_nie_sa_zglaszane():
+def test_slivers_shorter_than_the_threshold_are_not_reported():
     """Where two silent periods meet, a stretch of a few minutes with a batch is left. That
     is no series failure, only an ordinary interval — it has no right to a chart pattern."""
     batches = m(0, 40, 45, 90)          # two silences with a short breath, 12:40-12:45
@@ -71,11 +71,11 @@ def test_drzazgi_krotsze_niz_prog_nie_sa_zglaszane():
     assert [g.kind for g in gaps] == ["client_silent", "client_silent"]
 
 
-def test_pusty_zakres_to_jedna_cisza_na_calosc():
+def test_an_empty_range_is_one_silence_for_the_whole_span():
     gaps = _find_gaps(T0, END, batch_times=[], sample_times=[], threshold=PROG)
     assert kinds(gaps) == [("client_silent", T0, END)]
 
 
-def test_gesta_praca_bez_przerw_nie_daje_zadnych_dziur():
+def test_dense_work_without_breaks_gives_no_gaps():
     ts = m(*range(0, 481, 5))
     assert _find_gaps(T0, END, batch_times=ts, sample_times=ts, threshold=PROG) == []

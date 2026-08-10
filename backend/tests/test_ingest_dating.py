@@ -55,7 +55,7 @@ async def _state(db, series_key):
 
 
 # ------------------------------------------------------------------- main regression
-async def test_starszy_cache_nie_cofa_spend_mimo_swiezszego_zrzutu(db):
+async def test_older_cache_does_not_roll_back_spend_despite_fresher_dump(db):
     """THE POINT OF THE WHOLE CHANGE.
 
     Machine A: cache 3 min ago (spend 93%), dump 1 min ago.
@@ -83,11 +83,11 @@ async def test_starszy_cache_nie_cofa_spend_mimo_swiezszego_zrzutu(db):
     await db.commit()
 
     spend = await _state(db, "spend:org")
-    assert float(spend.last_utilization) == 93.0, "starszy cache nie moze cofnac spend"
+    assert float(spend.last_utilization) == 93.0, "older cache must not roll back spend"
     assert spend.last_captured_at == t - timedelta(seconds=180)
 
     five = await _state(db, "bucket:five_hour")
-    assert float(five.last_utilization) == 51.0, "swiezszy zrzut MA wygrac dla okna"
+    assert float(five.last_utilization) == 51.0, "fresher dump MUST win for the window"
     assert five.last_captured_at == t - timedelta(seconds=30)
 
     # History loses nothing — B's sample on `spend` is in the database, it just does not
@@ -98,7 +98,7 @@ async def test_starszy_cache_nie_cofa_spend_mimo_swiezszego_zrzutu(db):
     assert t - timedelta(seconds=240) in stamps
 
 
-async def test_bez_fresh_covered_wszystko_idzie_po_cache(db):
+async def test_without_fresh_covered_everything_follows_cache(db):
     """Graceful degradation, not a compatibility branch: a payload without `fresh_covered`
     is dated entirely by `captured_at`, that is by the cache. This is how spool entries
     written by a probe below v5 get through."""
@@ -112,21 +112,21 @@ async def test_bez_fresh_covered_wszystko_idzie_po_cache(db):
     assert stamps == {t - timedelta(seconds=300)}
 
 
-@pytest.mark.parametrize("smiec", [None, 7, "bucket:five_hour", {"a": 1}, [1, None, {}]])
-async def test_fresh_covered_zlego_typu_nie_wywraca_zapisu(db, smiec):
+@pytest.mark.parametrize("garbage", [None, 7, "bucket:five_hour", {"a": 1}, [1, None, {}]])
+async def test_fresh_covered_of_wrong_type_does_not_break_write(db, garbage):
     """`frozenset(None)` raises TypeError, and `ingest_one` has no try/except despite the
     promise in its docstring: for the current record that is a 500 on the whole request, for
     a backlog entry a `break` and a PERMANENTLY blocked spool tail. The endpoint is exposed
     on the internet."""
     p = payload(account=ACCOUNT_TEAM_REAL, usage=team())
-    p["measurement"]["fresh_covered"] = smiec
+    p["measurement"]["fresh_covered"] = garbage
     r = await send(db, p)
     await db.commit()
     assert r["ok"] and r["samples_written"] > 0
 
 
 # --------------------------------------------------- probe <-> backend key agreement
-def test_probe_key_zgadza_sie_z_kluczami_sondy(probe):
+def test_probe_key_matches_probe_keys(probe):
     """A divergence here is SILENT: the sets would never match, `covered_by_fresh` would
     never light up and dating would quietly fall back to the state from before this change.
     The fixture carries a `weekly_scoped` limit with the model "Fable" — exactly the case in
@@ -135,13 +135,13 @@ def test_probe_key_zgadza_sie_z_kluczami_sondy(probe):
     u = usage(USAGE_ACTIVE)
     _, covered = probe.merge(copy.deepcopy(u),
                              {"session": 48, "weekly_all": 47, "scoped": {"Fable": 3}})
-    assert covered, "fixture musi cokolwiek pokrywac, inaczej test nie sprawdza niczego"
+    assert covered, "fixture must cover something, otherwise the test checks nothing"
 
-    klucze = {probe_key(o) for o in parse_usage(u).observations}
-    assert set(covered) <= klucze
+    keys = {probe_key(o) for o in parse_usage(u).observations}
+    assert set(covered) <= keys
 
 
-def test_probe_key_nie_sluguje_i_nie_zna_powierzchni():
+def test_probe_key_does_not_slug_and_does_not_know_surface():
     """Three properties whose breakage topples nothing — it only switches the mechanism off."""
     u = {"limits": [{"kind": "weekly_scoped", "group": "weekly", "percent": 3,
                      "scope": {"model": {"display_name": "Fable"},
@@ -152,25 +152,25 @@ def test_probe_key_nie_sluguje_i_nie_zna_powierzchni():
     assert by_source["spend"] is None                             # the dump never knows it
 
 
-def test_probe_key_dla_limitu_bez_modelu():
+def test_probe_key_for_limit_without_model():
     u = {"limits": [{"kind": "session", "group": "session", "percent": 48, "scope": None}]}
     o = parse_usage(u).observations[0]
     assert probe_key(o) == "limit:session:-"
 
 
 # ---------------------------------------------------------------------------- anchor
-def test_measured_at_jest_czysta_funkcja():
+def test_measured_at_is_a_pure_function():
     t = utcnow().replace(microsecond=0)
     # The client clock is an hour behind; the measurement is 120 s old on ITS clock.
-    zegar = t - timedelta(hours=1)
-    assert measured_at(zegar - timedelta(seconds=120), t - zegar, t) == t - timedelta(seconds=120)
+    clock = t - timedelta(hours=1)
+    assert measured_at(clock - timedelta(seconds=120), t - clock, t) == t - timedelta(seconds=120)
     # Clamping: a measurement cannot be newer than the moment it was received.
     assert measured_at(t + timedelta(seconds=10), timedelta(0), t) == t
     # A missing time means "not known", not "now".
     assert measured_at(None, timedelta(0), t) is None
 
 
-async def test_kotwica_jest_wspolna_dla_calego_zadania(db):
+async def test_anchor_is_shared_for_the_whole_request(db):
     """The handler takes the anchor BEFORE the write lock. Computed inside `ingest_one` —
     that is, already under the lock — it would give a request that waited out someone else's
     backlog a stamp too fresh by the waiting time, and every backlog entry its own, different
@@ -187,12 +187,12 @@ async def test_kotwica_jest_wspolna_dla_calego_zadania(db):
 
 
 # ------------------------------------------------------------------ an old backlog
-async def test_wpis_sprzed_osmiu_dni_zostaje_stary(db):
+async def test_entry_from_eight_days_ago_stays_old(db):
     """`BACKLOG_MAX_AGE_SEC` used to substitute the server time for such a measurement —
     the exact opposite of protection: the entry became the newest one and took over the
     current state."""
     t = utcnow().replace(microsecond=0)
-    dawno = t - timedelta(days=8)
+    long_ago = t - timedelta(days=8)
 
     await send(db, payload(account=ACCOUNT_TEAM_REAL, usage=team(spend_percent=93),
                            captured_at=t - timedelta(seconds=60), sent_at=t), arrived_at=t)
@@ -202,18 +202,18 @@ async def test_wpis_sprzed_osmiu_dni_zostaje_stary(db):
     # it is the current record that was sent just now. The entry's own `sent_at` serves only
     # the check "the measurement did not come into being after the send".
     p = payload(account=ACCOUNT_TEAM_REAL, usage=team(spend_percent=10),
-                captured_at=dawno, sent_at=dawno)
+                captured_at=long_ago, sent_at=long_ago)
     await ingest_one(db, machine_name="desktop", payload=p, arrived_at=t,
                      offset=timedelta(0), is_backlog=True)
     await db.commit()
 
     stamps = {s.captured_at for s in (await db.execute(select(LimitSample))).scalars()}
-    assert dawno in stamps, "stary pomiar ma zostac zapisany ze swoja data"
+    assert long_ago in stamps, "an old measurement must be saved with its own date"
     spend = await _state(db, "spend:org")
-    assert float(spend.last_utilization) == 93.0, "stary wpis nie moze przejac stanu"
+    assert float(spend.last_utilization) == 93.0, "an old entry must not take over the state"
 
 
-async def test_wpis_z_cofnietym_zegarem_jest_odrzucany_ale_policzony(db):
+async def test_entry_with_clock_turned_back_is_rejected_but_counted(db):
     """A measurement cannot have come into being after the send. The whole entry is rejected
     — otherwise it would land on the request's anchor, pass `newest` and overwrite the state
     with an old reading."""
@@ -230,10 +230,10 @@ async def test_wpis_z_cofnietym_zegarem_jest_odrzucany_ale_policzony(db):
     types = {e.event_type for e in (await db.execute(select(IngestEvent))).scalars()}
     assert "clock_backwards" in types
     b = (await db.execute(select(IngestBatch))).scalars().one()
-    assert b.raw_payload_id is not None, "surowy payload i tak idzie do bazy (zasada 6)"
+    assert b.raw_payload_id is not None, "raw payload goes to the database anyway (rule 6)"
 
 
-async def test_wpis_bez_sent_at_przechodzi_mimo_nowszej_daty(db):
+async def test_entry_without_sent_at_passes_despite_newer_date(db):
     """A spool entry written by probe v4 carries the DUMP time in `captured_at`, routinely
     NEWER than the `captured_at` of the current record (which since v5 is the cache time).
     The rejection criterion stands on `sent_at` precisely so that such entries survive."""

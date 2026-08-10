@@ -44,24 +44,24 @@ async def wire(db):
     return json.loads(st.model_dump_json(by_alias=True))
 
 
-async def test_kazdy_znacznik_czasu_ma_strefe(db):
+async def test_every_timestamp_has_a_zone(db):
     await ingest_one(db, machine_name="desktop", payload=payload())
     await db.commit()
     body = await wire(db)
 
     found = list(walk_timestamps(body))
-    assert found, "odpowiedz nie zawiera zadnego znacznika czasu — test bylby pusty"
+    assert found, "response contains no timestamp at all — the test would be empty"
     for path, value in found:
-        assert ISO_TZ.match(value), "%s = %r nie ma strefy" % (path, value)
+        assert ISO_TZ.match(value), "%s = %r has no zone" % (path, value)
 
 
-async def test_contract_version_jest_zadeklarowana_wersja(db):
+async def test_contract_version_is_the_declared_version(db):
     await ingest_one(db, machine_name="desktop", payload=payload())
     await db.commit()
     assert (await wire(db))["contractVersion"] == CONTRACT_VERSION == 3
 
 
-async def test_serie_niosa_semantyke_a_nie_tylko_klucz(db):
+async def test_series_carry_semantics_not_just_a_key(db):
     await ingest_one(db, machine_name="desktop", payload=payload())
     await db.commit()
     series = (await wire(db))["accounts"][0]["series"]
@@ -69,11 +69,11 @@ async def test_serie_niosa_semantyke_a_nie_tylko_klucz(db):
     for s in series:
         assert {"kind", "group", "bucketKey"} <= set(s)
     # the 5 h window can be picked out without reading the key string or sort_order
-    sesje = [s for s in series if s["kind"] == "session" or s["bucketKey"] == "five_hour"]
-    assert sesje
+    sessions = [s for s in series if s["kind"] == "session" or s["bucketKey"] == "five_hour"]
+    assert sessions
 
 
-async def test_kaskada_jest_przy_koncie_i_ma_cztery_szczeble(db):
+async def test_cascade_is_on_the_account_and_has_four_tiers(db):
     await ingest_one(db, machine_name="desktop", payload=payload())
     await db.commit()
     cascade = (await wire(db))["accounts"][0]["cascade"]
@@ -82,7 +82,7 @@ async def test_kaskada_jest_przy_koncie_i_ma_cztery_szczeble(db):
     assert sum(1 for r in cascade if r["isCurrent"]) == 1
 
 
-async def test_karte_konta_sklada_dokladnie_jedna_funkcja(db, monkeypatch):
+async def test_exactly_one_function_builds_the_account_card(db, monkeypatch):
     """Proof that `/api/status` and the SSE publisher have no way of drifting apart.
 
     The account card is built in `build_account_status`; `build_status` is only a loop
@@ -101,25 +101,25 @@ async def test_karte_konta_sklada_dokladnie_jedna_funkcja(db, monkeypatch):
     await ingest_one(db, machine_name="laptop", payload=payload(account=ACCOUNT_TEAM))
     await db.commit()
 
-    teraz = utcnow()
-    monkeypatch.setattr(stat, "utcnow", lambda: teraz)
+    now = utcnow()
+    monkeypatch.setattr(stat, "utcnow", lambda: now)
 
-    zbiorczo = json.loads((await build_status(db)).model_dump_json(by_alias=True))
-    assert len(zbiorczo["accounts"]) == 2, "scenariusz mial dac dwa konta"
+    aggregate = json.loads((await build_status(db)).model_dump_json(by_alias=True))
+    assert len(aggregate["accounts"]) == 2, "scenario should have produced two accounts"
 
-    for karta in zbiorczo["accounts"]:
+    for card in aggregate["accounts"]:
         acc = (await db.execute(
-            select(Account).where(Account.account_uuid == karta["uuid"])
+            select(Account).where(Account.account_uuid == card["uuid"])
         )).scalar_one()
-        pojedynczo, ostrzezenia = await stat.build_account_status(
-            db, acc, now=teraz, last_batch_at=await stat.last_batch_time(db, acc.id),
+        individual, warnings = await stat.build_account_status(
+            db, acc, now=now, last_batch_at=await stat.last_batch_time(db, acc.id),
         )
-        assert json.loads(pojedynczo.model_dump_json(by_alias=True)) == karta, \
-            "karta konta %s rozni sie miedzy sciezkami" % karta["uuid"]
-        assert set(ostrzezenia) <= set(zbiorczo["warnings"])
+        assert json.loads(individual.model_dump_json(by_alias=True)) == card, \
+            "account card %s differs between paths" % card["uuid"]
+        assert set(warnings) <= set(aggregate["warnings"])
 
 
-async def test_last_batch_time_zgadza_sie_z_wariantem_grupowym(db):
+async def test_last_batch_time_agrees_with_the_grouped_variant(db):
     """The publisher computes `last_batch_at` with a different query than `/api/status`
     (one account instead of GROUP BY). The only fact with two sources — so it gets a test."""
     await ingest_one(db, machine_name="desktop", payload=payload(account=ACCOUNT_MAX))
@@ -127,13 +127,13 @@ async def test_last_batch_time_zgadza_sie_z_wariantem_grupowym(db):
     await db.commit()
 
     import app.services.status as stat
-    grupowo = await stat._last_batch_times(db)
+    grouped = await stat._last_batch_times(db)
     for acc in (await db.execute(select(Account))).scalars().all():
-        assert await stat.last_batch_time(db, acc.id) == grupowo.get(acc.id)
+        assert await stat.last_batch_time(db, acc.id) == grouped.get(acc.id)
 
 
-async def test_unknown_nie_ma_liczby_ale_ma_ostatni_pomiar(db, monkeypatch):
-    """The same condition that test_dzialajacy_klient_bez_probek_daje_unknown guards —
+async def test_unknown_has_no_number_but_keeps_the_last_measurement(db, monkeypatch):
+    """The same condition that test_a_live_client_with_no_samples_gives_unknown guards —
     checked here ON THE WIRE, because it is the UI that gets `null` and must really get it.
 
     The scenario: a measurement of 42%, the window resets an hour later, and after the
@@ -157,14 +157,14 @@ async def test_unknown_nie_ma_liczby_ale_ma_ostatni_pomiar(db, monkeypatch):
     series = (await wire(db))["accounts"][0]["series"]
 
     unknowns = [s for s in series if s["freshness"] == "unknown"]
-    assert unknowns, "scenariusz nie wyprodukowal stanu unknown — test bylby pusty"
+    assert unknowns, "scenario did not produce an unknown state — the test would be empty"
     for s in unknowns:
-        assert s["utilization"] is None, "unknown wyrenderowane jako liczba"
-        assert s["rawUtilization"] is not None, "zgubiony ostatni pomiar"
+        assert s["utilization"] is None, "unknown rendered as a number"
+        assert s["rawUtilization"] is not None, "lost the last measurement"
 
 
 # ------------------------------------------------- withdrawn meter on the wire
-async def test_wycofany_miernik_zostawia_ostatni_zmierzony_procent_i_kwoty(db):
+async def test_withdrawn_meter_leaves_the_last_measured_percent_and_amounts(db):
     """The phantom is the `percent: 0` FROM THE WITHDRAWAL PAYLOAD, not the value from
     before the block. The latter is a measurement and stays on screen — otherwise closing
     the gate ERASES the only usage figure there is, worsening the view instead of fixing it.
@@ -183,8 +183,8 @@ async def test_wycofany_miernik_zostawia_ostatni_zmierzony_procent_i_kwoty(db):
 
     body = await wire(db)
     spend = {s["seriesKey"]: s for s in body["accounts"][0]["series"]}["spend:org"]
-    assert spend["utilization"] is None, "biezacej liczby nie ma i nie wolno jej udawac"
-    assert spend["rawUtilization"] == 93.0, "ostatni ZMIERZONY procent zostaje"
+    assert spend["utilization"] is None, "there is no current number and it must not be faked"
+    assert spend["rawUtilization"] == 93.0, "last MEASURED percent stays"
     assert spend["unavailableReason"] == "org_level_disabled_until"
 
     # The amounts also come from the last measurement — the withdrawal payload has `used`
@@ -200,7 +200,7 @@ async def test_wycofany_miernik_zostawia_ostatni_zmierzony_procent_i_kwoty(db):
     assert (credits["usedMinor"], credits["limitMinor"]) == (27795, 30000)
 
 
-async def test_seria_z_powodem_nie_ma_biezacej_liczby(db):
+async def test_a_series_with_a_reason_has_no_current_number(db):
     """An implication over the WHOLE response, not one series: a reason rules out the
     CURRENT number. `utilization` beside a reason would assert that precisely what cannot
     be measured was measured. `rawUtilization` does not — a measurement from before the
@@ -212,9 +212,9 @@ async def test_seria_z_powodem_nie_ma_biezacej_liczby(db):
     await db.commit()
 
     body = await wire(db)
-    wszystkie = [s for a in body["accounts"] for s in a["series"]]
-    assert wszystkie, "brak serii — test bylby pusty"
-    for s in wszystkie:
+    all_series = [s for a in body["accounts"] for s in a["series"]]
+    assert all_series, "no series — the test would be empty"
+    for s in all_series:
         if s["unavailableReason"] is not None:
             assert s["utilization"] is None, s["seriesKey"]
 
@@ -224,7 +224,7 @@ async def test_seria_z_powodem_nie_ma_biezacej_liczby(db):
                 assert r["state"] != "on" or r["key"] == "hard_block"
 
 
-async def test_contract_version_zostaje_na_trzy_mimo_nowych_pol(db):
+async def test_contract_version_stays_at_three_despite_new_fields(db):
     """Adding a field does not break compatibility — the `deltaFrom` precedent. A consumer
     that does not know `unavailableReason` gets exactly what it used to get."""
     from tests.team import USAGE_WITHDRAWN, team_payload
@@ -239,7 +239,7 @@ async def test_contract_version_zostaje_na_trzy_mimo_nowych_pol(db):
     assert all("reason" in r for a in body["accounts"] for r in a["cascade"])
 
 
-async def test_fantomowe_zero_zapisane_przed_ta_zmiana_nie_wraca_na_ekran(db):
+async def test_a_phantom_zero_written_before_this_change_does_not_return_to_the_screen(db):
     """State written by the PREVIOUS backend version holds a phantom zero in `series_state`:
     the parser recorded `percent: 0` as a measurement back then. After the rollout that row
     still lies there — as long as the meter is withdrawn, no new value will arrive to
@@ -265,5 +265,5 @@ async def test_fantomowe_zero_zapisane_przed_ta_zmiana_nie_wraca_na_ekran(db):
     spend = {s["seriesKey"]: s
              for s in (await wire(db))["accounts"][0]["series"]}["spend:org"]
     assert spend["utilization"] is None
-    assert spend["rawUtilization"] is None, "fantomowe zero z bazy nie moze wrocic na drut"
+    assert spend["rawUtilization"] is None, "a phantom zero from the database must not return on the wire"
     assert spend["unavailableReason"] == "org_level_disabled_until"

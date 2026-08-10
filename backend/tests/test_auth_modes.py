@@ -32,20 +32,20 @@ async def api():
 
 
 # --------------------------------------------------------------------------- configuration
-def test_brak_auth_mode_nie_pozwala_wstac(monkeypatch):
+def test_missing_auth_mode_refuses_to_start(monkeypatch):
     monkeypatch.delenv("AUTH_MODE", raising=False)
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
 
 
-def test_puste_auth_mode_nie_pozwala_wstac(monkeypatch):
+def test_empty_auth_mode_refuses_to_start(monkeypatch):
     """The Compose case: `AUTH_MODE: ${AUTH_MODE}` with no such variable in the environment."""
     monkeypatch.setenv("AUTH_MODE", "")
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
 
 
-def test_nieznana_nazwa_trybu_nie_pozwala_wstac(monkeypatch):
+def test_unknown_mode_name_refuses_to_start(monkeypatch):
     """A typo must stop the container, not fall into the "nothing matches" branch."""
     monkeypatch.setenv("AUTH_MODE", "None")
     with pytest.raises(ValidationError):
@@ -53,13 +53,13 @@ def test_nieznana_nazwa_trybu_nie_pozwala_wstac(monkeypatch):
 
 
 # --------------------------------------------------------------------------- none
-async def test_tryb_none_wpuszcza_bez_ciasteczka(api, monkeypatch):
+async def test_mode_none_admits_without_a_cookie(api, monkeypatch):
     monkeypatch.setattr(settings, "auth_mode", "none")
     r = await api.get("/api/me")
     assert r.status_code == 200, r.text
 
 
-async def test_tryb_none_nie_patrzy_na_allowliste(api, monkeypatch):
+async def test_mode_none_does_not_look_at_the_allowlist(api, monkeypatch):
     """An empty allowlist is deny-all everywhere else. Here there is no address for it to
     compare against — and better that this be written down than that somebody add the
     condition 'for consistency' and shut the local mode behind a blank 403."""
@@ -69,14 +69,14 @@ async def test_tryb_none_nie_patrzy_na_allowliste(api, monkeypatch):
 
 
 # --------------------------------------------------------------------------- header
-async def test_tryb_header_bez_naglowka_to_401(api, monkeypatch):
+async def test_mode_header_without_header_is_401(api, monkeypatch):
     monkeypatch.setattr(settings, "auth_mode", "header")
     r = await api.get("/api/me")
     assert r.status_code == 401
     assert r.json()["detail"]["reason"] == "not-authenticated"
 
 
-async def test_tryb_header_bez_adresu_logowania_nie_podaje_redirect_url(api, monkeypatch):
+async def test_mode_header_without_login_url_gives_no_redirect_url(api, monkeypatch):
     """An empty AUTH_LOGIN_URL = nowhere to send anyone. The UI must then show the error
     in place, so the contract must not carry a guessed address."""
     monkeypatch.setattr(settings, "auth_mode", "header")
@@ -84,7 +84,7 @@ async def test_tryb_header_bez_adresu_logowania_nie_podaje_redirect_url(api, mon
     assert "redirect_url" not in (await api.get("/api/me")).json()["detail"]
 
 
-async def test_tryb_header_z_adresem_logowania_podaje_redirect_url(api, monkeypatch):
+async def test_mode_header_with_login_url_gives_redirect_url(api, monkeypatch):
     monkeypatch.setattr(settings, "auth_mode", "header")
     monkeypatch.setattr(settings, "auth_login_url", "https://example.org/login?rd={rd}")
     monkeypatch.setattr(settings, "public_origin", "https://example.org")
@@ -95,7 +95,7 @@ async def test_tryb_header_z_adresem_logowania_podaje_redirect_url(api, monkeypa
     )
 
 
-async def test_tryb_header_wpuszcza_adres_z_allowlisty(api, monkeypatch):
+async def test_mode_header_admits_address_from_allowlist(api, monkeypatch):
     monkeypatch.setattr(settings, "auth_mode", "header")
     monkeypatch.setattr(settings, "allowed_emails_raw", "a@b.pl")
     r = await api.get("/api/me", headers={"X-Forwarded-Email": "a@b.pl"})
@@ -103,17 +103,17 @@ async def test_tryb_header_wpuszcza_adres_z_allowlisty(api, monkeypatch):
     assert r.json()["email"] == "a@b.pl"
 
 
-async def test_tryb_header_odrzuca_adres_spoza_allowlisty(api, monkeypatch):
+async def test_mode_header_rejects_address_outside_allowlist(api, monkeypatch):
     """Authentication says WHO, the allowlist says WHO IS ALLOWED. 403, not 401 — sending
     an already logged-in user back to the login page gives a loop."""
     monkeypatch.setattr(settings, "auth_mode", "header")
     monkeypatch.setattr(settings, "allowed_emails_raw", "a@b.pl")
-    r = await api.get("/api/me", headers={"X-Forwarded-Email": "ktos.inny@b.pl"})
+    r = await api.get("/api/me", headers={"X-Forwarded-Email": "someone.else@b.pl"})
     assert r.status_code == 403
     assert r.json()["detail"]["reason"] == "email-not-allowed"
 
 
-async def test_nazwa_naglowka_jest_konfiguracja(api, monkeypatch):
+async def test_header_name_is_configuration(api, monkeypatch):
     monkeypatch.setattr(settings, "auth_mode", "header")
     monkeypatch.setattr(settings, "auth_email_header", "X-Auth-Request-Email")
     monkeypatch.setattr(settings, "allowed_emails_raw", "a@b.pl")
@@ -122,7 +122,7 @@ async def test_nazwa_naglowka_jest_konfiguracja(api, monkeypatch):
 
 
 # --------------------------------------------------------------------------- verify
-async def test_tryb_verify_bez_adresu_uslugi_nie_zgaduje(api, monkeypatch):
+async def test_mode_verify_without_service_url_does_not_guess(api, monkeypatch):
     """There is nobody to ask. This is a configuration failure, not a missing session —
     503, not 401, because a redirect to the login page would fix nothing here."""
     monkeypatch.setattr(settings, "auth_mode", "verify")
@@ -132,18 +132,18 @@ async def test_tryb_verify_bez_adresu_uslugi_nie_zgaduje(api, monkeypatch):
     assert r.json()["detail"]["reason"] == "sso-unavailable"
 
 
-async def test_tryb_verify_czyta_pola_odpowiedzi_z_konfiguracji(api, monkeypatch):
+async def test_mode_verify_reads_response_fields_from_configuration(api, monkeypatch):
     """Every identity service names these fields differently, so the names are
     configuration. The test passes its own and checks the module hardcodes none."""
     import app.sso as sso
 
     async def fake_verify(cookie: str):
-        return 200, {"kto": "a@b.pl", "kiedy": "2026-01-01T00:00:00Z"}
+        return 200, {"who": "a@b.pl", "when": "2026-01-01T00:00:00Z"}
 
     monkeypatch.setattr(settings, "auth_mode", "verify")
     monkeypatch.setattr(settings, "auth_verify_url", "http://identity/api/verify")
-    monkeypatch.setattr(settings, "auth_email_field", "kto")
-    monkeypatch.setattr(settings, "auth_verified_at_field", "kiedy")
+    monkeypatch.setattr(settings, "auth_email_field", "who")
+    monkeypatch.setattr(settings, "auth_verified_at_field", "when")
     monkeypatch.setattr(settings, "allowed_emails_raw", "a@b.pl")
     monkeypatch.setattr(sso, "_call_verify", fake_verify)
 
@@ -152,14 +152,14 @@ async def test_tryb_verify_czyta_pola_odpowiedzi_z_konfiguracji(api, monkeypatch
     assert r.json() == {"email": "a@b.pl", "verifiedAt": "2026-01-01T00:00:00Z"}
 
 
-@pytest.mark.parametrize("kod", [401, 403])
-async def test_tryb_verify_traktuje_401_i_403_jako_brak_sesji(api, monkeypatch, kod):
+@pytest.mark.parametrize("code", [401, 403])
+async def test_mode_verify_treats_401_and_403_as_no_session(api, monkeypatch, code):
     """A service that answers a logged-out visitor with a login page instead of JSON uses
     now one code, now the other. The backend IS the gate here, so both mean "not logged in"."""
     import app.sso as sso
 
     async def fake_verify(cookie: str):
-        return kod, {}
+        return code, {}
 
     monkeypatch.setattr(settings, "auth_mode", "verify")
     monkeypatch.setattr(settings, "auth_verify_url", "http://identity/api/verify")
@@ -170,15 +170,15 @@ async def test_tryb_verify_traktuje_401_i_403_jako_brak_sesji(api, monkeypatch, 
     assert r.json()["detail"]["reason"] == "not-authenticated"
 
 
-async def test_tryb_verify_oddaje_adres_logowania_podany_przez_usluge(api, monkeypatch):
+async def test_mode_verify_passes_through_login_url_given_by_service(api, monkeypatch):
     import app.sso as sso
 
     async def fake_verify(cookie: str):
-        return 401, {"gdzie": "https://identity.example.org/start"}
+        return 401, {"where": "https://identity.example.org/start"}
 
     monkeypatch.setattr(settings, "auth_mode", "verify")
     monkeypatch.setattr(settings, "auth_verify_url", "http://identity/api/verify")
-    monkeypatch.setattr(settings, "auth_redirect_field", "gdzie")
+    monkeypatch.setattr(settings, "auth_redirect_field", "where")
     monkeypatch.setattr(sso, "_call_verify", fake_verify)
 
     detail = (await api.get("/api/me")).json()["detail"]
