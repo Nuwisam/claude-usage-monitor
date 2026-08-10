@@ -59,7 +59,7 @@ DEFAULTS = {
     # time on screen — it changes the contents.
     #
     # A number of seconds, 0 (the mark right away, no card) or "infinity" — the card
-    # then stands until you answer, and usage is invisible for that whole time.
+    # then stays until you answer, and usage is invisible for that whole time.
     "alert_takeover_sec": 300,
     # How long the card BLINKS, that is, swaps the blank frame for one flooded with
     # the accent. A number of seconds, 0 disables it, or "infinity" — it then blinks

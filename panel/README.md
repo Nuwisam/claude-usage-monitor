@@ -223,7 +223,7 @@ The presentation is two-stage, and that is a decision, not a phase:
    For `alert_flash_sec` the card **blinks**, that is, it swaps the blank frame
    for one **flooded with the accent**: the banner and the 6 px rail on the left
    edge turn `ACCENT`, and the text in the banner turns to the background color.
-   The rail stands there **in both frames** — in the resting one it is
+   The rail is there **in both frames** — in the resting one it is
    `NEUTRAL_900` — so the flood changes the color, not the layout, and the card
    keeps a fixed left edge even after the window expires. Without blinking, the
    card comes in quietly, because it is as dark as the rest of the screen. The
@@ -258,7 +258,7 @@ ones that already burned out on their own counter. A new block therefore opens
 the window for the whole set, not just for itself. Without this, three of the
 four layouts were dead: two blocks would have to start within the same
 five-minute window, and with sequential work that does not happen. It does not
-extend the card's time on screen — the predicate "the card stands" is the
+extend the card's time on screen — the predicate "the card stays" is the
 same, only its content changes.
 
 Rows go **newest first**; the reason has no effect on this, and an entry

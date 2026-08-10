@@ -376,7 +376,7 @@ but send no samples.
 
 The backend used to generate one warning: "some series on account X are in the `unknown`
 state". **It disappeared along with the concept of `unknown` in the UI** — it repeated, by
-state name, what was already standing next to it as a number of minutes. The field stays in
+state name, what was already shown next to it as a number of minutes. The field stays in
 the contract as a place for facts that span accounts; **an empty `warnings[]` is a valid
 state**, not a missing implementation.
 
@@ -643,7 +643,7 @@ Three things worth noticing in this one response:
 - **`isActive` really does jump.** In the v1 example (19:07) it bound `weekly_all`; here,
   after an intense session, it binds `session` at 91% with `severity: "critical"`.
 - **`cascade` says more than the top percentage** — `session` is the current rung, credits are
-  `off`, so the hard block stands right behind the weekly one.
+  `off`, so the hard block comes right after the weekly one.
 - **`resetsAt` on both series ends in `.056340` and `.056361`** — a 21 µs difference, because
   that is the response's microseconds, not the window boundary. See the warning in § 6.
 
@@ -652,7 +652,7 @@ The `bucket:five_hour` and `bucket:seven_day` series in the same response have
 
 The `extra:usage` series is **not present at all** in this response, and that is correct: a
 Max account never had credits, so `extra_usage.utilization` is `null` and the series never
-passed the `everNonNull` filter. On a Team account it would stand here with `primary: false`
+passed the `everNonNull` filter. On a Team account it would appear here with `primary: false`
 and `duplicateOf: "spend:org"`.
 
 The `spend:org` series carries in `extra`:
@@ -698,7 +698,7 @@ bug — data only accrues while you are working, and the chart is meant to show 
 ## 9. UI design decisions
 
 A list of questions that had to be settled before the view existed — and the answers the
-current interface stands on:
+current interface rests on:
 
 | Question | Decision |
 |---|---|
@@ -764,7 +764,7 @@ The Team account has already been verified live, in three credit states at once:
 (93%, 277.95 of 300.00 EUR), an exhausted own pool (100%, 300.04 of 300.00 — `enabled` still
 `true`), and a meter withdrawn by the organization (`enabled: false`, `disabled_reason`,
 amounts zeroed). All three sit as fixtures in `backend/tests/fixtures/` and the cascade tests
-stand on them — the invented payload with a 9000 USD threshold is gone.
+rest on them — the invented payload with a 9000 USD threshold is gone.
 
 One last pitfall: `cap` in the real response is **nested**
 (`{"credits": null, "money": {"amount_minor": 30000, …}}`), not flat. A flat read passed tests

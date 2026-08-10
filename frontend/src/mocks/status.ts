@@ -147,7 +147,7 @@ function accountMax(): AccountStatus {
         sort: 20, bucket: "seven_day", u: 30, resetMin: 8453, capturedMin: -47,
         confirmedMin: -0.3, sinceMin: -47, fresh: "live",
         delta: 1, primary: false, dupOf: WEEKLY_KEY }),
-      // Edge case: credits disabled, so the 0 has been standing for four hours.
+      // Edge case: credits disabled, so the 0 has been unchanged for four hours.
       //
       // DELIBERATELY WITHOUT `extra:usage`: on an account that never had credits this series
       // has `utilization` null forever and does not enter `series[]` (the `ever_non_null`
@@ -365,7 +365,7 @@ function creditsStates(): AccountStatus[] {
 
   return [
     // WITHDRAWN METER: Anthropic reports `percent: 0` and `used: 0.00`, so without this change
-    // the track would stand empty under a "confirmed" caption — that is, "you have the whole
+    // the track would sit empty under a "confirmed" caption — that is, "you have the whole
     // 300 EUR" next to a block. The number and the amounts come from the LAST MEASUREMENT
     // before the block (hence the age in days), `utilization` is null because there is no
     // current reading. The withdrawal payload carries `percent: 0`, `used: 0.00` and

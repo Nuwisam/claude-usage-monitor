@@ -55,7 +55,7 @@ function dayDiff(d: Date, now: Date): number {
 }
 
 /** Stamp of an instant read RELATIVE TO NOW — the only place where the decision "do we add
- *  the day" is made. Every time label standing next to a reading's age or next to a
+ *  the day" is made. Every time label sitting next to a reading's age or next to a
  *  countdown goes through this or through `atStamp`; that way the day variant reaches
  *  everywhere at once, and not in ten places separately.
  *

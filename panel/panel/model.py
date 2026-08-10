@@ -4,7 +4,7 @@ The counterpart of frontend/src/api/types.ts. The contract is FROZEN (rule 8
 of AGENTS.md), and the panel is its THIRD consumer, next to /api/status and the UI.
 
 We read DEFENSIVELY: unknown fields are ignored, missing ones yield None. A new
-bucket at Anthropic has to work with no change here (rule 5) — and a panel standing
+bucket at Anthropic has to work with no change here (rule 5) — and a panel sitting
 on a desk must not blow up because the backend grew a field.
 """
 CONTRACT_VERSION = 3

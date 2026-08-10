@@ -2,7 +2,7 @@
  *
  *  FRESHNESS IS CARRIED BY THE READING-AGE LABEL, NOT BY THE TRACK DRAWING. `live`, `stale`
  *  and `unknown` look identical: a full track with the last TRUE value. How much that number
- *  is worth is told by the "confirmed on Wed. at 11:58 · 3 d 4 h ago" standing next to it.
+ *  is worth is told by the "confirmed on Wed. at 11:58 · 3 d 4 h ago" sitting next to it.
  *
  *  Rule 4 from AGENTS.md ("unknown is never zero") comes out of this STRONGER, not weaker:
  *  with no fresh measurement we show the last MEASURED value, not zero. The dashed track and

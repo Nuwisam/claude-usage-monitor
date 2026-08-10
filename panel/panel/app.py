@@ -187,7 +187,7 @@ class App:
         window, and with sequential work that does not happen.
 
         The card's time on screen is NOT extended by this: the predicate "the card
-        stands" is still "there exists a post-debounce entry younger than the window".
+        stays" is still "there exists a post-debounce entry younger than the window".
         Only the CONTENT changes.
 
         The window counts from the server's `since`, not from the moment the panel saw
@@ -196,21 +196,21 @@ class App:
         PER ENTRY — an entry in debounce does not get onto the card and does not open
         the window.
         """
-        okno = seconds(self.cfg.alert_takeover_sec, 300.0)
-        gotowe, swieza = [], False
+        takeover_sec = seconds(self.cfg.alert_takeover_sec, 300.0)
+        debounced, any_fresh = [], False
         for b in self.alerts:
             seen = self._seen_at.get(b.key)
             if seen is None or mono - seen < self.cfg.blocked_debounce_sec:
                 continue
-            gotowe.append(b)
-            # `okno > 0` on the outside, because an entry without `since` skips the age
-            # comparison: without this, `alert_takeover_sec: 0` would give it a card
-            # against its own documentation.
-            if okno > 0 and (b.since is None
-                             or (now_ms - fmt.ms(b.since)) / 1000.0 < okno):
-                swieza = True
+            debounced.append(b)
+            # `takeover_sec > 0` on the outside, because an entry without `since` skips
+            # the age comparison: without this, `alert_takeover_sec: 0` would give it a
+            # card against its own documentation.
+            if takeover_sec > 0 and (b.since is None
+                                     or (now_ms - fmt.ms(b.since)) / 1000.0 < takeover_sec):
+                any_fresh = True
         # the state stopped being TAKEOVER-WORTHY, it did not stop being true
-        return gotowe if swieza else []
+        return debounced if any_fresh else []
 
     def screen(self):
         mono = self.monotonic()
@@ -220,10 +220,10 @@ class App:
         if live:
             # The flash is per KEY, not per card: a second block has to draw attention
             # too, and the tick of "waiting N min" flashes nothing.
-            swieze = {b.key for b in live} - self._carded
-            okno = seconds(self.cfg.alert_flash_sec)
-            if swieze and okno > 0:
-                self._flash_until = mono + okno
+            new_keys = {b.key for b in live} - self._carded
+            flash_sec = seconds(self.cfg.alert_flash_sec)
+            if new_keys and flash_sec > 0:
+                self._flash_until = mono + flash_sec
             self._carded |= {b.key for b in live}
             # The blink phase comes from the clock, not from a tick counter: on a lost
             # tick (a scene change costs more than a second) the counter would drift

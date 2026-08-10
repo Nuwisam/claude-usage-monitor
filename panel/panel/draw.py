@@ -204,7 +204,7 @@ def bar(d, box, view, fill_colour, track_colour=theme.NEUTRAL_900):
     """The limit track in one of two drawings.
 
     Two, not four: the panel does not tell freshness states apart by the drawing, because
-    the age of the reading stands right next to it (see view.py). The distinction that
+    the age of the reading sits right next to it (see view.py). The distinction that
     remains is fundamental: whether the value IS THERE AT ALL.
 
     At 100% there is no extra marker of any kind — a full track says it by itself.

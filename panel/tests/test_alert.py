@@ -277,7 +277,7 @@ def test_takeover_infinity_does_not_collapse_card():
     a = app(z, alert_takeover_sec="infinity")
     a.on_event("alert", stream_frame(entry(since="2020-01-01T00:00:00Z")))
     z.advance(5)
-    assert a.screen().alert is not None, "the card must stand until you respond"
+    assert a.screen().alert is not None, "the card must stay until you respond"
 
 
 def test_takeover_zero_gives_marker_immediately():
@@ -591,11 +591,11 @@ def test_fresh_block_is_visible_despite_three_older_ones():
     assert state.rest == ["old-1"], "the oldest one goes down to the footer, not the newest"
 
 
-def test_detail_tile_does_not_enter_the_mode_strip():
+def test_detail_tile_does_not_run_into_the_mode_strip():
     from panel import layout as L
     lay = L.Layout(480, 320)
     for lines in (1, 2):
-        assert lay.alert_solo.fits(lines), "the tile for %d lines enters the strip" % lines
+        assert lay.alert_solo.fits(lines), "the tile for %d lines runs into the mode strip" % lines
 
 
 @pytest.mark.parametrize("with_footer", [True, False])
@@ -658,7 +658,7 @@ def test_banner_and_strip_ink_sits_where_the_mockup_says():
 
 @pytest.mark.parametrize("count", [1, 2, 3, 5])
 @pytest.mark.parametrize("flooded,color", [(False, "NEUTRAL_900"), (True, "ACCENT")])
-def test_rail_stands_in_both_frames_of_every_layout(count, flooded, color):
+def test_rail_is_present_in_both_frames_of_every_layout(count, flooded, color):
     """The rail is not a property of the full frame: it always sits below the banner, and
     flooding only repaints it. A bar appearing out of nothing would be a stronger movement
     than a change of color, and outside the `alert_flash_sec` window the card would be left

@@ -11,14 +11,12 @@ they are loaded from changed.
 Every case matches measured harness behavior, not an idea of it. The measurement methodology
 lives in the script's own docstring.
 
-i18n-keep: four things in this file stay Polish and none of them is untranslated work.
+i18n-keep: three things in this file stay Polish and none of them is untranslated work.
 This module is the only surviving record of a cp1250 bug, and the record is made of the
 bytes themselves:
 
   * the mojibake `'umieraÄ‡'` and the note that `Ł` is `C5 81` — what the failure LOOKED
     like. Retype either and the evidence is gone;
-  * three docstrings that stay Polish whole, because they are the sentences explaining
-    those bytes;
   * four `Z:\\projects\\...` literals in the `cwd` fixtures. A Windows drive path is what
     the hook really receives, and the cp1250 crash happened on exactly such a path;
   * the Polish file path and shell command fed as tool input. The accented characters are
@@ -705,10 +703,10 @@ def test_unchanged_set_generates_no_posts(ss):
     decides that. Otherwise an idle machine would talk to the server every turn."""
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
                                 tool_input={"command": "ls"}))
-    ile = len(ss.sent)
+    posts_before = len(ss.sent)
     for _ in range(5):
         ss.alert_dispatch(CFG, hook("Stop", session_id="other-session"))
-    assert len(ss.sent) == ile
+    assert len(ss.sent) == posts_before
 
 
 def test_empty_directory_and_empty_marker_stay_silent(ss):
@@ -726,10 +724,10 @@ def test_hot_path_does_not_reconcile(ss):
                                 tool_input={"command": "ls"}))
     for n in names(ss):
         os.remove(os.path.join(ss.STATEDIR, n))
-    ile = len(ss.sent)
+    posts_before = len(ss.sent)
     ss.alert_dispatch(CFG, hook("PostToolUse", tool_name="Read", tool_input={},
                                 tool_use_id="toolu_x"))
-    assert len(ss.sent) == ile, "the closing branch started talking to the server"
+    assert len(ss.sent) == posts_before, "the closing branch started talking to the server"
 
 
 def test_failed_post_does_not_write_marker(ss, monkeypatch):
@@ -749,8 +747,8 @@ def test_local_mode_without_configuration(ss):
 
 
 def test_polish_characters_in_detail(ss, tmp_path):
-    """Bez jawnego utf-8 cp1250 wywala sie na polskiej sciezce — i to jest wyjatek
-    w skrypcie, ktory ma prawa nie rzucac."""
+    """Without an explicit utf-8, cp1250 blows up on a Polish path — and that is an exception
+    inside a script that has no right to raise at all."""
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Edit",
                           tool_input={"file_path": r"C:\Zażółć\gęślą\jaźń.py"}))
     assert "jaźń" in ss.snapshot()[0]["detail"]
@@ -877,10 +875,10 @@ def test_disabled_does_not_reconcile_even_on_drift(ss):
                                 tool_input={"command": "ls"}))
     for n in names(ss):
         os.remove(os.path.join(ss.STATEDIR, n))     # drift: disk empty, marker not
-    ile = len(ss.sent)
+    posts_before = len(ss.sent)
     for event in ("Stop", "UserPromptSubmit", "SessionEnd", "SessionStart"):
         ss.alert_dispatch(dict(CFG, session_status=False), hook(event))
-    assert len(ss.sent) == ile
+    assert len(ss.sent) == posts_before
 
 
 def test_local_mode_does_not_reach_network_on_reconcile(ss):
@@ -956,11 +954,11 @@ def test_recursion_guard_cuts_alert_too(ss, monkeypatch):
 
 
 def test_hook_stdin_is_read_as_utf8(ss, monkeypatch):
-    """Payload hooka to UTF-8, ale `sys.stdin` w trybie tekstowym dekodowal go
-    kodowaniem locale — na ekranie i w toascie wychodzilo 'umieraÄ‡' zamiast
-    'umierac' z ogonkami. Asercja idzie przez `snapshot()`, bo on ma jawne utf-8;
-    gole `open()` przeczytaloby poprawny plik jako cp1250 i dalo czerwien na dobrym
-    kodzie."""
+    """The hook payload is UTF-8, but `sys.stdin` in text mode decoded it with the locale
+    encoding — on screen and in the toast it came out as 'umieraÄ‡' instead of
+    'umierac' with its diacritics. The assertion goes through `snapshot()`, because that
+    one has an explicit utf-8; a bare `open()` would read a correct file as cp1250 and
+    paint the test red on code that is fine."""
     assert _run_probe(ss, monkeypatch,
                     hook("PermissionRequest", tool_name="Bash",
                          tool_input={"command": "echo zażółć gęślą jaźń"})) == 0
@@ -968,14 +966,14 @@ def test_hook_stdin_is_read_as_utf8(ss, monkeypatch):
 
 
 def test_stdin_with_byte_outside_cp1250_does_not_lose_alert(ss, monkeypatch):
-    """Twardszy tryb tej samej awarii, i to on boli bardziej. cp1250 nie ma
-    odpowiednika dla 0x81/0x83/0x88/0x90/0x98, a `sys.stdin` ma
-    `errors=surrogateescape` — wiec 'Ł' (C5 81) nie psul sie na ekranie, tylko
-    stawal sie samotnym surogatem. Ten wywracal `write_excl` na `.encode("utf-8")`
-    ("surrogates not allowed"), a tam stoi `except Exception: pass`: plik wpisu
-    powstawal PUSTY. Skutek: toast leci, `read_entry` nie parsuje, `snapshot()`
-    pomija, alert nigdy nie dociera na panel — a klucz jest juz zajety, wiec
-    ponowienie tez nic nie da."""
+    """The harder mode of the same failure, and it is the one that hurts more. cp1250 has
+    no equivalent for 0x81/0x83/0x88/0x90/0x98, and `sys.stdin` runs with
+    `errors=surrogateescape` — so 'Ł' (C5 81) did not come out mangled on screen, it
+    became a lone surrogate instead. That surrogate toppled `write_excl` at
+    `.encode("utf-8")` ("surrogates not allowed"), and that call sits inside
+    `except Exception: pass`: the entry file was created EMPTY. The result: the toast
+    fires, `read_entry` does not parse, `snapshot()` skips it, the alert never reaches
+    the panel — and the key is already taken, so a retry achieves nothing either."""
     assert _run_probe(ss, monkeypatch,
                     hook("PermissionRequest", tool_name="Edit",
                          tool_input={"file_path": r"C:\Łukasz\gęś.py"})) == 0

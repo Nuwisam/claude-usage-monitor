@@ -195,7 +195,7 @@ def known_same_reset_window(a: datetime | None, b: datetime | None, eps_sec: flo
     The asymmetry of the costs is unambiguous, but not as cheap as it looks. Accepting a
     stale reading spoils the state until the NEXT measurement of that series — usually a
     minute — except that the upper bound is set not by the probe's frequency but by its
-    silence: when the client goes quiet right after the write, the wrong value stands until
+    silence: when the client goes quiet right after the write, the wrong value holds until
     `freshness()` degrades it, that is until `CLIENT_SILENT_SEC` (6 h by default,
     `app/config.py:38`), and for that whole time it is served as `live`/`stale`, that is as
     a value and not as ignorance. A frozen state lies for exactly as long, and on top of

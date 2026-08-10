@@ -294,7 +294,7 @@ async def build_account_status(
     # There used to be a warning here: "some series on account X are in the unknown state".
     # It went away together with the very notion of `unknown` in the UI: the view now shows
     # the last MEASURED percent, and how much it is worth is told by the reading-age label
-    # next to each series. So the banner restated with a state name what already stood
+    # next to each series. So the banner restated with a state name what was already shown
     # beside it as a number of minutes. `warnings[]` stays in the contract — nobody fills
     # it today, and that is the correct state, not a missing implementation.
 

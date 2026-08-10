@@ -58,11 +58,11 @@ def test_three_digit_value_fits_in_column():
 
 # i18n-keep: the Polish letters below are the measurement, not text. 'Ń' reaches higher
 # than any unaccented capital and the pangram carries every tail the panel can clip, so
-# translating either makes this test pass while measuring nothing. The docstring stays
-# Polish with them: it is the sentence that explains what is being measured.
+# translating either makes this test pass while measuring nothing. Only the glyphs stay
+# Polish: 'Ń', the pangram "Zażółć gęślą jaźń" and "TYDZIEŃ".
 def test_descenders_are_not_clipped():
-    """Mierzymy z faktycznego obrysu, nie z nominalnego rozmiaru: 'Ń' siega
-    wyzej niz wielkie litery bez znaku diakrytycznego."""
+    """Measured from the actual glyph outline, not from the nominal size: 'Ń' reaches
+    higher than capital letters carrying no diacritic."""
     for size in (10, 11, 12, 13, 15):
         f = draw.font(size)
         assert draw.line_height(f) >= f.getbbox("TYDZIEŃ")[3] - f.getbbox("TYDZIEŃ")[1]

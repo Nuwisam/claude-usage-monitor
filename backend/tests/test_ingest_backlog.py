@@ -182,7 +182,7 @@ async def test_expire_all_removes_stale_object_from_identity_map(tmp_path):
 
     TWO things in the construction are critical, and each has already broken this test once:
 
-    1. The `held` reference is taken INSIDE `_ingest_tx`. Had the `select()` stood
+    1. The `held` reference is taken INSIDE `_ingest_tx`. Had the `select()` sat
        outside it, autobegin would have opened a transaction on session A that nobody
        closes — the snapshot would be pinned from before B's commit, and that read would
        also refresh the very object `expire_all()` had just expired. The test would then

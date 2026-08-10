@@ -821,13 +821,13 @@ def _fname(session_id, agent_id, key):
 def key_of(name):
     """The key from an entry's file name, or None for a name not of this form.
 
-    A name outside the scheme really can be there (a test drops `smieci.json`), and then it
+    A name outside the scheme really can be there (a test drops `garbage.json`), and then it
     must neither be deleted nor guessed at.
     """
     if not name.endswith(".json"):
         return None
-    czlony = name[:-5].split("__")
-    return czlony[2] if len(czlony) == 3 else None
+    parts = name[:-5].split("__")
+    return parts[2] if len(parts) == 3 else None
 
 
 # --------------------------------------------------------------- state directory
@@ -1013,8 +1013,8 @@ def entry_session(name):
     """The `session_id` from an entry's file name, or None for a name not of this form."""
     if not name.endswith(".json"):
         return None
-    czlony = name[:-5].split("__")
-    return czlony[0] if len(czlony) == 3 else None
+    parts = name[:-5].split("__")
+    return parts[0] if len(parts) == 3 else None
 
 
 def registry_dead(name, live):
@@ -1132,7 +1132,7 @@ def result_record(records, tool_use_id):
     return found
 
 
-def _rozstrzygniete(records, prompt_id, since):
+def _resolved_ids(records, prompt_id, since):
     """The `tool_use_id` values of resolutions that may concern THIS block. Two of the three
     conditions.
 
@@ -1153,8 +1153,8 @@ def _rozstrzygniete(records, prompt_id, since):
     for rec in records:
         if rec.get("promptId") != prompt_id:
             continue
-        kiedy = _epoch(rec.get("timestamp"))
-        if kiedy is None or kiedy <= since:
+        when = _epoch(rec.get("timestamp"))
+        if when is None or when <= since:
             continue
         for b in _blocks(rec, "user", "tool_result"):
             out.add(b.get("tool_use_id"))
@@ -1173,8 +1173,8 @@ def transcript_closed(data, key, records):
     if not prompt_id:
         return False                # older probe: a hash over an empty string cannot tell
                                     # turns apart
-    gotowe = _rozstrzygniete(records, prompt_id, _epoch(data.get("since")))
-    if not gotowe:
+    resolved = _resolved_ids(records, prompt_id, _epoch(data.get("since")))
+    if not resolved:
         return False
 
     # A `permission` entry key is `call_key(tool_name, tool_input, prompt_id)`, i.e. a hash
@@ -1188,13 +1188,13 @@ def transcript_closed(data, key, records):
     # A real tail is mixed (Read, Edit, Bash...), so this sifts out most candidates before
     # the hash.
     tool = data.get("tool")
-    uzycia = [b for rec in records for b in _blocks(rec, "assistant", "tool_use")]
-    trafienie = None
-    for i, b in enumerate(uzycia):
-        if (b.get("id") in gotowe and b.get("name") == tool
+    tool_uses = [b for rec in records for b in _blocks(rec, "assistant", "tool_use")]
+    match = None
+    for i, b in enumerate(tool_uses):
+        if (b.get("id") in resolved and b.get("name") == tool
                 and call_key(b.get("name"), b.get("input"), prompt_id) == key):
-            trafienie = (i, b)          # with several hits the LAST one counts
-    if trafienie is None:
+            match = (i, b)              # with several hits the LAST one counts
+    if match is None:
         return False
 
     # Condition 3: if a SECOND, byte-identical call stood in the tail after this one, then
@@ -1202,10 +1202,10 @@ def transcript_closed(data, key, records):
     # `call_key`, so the hash alone cannot tell them apart. Measured: 0.24% of calls have
     # such a twin within the 32 KB window, and the scenario "refusal, Claude repeats an
     # identical call" occurred 22 times in the corpus.
-    i, b = trafienie
-    for pozniejsze in uzycia[i + 1:]:
-        if (pozniejsze.get("name") == b.get("name")
-                and pozniejsze.get("input") == b.get("input")):
+    i, b = match
+    for later_use in tool_uses[i + 1:]:
+        if (later_use.get("name") == b.get("name")
+                and later_use.get("input") == b.get("input")):
             return False
     return True
 
@@ -1250,8 +1250,8 @@ def snapshot():
         data = read_entry(name)
         if data is None:
             continue
-        for pole in LOCAL_FIELDS:
-            data.pop(pole, None)
+        for field in LOCAL_FIELDS:
+            data.pop(field, None)
         data["key"] = name[:-5]
         out.append(data)
     out.sort(key=lambda e: e.get("since") or "")
@@ -1486,9 +1486,9 @@ def sweep_session(cfg, hook):
         return
     prefix = ("%s__" % session_id) if session_id else None
     event = hook.get("hook_event_name")
-    live, powod = registry_view(event, session_id)
+    live, hold_reason = registry_view(event, session_id)
     tails = {}                       # transcript_path -> tail, read ONCE per file
-    wstrzymane = 0
+    held_back = 0
     for name, _mtime in all_entries:
         if prefix and name.startswith(prefix):
             drop(name)
@@ -1498,7 +1498,7 @@ def sweep_session(cfg, hook):
             continue
         if data.get("registry_seen"):
             if live is None:
-                wstrzymane += 1
+                held_back += 1
             elif registry_dead(name, live):
                 # This entry's session no longer exists, and the entry was created while it
                 # WAS in the registry.
@@ -1509,14 +1509,14 @@ def sweep_session(cfg, hook):
         # nothing more.
         if _safe(closed_by_transcript, name, data, tails):
             drop(name)
-    if wstrzymane and powod:
+    if held_back and hold_reason:
         # Without this line "the mechanism died after a change at Anthropic" and "there is
         # nothing to collect" are indistinguishable, and the symptom is exactly the bug this
         # section fixes. A separate key, not `skip`: this is not a run without a measurement,
         # `analyze-samples.py` counts something else there. Logged only when there really
         # was something to hold back.
-        log_local({"t": round(time.time(), 3), "alert_skip": powod,
-                   "event": event, "wpisy": wstrzymane})
+        log_local({"t": round(time.time(), 3), "alert_skip": hold_reason,
+                   "event": event, "wpisy": held_back})
     # UNCONDITIONALLY, not `if hit`: deletions that did not go through here left the server
     # with a set that is not on disk (`sweep_ttl` deletes and does not publish, the `del`
     # escape hatch deletes from outside the probe). `publish()` compares the snapshot with
@@ -1535,10 +1535,10 @@ def alert_shutdown(cfg):
     correction any more. After the first such run the directory is empty and every
     following one ends at the `scandir` alone.
     """
-    biezace = entries()
-    if not biezace:
+    current = entries()
+    if not current:
         return
-    for name, _mtime in biezace:
+    for name, _mtime in current:
         drop(name)
     publish(cfg)
 

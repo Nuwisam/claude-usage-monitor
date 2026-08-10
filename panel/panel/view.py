@@ -2,7 +2,7 @@
 
 NOT A DIFFERENCE FROM THE WEB, though this file claimed one for a long time: the
 panel has no separate freshness states in the drawing, and neither has the web.
-Recency is carried on both sides by the reading-age label ("16 min ago") standing
+Recency is carried on both sides by the reading-age label ("16 min ago") sitting
 next to the account. `freshness.ts` says so in its own header and `describeSeries()`
 returns no field that tells `live` from `stale`, so the claim that the web colors the
 fill was false in both languages. The port and its original agree.

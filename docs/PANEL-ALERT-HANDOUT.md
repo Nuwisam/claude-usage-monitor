@@ -149,7 +149,7 @@ nothing is a stronger movement than a change of color, and outside the `alert_fl
 window the card would be left without a left edge. The rail runs the full height under the
 banner, through the `Mode` strip and the list footers too — in the mockup it's `position:
 absolute`, so it paints above the blocks in the flow. Guarded by
-`test_rail_stands_in_both_frames_of_every_layout`, separately for each of the four layouts and
+`test_rail_is_present_in_both_frames_of_every_layout`, separately for each of the four layouts and
 both frames.
 
 The flood dirties ~13% of the frame, about 0.24 s on the Turing — well inside a tick. A
@@ -226,7 +226,7 @@ These are judgment calls, not measurements, and all three are keys in `panel.jso
   model puts the ink 1–3 px somewhere else. The gap between boxes is invisible, the position
   of the ink is visible. **The measurement measures the BOTTOM OF THE INK**, not the middle
   of the box — and Pillow's `anchor="ls"` puts it at `base − 1`. `BANNER_BASE` and
-  `MODE_BASE` stood two pixels too low for it, until the fidelity audit measured them again
+  `MODE_BASE` sat two pixels too low for it, until the fidelity audit measured them again
   (24.33 px and 306.33 px on the mockup rendered at 3×). Guarded by
   `test_banner_and_strip_ink_sits_where_the_mockup_says`.
 - **Rectangles in the half-open convention** (`draw.fill_rect`, `draw.rounded`): Pillow

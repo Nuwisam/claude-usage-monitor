@@ -139,7 +139,7 @@ def alert_state(blocked, now_ms=0.0, footer=None, flood=False):
     ) for b in shown]
     # The hour in the banner is the start of the OLDEST wait on screen, not the `since`
     # of the heading: rows run youngest first, so the first entry is by design the
-    # newest — and the banner has to say how long all of this has been standing.
+    # newest — and the banner has to say how long all of this has been waiting.
     stamps = [b.since for b in shown if b.since is not None]
     return AlertState(
         title=alert_title(blocked),
@@ -522,9 +522,9 @@ class Renderer:
         x, y = xy
         name = ("machine %s" % row.machine) if named else row.machine
         if not dim_dot:
-            czlony = [c for c in (row.tool, name) if c]
-            if czlony:
-                d.text((x, y), draw.ellipsize(" · ".join(czlony), f, room), font=f,
+            parts = [c for c in (row.tool, name) if c]
+            if parts:
+                d.text((x, y), draw.ellipsize(" · ".join(parts), f, room), font=f,
                        fill=colour, anchor="ls")
             return
 
@@ -564,7 +564,7 @@ class Renderer:
         f_mode = draw.font(L_.F_MODE)
         draw.fill_rect(d, L_.mode, theme.SUNKEN)
         x = L.ALERT_PAD_X
-        # The label and the value stand on a COMMON baseline, not each centred on its
+        # The label and the value sit on a COMMON baseline, not each centred on its
         # own: with two type sizes the centre of the font box falls elsewhere than the
         # centre of the letters, and the caps look as if they had slipped down.
         y = L_.MODE_BASE

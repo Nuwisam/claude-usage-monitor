@@ -155,7 +155,7 @@ class AlertSolo:
 
     def fits(self, lines):
         """Whether the detail tile stays clear of the mode strip. Held to it by
-        tests/test_alert.py::test_detail_tile_does_not_enter_the_mode_strip."""
+        tests/test_alert.py::test_detail_tile_does_not_run_into_the_mode_strip."""
         return self.detail_box(lines)[3] <= self.mode[1]
 
 
@@ -179,7 +179,7 @@ class AlertPair:
     # two halves differ by a pixel — once the sub-pixel falls upward, once downward. That
     # is not reproduced here: both halves get the same offsets, because lying next to each
     # other they have to look the same. The error against the mockup is at most 1 px per half.
-    SHORT_BASE = 37         # the reason and the time stand on one baseline
+    SHORT_BASE = 37         # the reason and the time sit on one baseline
     PROJECT_BASE = 73
     META_BASE = 91
     DETAIL_BASE = 113

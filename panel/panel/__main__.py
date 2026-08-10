@@ -184,7 +184,7 @@ def cmd_probe(args):
         if caps.acked:
             print("missed_csw: %d  (0 = every frame acknowledged)" % dev.missed_csw)
             # Last: this command is unreliable and a failed attempt spoils the NEXT
-            # transaction, so it cannot stand before the test card.
+            # transaction, so it cannot come before the test card.
             print("probe_geometry(): %s  (unreliable — see the header of ax206.py)"
                   % (dev.probe_geometry(),))
         else:
