@@ -1,12 +1,12 @@
-"""POST /api/ingest — jedyny endpoint bez SSO.
+"""POST /api/ingest — the only endpoint without SSO.
 
-Dwie warstwy auth: filtr brzegowy X-Ingest-Key w Apache (odcina skanery zanim dotkna
-Pythona) i Bearer per maszyna tutaj (prawdziwa autoryzacja).
+Two auth layers: the edge filter X-Ingest-Key in Apache (cuts scanners off before they
+reach Python) and a per-machine Bearer here (the real authorization).
 
-Cap rozmiaru jest sprawdzany PRZED parsowaniem JSON — endpoint jest wystawiony w internecie,
-a klient moze wyslac backlog po dlugiej przerwie.
+The size cap is checked BEFORE the JSON is parsed — the endpoint is exposed to the internet,
+and a client may send a backlog after a long break.
 
-Zapisy sa SERIALIZOWANE i kazdy pomiar ma WLASNA transakcje — patrz `_WRITE_LOCK`.
+Writes are SERIALIZED and every measurement gets its OWN transaction — see `_WRITE_LOCK`.
 """
 import asyncio
 from collections.abc import AsyncIterator
@@ -25,75 +25,77 @@ from app.services.ingest import ingest_one, request_offset, utcnow
 
 router = APIRouter()
 
-# Serializacja ZAPISOW ingestu w obrebie procesu.
+# Serialization of ingest WRITES within the process.
 #
-# `ingest_one` zaczyna od SELECT-a na `machines` (services/ingest.py:61) — to otwiera read
-# view transakcji — a potem mutuje ten sam, JEDEN wiersz (`last_seen_at`, `batches`) i
-# wstawia do `ingest_batches` dziecko z FK na niego, wiec wstawka musi zalozyc blokade na
-# wiersz rodzica. MariaDB od 11.6.2 ma innodb_snapshot_isolation=ON, a wtedy proba blokady
-# wiersza zmienionego PO otwarciu read view nie czeka, tylko zwraca twardy ER_CHECKREAD
-# (1020). Dwa nakladajace sie POST-y z tej samej maszyny to tutaj norma (rownolegle hooki
-# sesji subagentowych): dawalo to 36x 1020 i 9x deadlock 1213, a kazdy z nich
-# cofal CALE zadanie — batch, raw_payload, probki, zdarzenia i doklejony backlog.
+# `ingest_one` starts with a SELECT on `machines` (services/ingest.py:61) — that opens the
+# transaction's read view — and then mutates that same, SINGLE row (`last_seen_at`,
+# `batches`) and inserts a child into `ingest_batches` with an FK onto it, so the insert
+# must take a lock on the parent row. MariaDB since 11.6.2 ships
+# innodb_snapshot_isolation=ON, and then an attempt to lock a row changed AFTER the read
+# view opened does not wait — it returns a hard ER_CHECKREAD (1020). Two overlapping POSTs
+# from the same machine are the norm here (parallel subagent session hooks): that gave
+# 36x 1020 and 9x deadlock 1213, and each of them rolled back the WHOLE request — batch,
+# raw_payload, samples, events and the appended backlog.
 #
-# Lock obejmuje CALY span "read view otwarty -> commit". Skrocenie go do samego UPDATE-u
-# nic nie daje, bo read view powstaje juz przy pierwszym SELECT. Sprawdzone, ze span
-# naprawde zaczyna sie pod lockiem: `require_ingest_token` (app/auth.py:37) nie dotyka bazy,
-# a `AsyncSession` nie otwiera transakcji przed pierwszym `execute()`.
+# The lock covers the WHOLE span "read view open -> commit". Shortening it to the UPDATE
+# alone buys nothing: the read view is created at the first SELECT already. Verified that
+# the span really starts under the lock — `require_ingest_token` (app/auth.py:37) does not
+# touch the database, and `AsyncSession` opens no transaction before the first `execute()`.
 #
-# Gorace wiersze to nie tylko `machines`: ten sam ksztalt select-then-mutate maja
+# The hot rows are not only `machines`: the same select-then-mutate shape appears in
 # `get_or_create_account` (services/ingest.py:73), `get_or_create_series` (:100),
-# `store_raw` (:134) i upsert pary `MachineAccount` w `ingest_one`. `raw_payloads` jest
-# gorace WLASNIE przy bezczynnosci, bo odpowiedz jest wtedy bajt-identyczna i wpada w ten
-# sam wiersz — wspolny dla wszystkich maszyn i wszystkich kont. Dlatego lock jest jeden i
-# obejmuje calego `ingest_one`, a nie sam fragment o maszynie.
+# `store_raw` (:134) and the `MachineAccount` pair upsert in `ingest_one`. `raw_payloads`
+# is hot PRECISELY when nothing is happening, because the response is then byte-identical
+# and falls into the same row — one shared by all machines and all accounts. Hence a single
+# lock, covering the whole of `ingest_one` rather than just the machine part.
 #
-# DLACZEGO LOCK W PROCESIE WYSTARCZA: entrypoint.sh startuje SWIADOMIE jeden proces
-# uvicorna, bo broker SSE (services/events.py) zyje w pamieci procesu — patrz AGENTS.md,
-# "Pulapki tego srodowiska". Przy --workers > 1 ten lock milczy i 1020 wraca. To ten sam
-# warunek, ktory AGENTS.md juz zakazuje lamac, ale tam lamie sie halasliwie (SSE przestaje
-# dochodzic), a tu CICHO, wiec jest wymieniony wprost.
+# WHY AN IN-PROCESS LOCK IS ENOUGH: entrypoint.sh starts a single uvicorn process
+# DELIBERATELY, because the SSE broker (services/events.py) lives in process memory — see
+# AGENTS.md, "Pitfalls of this environment". With --workers > 1 this lock falls silent and
+# 1020 comes back. It is the same condition AGENTS.md already forbids breaking, but there
+# it breaks loudly (SSE stops arriving) and here QUIETLY, so it is spelled out.
 #
-# To NIE zastepuje retry na 1020/1213 (F4, swiadomie poza zakresem): lock usuwa zrodlo
-# kolizji WEWNATRZ procesu, nie odpornosc na kolizje z zewnatrz.
+# This does NOT replace a retry on 1020/1213 (F4, deliberately out of scope): the lock
+# removes the source of collisions INSIDE the process, not resilience to outside ones.
 _WRITE_LOCK = asyncio.Lock()
 
 
 @asynccontextmanager
 async def _ingest_tx(db: AsyncSession) -> AsyncIterator[None]:
-    """Jeden pomiar = jedna transakcja, w calosci pod lockiem, z commitem I rollbackiem
-    WEWNATRZ. Rollback musi byc pod lockiem: dopoki nie wrocil, sesja jest zatruta i
-    nastepny czekajacy dostalby PendingRollbackError zamiast szansy na zapis."""
+    """One measurement = one transaction, wholly under the lock, with commit AND rollback
+    INSIDE. The rollback must hold the lock: until it returns the session is poisoned and
+    the next waiter would get a PendingRollbackError instead of a chance to write."""
     async with _WRITE_LOCK:
         try:
             yield
             await db.commit()
-            # `commit()` NIE wygasza obiektow, bo SessionLocal ma expire_on_commit=False
-            # (app/db.py:14). To ustawienie jest dobrane pod JEDNA transakcje na zadanie —
-            # wtedy po commicie nikt z tej sesji juz nic nie czytal. Tutaj transakcji jest
-            # N, a lock jest ODDAWANY miedzy nimi, wiec w szczelinie commituje inne zadanie.
-            # Bez tej linii kolejny `select()` dostalby z identity map TEN SAM obiekt z
-            # wartosciami sprzed cudzego commitu (SQLAlchemy zwraca instancje z identity
-            # map i odrzuca swieze kolumny wiersza) i po cichu nadpisalby czyjs inkrement
-            # na `machines.batches`, `raw_payloads.seen_count`, `machine_accounts.samples`,
-            # a guard monotonicznosci porownalby sie ze starym `series_state`.
+            # `commit()` does NOT expire objects: SessionLocal has expire_on_commit=False
+            # (app/db.py:14). That setting is tuned for ONE transaction per request — after
+            # the commit nobody read from that session again. Here there are N transactions
+            # and the lock is RELEASED between them, so another request commits in the gap.
+            # Without this line the next `select()` would take THE SAME object from the
+            # identity map, with values from before that other commit (SQLAlchemy returns
+            # the instance from the identity map and discards the row's fresh columns), and
+            # would quietly overwrite someone's increment to `machines.batches`,
+            # `raw_payloads.seen_count`, `machine_accounts.samples`, while the monotonicity
+            # guard would compare against a stale `series_state`.
             #
-            # Ta linia to doslownie to, co robi domyslne expire_on_commit=True — czyli
-            # przywrocenie domyslki SQLAlchemy dokladnie dla commitow, ktore wprowadza ten
-            # podzial, bez zmiany jej dla reszty aplikacji. Nie jest wiec obrona przed
-            # hipoteza: usuwa zaleznosc sciezki spojnosci danych od tego, czy refcounting
-            # zdazyl wyrzucic obiekt z weak identity map — niezapisanego nigdzie warunku,
-            # ktorego zaden test nie chroni i ktory psuje sie CICHO.
+            # This line is literally what the default expire_on_commit=True does — restoring
+            # the SQLAlchemy default for exactly the commits this split introduces, without
+            # changing it for the rest of the application. So it is not a defense against a
+            # hypothesis: it removes the data-consistency path's dependency on whether
+            # refcounting managed to evict the object from the weak identity map — a
+            # condition written down nowhere, guarded by no test, and breaking QUIETLY.
             #
-            # Sciezka rollback nie potrzebuje odpowiednika: `Session.rollback()` wygasza
-            # wszystko sam, zawsze.
+            # The rollback path needs no equivalent: `Session.rollback()` expires everything
+            # itself, always.
             db.expire_all()
         except BaseException:
-            # BaseException, nie Exception: CancelledError NIE dziedziczy po Exception od
-            # 3.8, a leci tu realnie — Starlette anuluje zadanie, gdy klient sie rozlaczy
-            # (a sonda ma timeout 5 s), uvicorn anuluje zadania w locie na SIGTERM.
-            # Przepuszczenie go z otwarta transakcja trzymaloby blokade na wierszu
-            # `machines` do konca zycia poolowanego polaczenia.
+            # BaseException, not Exception: CancelledError does NOT inherit from Exception
+            # since 3.8, and it really does arrive here — Starlette cancels the request when
+            # the client disconnects (and the probe has a 5 s timeout), uvicorn cancels
+            # in-flight requests on SIGTERM. Letting it through with an open transaction
+            # would hold the lock on the `machines` row until the pooled connection dies.
             await db.rollback()
             raise
 
@@ -104,10 +106,10 @@ async def ingest(
     machine: str = Depends(require_ingest_token),
     db: AsyncSession = Depends(get_session),
 ) -> IngestResult:
-    # KOTWICA CZASU — pierwsza instrukcja, przed odczytem ciala i przed `_ingest_tx`.
-    # `ingest_one` biegnie juz pod `_WRITE_LOCK`; zdjecie kotwicy tam znaczyloby, ze zadanie,
-    # ktore przeczekalo cudzy backlog, datuje swoje pomiary o czas czekania za swiezo, a
-    # kazdy wpis backlogu dostaje wlasna, inna kotwice. Jedna kotwica na cale zadanie.
+    # TIME ANCHOR — the first statement, before the body is read and before `_ingest_tx`.
+    # `ingest_one` already runs under `_WRITE_LOCK`; taking the anchor there would mean a
+    # request that waited out someone else's backlog dates its measurements too fresh by
+    # the wait, and each backlog entry gets its own, different anchor. One per whole request.
     arrived_at = utcnow()
 
     raw = await request.body()
@@ -128,10 +130,10 @@ async def ingest(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail={"reason": "payload-not-object"})
 
-    # `offset = arrived_at - sent_at` — jeden na cale zadanie, liczony z rekordu ZEWNETRZNEGO,
-    # bo to on zostal wyslany teraz. Wpisy backlogu leza w tej samej kopercie, wiec ich wiek
-    # (`sent_at - ts` we WLASNYM zegarze klienta) przelicza sie ta sama poprawka. Brak
-    # `sent_at` => offset zerowy, czyli stempel klienta idzie nietkniety.
+    # `offset = arrived_at - sent_at` — one per whole request, computed from the OUTER
+    # record, because that is the one just sent. Backlog entries ride in the same envelope,
+    # so their age (`sent_at - ts` on the client's OWN clock) is corrected by the same
+    # amount. No `sent_at` => a zero offset, so the client's stamp goes through untouched.
     offset = request_offset(payload, arrived_at)
 
     async with _ingest_tx(db):
@@ -139,23 +141,23 @@ async def ingest(
                                   arrived_at=arrived_at, offset=offset)
     touched: list[str] = [result.get("account_uuid")]
 
-    # Backlog: partiami, z twardym capem. Klient obcina spool DOPIERO po potwierdzeniu,
-    # ile wpisow przyjelismy — dzieki temu awaria w polowie nie gubi danych.
+    # Backlog: in batches, with a hard cap. The client trims its spool ONLY after being
+    # told how many entries were accepted — so a failure halfway loses no data.
     #
-    # Kazdy wpis ma WLASNA transakcje, bo `backlogAccepted` jest dla sondy DLUGOSCIA
-    # PREFIKSU do obciecia spoola (`trim_spool` robi `lines[accepted:]`), a nie liczba
-    # zapisanych pomiarow. Jedna wspolna transakcja znaczylaby, ze blad na wpisie k cofa
-    # rowniez wpisy 0..k-1, ktore juz policzylismy — i sonda usunelaby je ze spoola.
+    # Every entry gets its OWN transaction, because for the probe `backlogAccepted` is the
+    # PREFIX LENGTH to trim the spool by (`trim_spool` does `lines[accepted:]`), not a count
+    # of measurements written. One shared transaction would mean an error on entry k rolling
+    # back entries 0..k-1 that were already counted — and the probe would drop them.
     backlog = payload.get("backlog") or []
     accepted = 0
     if isinstance(backlog, list):
         for entry in backlog[: settings.max_backlog_entries]:
             if not isinstance(entry, dict):
-                # Liczymy, mimo ze nie zapisujemy. `accepted` jest POZYCJA, nie licznikiem
-                # sukcesow: pominiecie bez inkrementu przesuwa numeracje wszystkich
-                # kolejnych wpisow i sonda obcina zly kawalek spoola — gubi dane albo
-                # wysyla je drugi raz. Takiego wpisu nie da sie zapisac nigdy, wiec
-                # przyznanie sie do niego jest poprawne.
+                # Counted, even though not written. `accepted` is a POSITION, not a
+                # success meter: skipping it without an increment shifts the numbering
+                # of every later entry and the probe trims the wrong piece of the
+                # spool — losing data, or sending it twice. Such an entry can never be
+                # written, so owning up to it is correct.
                 accepted += 1
                 continue
             try:
@@ -164,23 +166,24 @@ async def ingest(
                                          arrived_at=arrived_at, offset=offset,
                                          is_backlog=True)
             except Exception as exc:                       # noqa: BLE001
-                # `break`, nie `continue`: `accepted` jest prefiksem, wiec doliczenie wpisu,
-                # ktorego NIE zapisalismy, kazaloby sondzie usunac go ze spoola. Stajemy na
-                # pierwszym niezapisanym — ogon wroci nastepnym zadaniem.
+                # `break`, not `continue`: `accepted` is a prefix, so counting an entry
+                # that was NOT written would tell the probe to drop it from the spool.
+                # Stop at the first unwritten one — the tail returns next request.
                 #
-                # ZNANY KOSZT, swiadomy: wpis, ktorego NIGDY nie da sie zapisac (trwale
-                # zly ksztalt), wstrzymuje ogon na stale. Surowa tresc jest w bazie i w
-                # logu, ale decyzja "co z takim wpisem" — kwarantanna po N probach albo
-                # wyniki per wpis na drucie — rusza schemat albo kontrakt v3 i nalezy do
-                # usera, nie do tej petli.
+                # A KNOWN COST, taken deliberately: an entry that can NEVER be written
+                # (permanently bad shape) stalls the tail for good. The raw content is
+                # in the database and in the log, but the decision "what to do with
+                # such an entry" — quarantine after N tries, or per-entry results on
+                # the wire — moves the schema or contract v3, and is the user's to
+                # make, not this loop's.
                 #
-                # Exception, a NIE BaseException: CancelledError musi leciec dalej i
-                # przerwac zadanie, zamiast wygladac jak jeden zly wpis.
+                # Exception, and NOT BaseException: CancelledError must fly on and
+                # abort the request instead of looking like one bad entry.
                 logger.warning("Backlog: wpis {} odrzucony, ogon zostaje w spoolu: {}",
                                accepted, exc)
                 break
-            # Dopiero PO wyjsciu z `_ingest_tx`, czyli po udanym commicie — inaczej
-            # liczylibysmy wpisy, ktore rollback wlasnie cofnal.
+            # Only AFTER leaving `_ingest_tx`, that is after a successful commit —
+            # otherwise entries a rollback had just undone would be counted.
             touched.append(r.get("account_uuid"))
             accepted += 1
 

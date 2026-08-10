@@ -80,16 +80,16 @@ async def stream(
                     while not sub.queue.empty():
                         sub.queue.get_nowait()
 
-            # Alerty PO skasowaniu kolejki, nigdy przed — inaczej ta petla wyzej
-            # zjadlaby wlasnie zbudowany snapshot. Dla ramek `account` to bylo
-            # nieszkodliwe z zalozenia (snapshot je zastepuje), dla efemerycznego
-            # alertu byloby ciche i smiertelne.
+            # Alerts AFTER the queue is cleared, never before — otherwise the loop
+            # above would eat the snapshot just built. For `account` frames that was
+            # harmless by design (the snapshot replaces them); for an ephemeral alert
+            # it would be silent and fatal.
             #
-            # Odtworzenie stanu przy KAZDYM polaczeniu jest wymogiem, nie ozdoba:
-            # STREAM_MAX_LIFETIME_SEC zmusza panel do przelaczenia polaczenia co
-            # 15 minut, a zablokowana sesja nie emituje w tym czasie zadnego
-            # zdarzenia (zmierzone: 98% blokad). Bez tego blokada trwajaca 40 minut
-            # znikalaby z ekranu po pietnastu.
+            # Replaying the state on EVERY connection is a requirement, not a
+            # decoration: STREAM_MAX_LIFETIME_SEC forces the panel to swap the
+            # connection every 15 minutes, and a blocked session emits no event at
+            # all in that time (measured: 98% of blocks). Without this, a block
+            # lasting 40 minutes would vanish from the screen after fifteen.
             if snapshot:
                 yield alert_frame(now=utcnow())
 
