@@ -212,7 +212,7 @@ class PanelLink:
             # correct operation in the log.
             ms = (time.monotonic() - t0) * 1000
             if caps.acked:
-                log().info("%s: pierwsza klatka po otwarciu (status=%s, %.0f ms)",
+                log().info("%s: first frame after opening (status=%s, %.0f ms)",
                            self.tag, status, ms)
             else:
                 # Deliberately different wording: this driver confirms nothing, so
@@ -220,8 +220,8 @@ class PanelLink:
                 # visible. An unplugged or scrambled screen would log the same.
                 # ASCII only: panel.log is written in the system encoding, and a
                 # dash outside it comes back as mojibake in every reader.
-                log().info("%s: wyslano pierwsza klatke po otwarciu "
-                           "(bez potwierdzenia - sprawdz wzrokiem, %.0f ms)",
+                log().info("%s: first frame sent after opening "
+                           "(not acknowledged - check visually, %.0f ms)",
                            self.tag, ms)
 
         # Commit BEFORE the acknowledgement ladder below: reset() invalidates the
@@ -235,7 +235,7 @@ class PanelLink:
             self._missed_run += 1
             if self._missed_run >= MISSED_CSW_LIMIT:
                 # No CSW for a well-formed frame means the pipe is dirty.
-                self.reset("%d klatek bez potwierdzenia" % self._missed_run)
+                self.reset("%d frames not acknowledged" % self._missed_run)
         else:
             self._missed_run = 0
         return True

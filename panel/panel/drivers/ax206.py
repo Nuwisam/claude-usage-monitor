@@ -485,8 +485,8 @@ class AX206:
                 err = self._err(rc)
                 self.dll.libusb_close(self.h)
                 self.h = None
-                raise AX206Error("libusb_claim_interface: %s (panel zajety przez "
-                                 "inny proces?)" % err)
+                raise AX206Error("libusb_claim_interface: %s (panel held by "
+                                 "another process?)" % err)
             self.port_path = found.port_path
             self.serial = self._string(found.iserial)
         finally:

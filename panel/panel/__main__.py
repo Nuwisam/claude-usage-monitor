@@ -211,7 +211,7 @@ def cmd_once(args):
     logmod.setup(cfg.log_file, cfg.log_level, console=True)
     problems = cfg.validate()
     if problems:
-        print("konfiguracja: %s" % "; ".join(problems), file=sys.stderr)
+        print("config error: %s" % "; ".join(problems), file=sys.stderr)
         return 2
     from .app import App
     got, frame, drew = App(cfg).run_once()
@@ -297,7 +297,7 @@ def main(argv=None):
         print("  Stop-ScheduledTask -TaskName 'Claude Panel AX206'", file=sys.stderr)
         return 4
     except C.ConfigError as e:
-        print("konfiguracja: %s" % e, file=sys.stderr)
+        print("config error: %s" % e, file=sys.stderr)
         print("\nWzor pliku %s:\n%s" % (C.CONFIG_PATH, C.example()), file=sys.stderr)
         return 2
     except (DriverError, OSError) as e:

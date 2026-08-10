@@ -42,7 +42,7 @@ def single_instance(path=None):
     """A file lock. Returns a handle that has to be held until the process ends.
 
     The exclusive USB handle already guarantees that only one process draws — but the
-    second instance would then spin in a loop of "panel zajety przez inny proces",
+    second instance would then spin in a loop of "panel held by another process",
     which reads like a hardware failure rather than like "it is already running".
     """
     import msvcrt
@@ -54,7 +54,7 @@ def single_instance(path=None):
         msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
     except OSError:
         handle.close()
-        raise AlreadyRunning("panel juz dziala (blokada %s)" % path)
+        raise AlreadyRunning("panel already running (lock %s)" % path)
     return handle
 
 

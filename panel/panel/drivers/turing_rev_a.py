@@ -202,7 +202,7 @@ class Turing:
                 # the advice ("stop that program, we retry by ourselves") is the
                 # same. A COM holder is worse than a USB one: it is invisible in
                 # Device Manager.
-                raise DriverError("%s: panel zajety przez inny proces (%s)"
+                raise DriverError("%s: panel held by another process (%s)"
                                   % (self.com, e)) from e
             raise DriverError("%s: %s" % (self.com, e)) from e
         except OSError as e:

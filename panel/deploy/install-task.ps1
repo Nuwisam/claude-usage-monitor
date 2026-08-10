@@ -181,11 +181,11 @@ while ((Get-Date) -lt $deadline) {
     # Collect ALL the lines, not the last one: with two screens one may be
     # drawing while the other is busy -- and an "OK" after the first matching line
     # would sweep that under the rug.
-    $opened  = @($new | Where-Object { $_ -match "pierwsza klatka po otwarciu" })
-    $unacked = @($new | Where-Object { $_ -match "bez potwierdzenia" })
-    $busy    = $new | Where-Object { $_ -match "zajety przez inny proces" } | Select-Object -Last 1
-    $dup     = $new | Where-Object { $_ -match "panel juz dziala" }         | Select-Object -Last 1
-    $bad     = $new | Where-Object { $_ -match "konfiguracja:" }            | Select-Object -Last 1
+    $opened  = @($new | Where-Object { $_ -match "first frame after opening" })
+    $unacked = @($new | Where-Object { $_ -match "not acknowledged" })
+    $busy    = $new | Where-Object { $_ -match "held by another process" } | Select-Object -Last 1
+    $dup     = $new | Where-Object { $_ -match "panel already running" }   | Select-Object -Last 1
+    $bad     = $new | Where-Object { $_ -match "config error:" }           | Select-Object -Last 1
     if (($opened.Count + $unacked.Count) -ge $Panels -or $busy -or $dup -or $bad) { break }
 }
 Write-Host ""

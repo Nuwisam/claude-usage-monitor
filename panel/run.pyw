@@ -112,7 +112,7 @@ def main():
         # every minute leaves nothing behind it.
         try:
             logmod.setup(C.DEFAULT_LOG, "INFO", console=False).error(
-                "konfiguracja: %s", e)
+                "config error: %s", e)
         except Exception:
             pass
         try:
