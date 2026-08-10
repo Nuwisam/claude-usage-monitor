@@ -122,10 +122,11 @@ frame, banner, card. `display_label` is refreshed on every ingest, so a dictiona
 series registered earlier.
 
 This rule states the target, not the current tree: the Polish→English migration is in flight and
-runs over several waves. Polish strings still in the tree — `_LABELS` in `backend/app/parsing.py`
-and the formatter strings in `frontend/src/lib/format.ts` are the two a reader hits first — are
-work not yet done, not counter-examples to the rule; the dot decimal separator declared at the
-top of `format.ts` is likewise ahead of its implementation.
+runs over several waves. Series labels served by the API are already English while the UI around
+them is not — the cascade rung labels in `frontend/src/components/Cascade.tsx` ("Sesja 5 h") and
+the phrases in `frontend/src/lib/format.ts` ("brak danych z ostatniej godziny") are work not yet
+done, not counter-examples to the rule; the dot decimal separator declared at the top of
+`format.ts` is likewise ahead of its own `pct` and `money`, which still emit a comma.
 
 **11. Czas wchodzi przez `NaiveUtcDt`, wychodzi przez `UtcDt`.**
 Odkąd wyjście ma strefę, przeglądarka ją **odsyła** (`Date.toISOString()`), a baza,
