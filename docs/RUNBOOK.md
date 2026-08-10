@@ -36,7 +36,7 @@ docker exec claude_usage_monitor_mariadb mariadb -uroot -p"$RP" "$DB" -N -e \
 ```
 
 There are no HTTP codes here and there will not be — since version 3 the probe sends no request
-to Anthropic at all. The query above guards something else, and more important: **`cli_merged`
+to Anthropic at all. The query above guards something else, and something more important: **`cli_merged`
 means fresh percentages came in from `/usage` stdout, and `cli_usage_cache` means only Claude
 Code's own cache went out, which can be up to 5 minutes old.** The danger of the latter is a
 silent failure: data keeps flowing, the chart looks normal, only the resolution dropped from a
@@ -54,7 +54,7 @@ python client/analyze-samples.py        # rate of change, errors, account switch
 ```
 
 Local log: `%LOCALAPPDATA%\claude-usage-monitor\usage-samples.jsonl`.
-If the log grows but the database does not, the problem is in sending; check `spool.jsonl`
+If the log grows but the database does not, the problem is with sending; check `spool.jsonl`
 (grows on failed POSTs), repeat the handshake from
 [`client/README.md`](../client/README.md#3-handshake--we-check-the-secrets-before-touching-settingsjson)
 and compare the status against the 401/403 rows in "Common problems" below.
@@ -74,9 +74,9 @@ and compare the status against the 401/403 rows in "Common problems" below.
 | Series `live`, but `capturedAt` is hours old | **Correct and intentional.** `capturedAt` is the last SAMPLE written, freshness is computed from `confirmedAt`. The value simply has not changed — the UI captions this `unchanged since` |
 | All series suddenly `stale` | No confirmation for 5 min. Since v3 **this is no longer a dedup artifact**, but it need not be a failure either: hooks only fire while you work, so a fifteen-minute break gives the same symptom. **You will not see this in the UI** — `stale` looks like `live`, only the reading-age label grows |
 | A series in state `unknown` in `/api/status` | The client is reporting, but there are no samples for this series. **Do not ignore it** — this is the only state that means a failure. **The UI does not name it and no longer has a banner for it**: it shows the last measured percentage with a growing reading age, so you see the failure by the age growing despite work happening. To confirm: `curl -s -b "$COOKIE" .../api/status \| jq '.accounts[].series[] \| select(.freshness=="unknown") \| {label, rawUtilization, confirmedAt}'`, then `events` and the local log |
-| The UI shows a number, but the probe has been gone for days | **Correct.** The value is the last MEASUREMENT, not a guess, and its age stands next to it (`confirmed on Wed. at 11:58 · 3 d 4 h ago`). Zero would be a lie here — rule 4 in `AGENTS.md` |
+| The UI shows a number, but the probe has been gone for days | **Correct.** The value is the last MEASUREMENT, not a guess, and its age is shown next to it (`confirmed on Wed. at 11:58 · 3 d 4 h ago`). Zero would be a lie here — rule 4 in `AGENTS.md` |
 | `docker compose up` → *"all predefined address pools have been fully subnetted"* | Docker has exhausted its pools (a limit of ~31 networks). Remove an orphaned network: `docker network ls`, check `docker network inspect <n> -f '{{len .Containers}}'` |
-| `clock_skew` events | The client's clock has drifted >5 min from the server's. **Pure diagnostics — it does not affect the write.** The measurement is dated by the server (`received_at` minus the age), and the age is a difference taken within the client's own clock, so the drift does not corrupt it. Still worth syncing the clock |
+| `clock_skew` events | The client's clock has drifted >5 min from the server's. **Pure diagnostics — it does not affect the write.** The measurement is dated by the server (`received_at` minus the age), and the age is a difference measured entirely on the client's own clock, so the drift does not corrupt it. Still worth syncing the clock |
 | `clock_backwards` events | The measurement is dated **after** `sent_at`, meaning the client's clock ran backwards between writing and sending. The whole entry is rejected (the raw payload is in `raw_payloads`), because otherwise it would land on the receive time and overwrite state with a stale reading. Repeated occurrences = broken time sync on that machine |
 | `no_captured_at` events | A payload with no measurement time. The observation is skipped — we do **not** substitute "now", because that would turn ignorance into confident-looking freshness |
 | `schema_drift` events | Anthropic changed the shape of the response. The payload is saved in full; look at `GET /api/batches/{id}/raw` and update `app/parsing.py` + the fixture |
@@ -190,13 +190,13 @@ its own (polling `/status` every 3 min switches the stream), the panel does not 
 nobody asked for that UUID.
 
 **Frames arrive in clumps every few dozen seconds instead of at once?** That is Apache
-buffering: check whether the `/claude-usage/api/stream` rule stands **before** the generic
+buffering: check whether the `/claude-usage/api/stream` rule comes **before** the generic
 `/claude-usage/api` one and has `SetEnv no-gzip 1`.
 
 **Writing your own stream client?** Read from the socket with `read1()`, not `read(n)` — the
-latter waits for the WHOLE of `n` bytes, so after the first chunk the following cards and
-pings sit in the buffer, and the client stands on the first frame **looking alive**. The same
-trap caught the panel and costs a long hunt for "where did the second frame go".
+latter waits until it has ALL `n` bytes, so after the first chunk the following cards and
+pings sit in the buffer, and the client sits stuck on the first frame **looking alive**. The same
+trap caught the panel and cost us a long hunt for "where did the second frame go".
 
 ## The AX206 panel on a desk
 
@@ -216,7 +216,7 @@ quietly exits, and the old code keeps drawing), registers the task, **starts it*
 until the log shows `first frame after opening`. Registration alone starts nothing: the trigger
 is on logon, so an installation on an already logged-on session would leave the screen dark
 with no trace of why. When you see `PANEL BUSY` instead of confirmation, another program holds
-the module — stop it, and the client will pick up drawing on its own within ~30 s, no
+the module — stop that program, and the client will pick up drawing on its own within ~30 s, no
 reinstall needed.
 
 Configuration: `%LOCALAPPDATA%\claude-usage-monitor\panel.json` — a **separate file** from the
@@ -237,7 +237,7 @@ counter and could jump without touching the plug. Confirm which module is which 
 
 ### Debt: the panel's captions drifted from the web
 
-**Time labels are already unified.** `panel/panel/fmt.py` ports `at_stamp()` and the day rung
+**Time labels are already unified.** `panel/panel/fmt.py` ports `at_stamp()` and the day-level step
 in `ago()`, `DAYS` is exactly the table from `time.ts` (indexed from Sunday via `_day_index()`,
 because `weekday()` counts from Monday), and the manual `with_day` flag from `view.py` is gone
 — one place decides whether to add the day, same as on the web. Panel and web now write

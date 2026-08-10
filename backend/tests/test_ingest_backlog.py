@@ -155,7 +155,7 @@ async def test_replay_from_spool_does_not_duplicate_sample(api, db):
     assert await samples_at(db, ts) == after_first
 
 
-async def test_two_different_measurements_in_the_same_second_pass(api, db):
+async def test_two_different_measurements_in_the_same_second_both_pass(api, db):
     """`parse_ts` truncates to whole seconds, and parallel hooks can fire two probes within
     the same second. The guard has no right to delete the second, DIFFERENT measurement —
     which is why the key holds a sha256 of the payload, not just the time. Without that

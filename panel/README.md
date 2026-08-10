@@ -47,13 +47,13 @@ surprises here.
 | client library | **libusb-1.0** (the `libusb` package from `requirements.txt`) |
 
 **The driver and the library are two different things**, and confusing them is
-a ready-made pitfall here. The device stays under libusb-win32; only the
+an easy trap to fall into here. The device stays under libusb-win32; only the
 library we talk to it through has changed. The libusb-1.0 Windows backend
 supports devices bound to `libusb0.sys` (measured: 1200 frames,
 `missed_csw = 0`), so switching the driver to WinUSB is unnecessary and would
 break AIDA64.
 
-The reason for changing the library is a single one: `libusb_get_port_numbers()`
+There is exactly one reason for changing the library: `libusb_get_port_numbers()`
 gives the **port chain** from the same handle we open. The 0.1 API from
 libusb-win32 gave no topology at all (`bus-0`, `devnum=0`) — the module had to
 be looked up in the Windows registry and matched to the handle by ordering.
@@ -85,14 +85,14 @@ as "we sent something wrong."
 (0x11), `COPYRECT` (0x13) and the `FGCOLOR` property are not confirmed even
 after a reset. The geometry-query command is **unreliable**: sometimes it
 returns the correct 480×320, sometimes it stays silent, and a failed attempt
-spoils the next transaction — which is why geometry is configuration, and
+corrupts the next transaction — which is why geometry is configuration, and
 `probe_geometry()` is called at the very end of `--probe`.
 
 **The screen holds its last frame** with no host attached. The client
 deliberately does not clear it on exit: once the desk machine is shut down,
 the last known state stays on.
 
-The ready-made [`pyax206`](https://github.com/sayajinpt/pyax206) library
+The existing [`pyax206`](https://github.com/sayajinpt/pyax206) library
 implements the identical protocol (the blit command matches byte for byte),
 but it does not work on this unit: its `init()` treats a missing CSW as a
 critical error and blows up on every attempt, even after a clean reset.
@@ -199,7 +199,7 @@ lost frame is harmless.
   showing stale numbers with full confidence.
 - Reading the stream goes through `read1()`, not `read()`. `read(n)` waits for
   the full `n` bytes, so later cards and pings would sit stuck in the buffer,
-  and the panel would stand on the first frame **looking alive**.
+  and the panel would be stuck on the first frame **looking alive**.
 
 ## A blocked Claude Code session
 
@@ -214,7 +214,7 @@ The presentation is two-stage, and that is a decision, not a phase:
 
 1. The card **takes over the whole screen** for `alert_takeover_sec` — a number
    of seconds (300 by default), `0` (the marker right away, no card) or
-   `"infinity"` (the card stands until you answer, and usage is invisible for
+   `"infinity"` (the card stays up until you answer, and usage is invisible for
    that whole time). The layout is chosen by the **number of waiting blocks**:
    one — the project name as the hero, a `Detail` tile and a `Mode` strip; two —
    two equal halves; three — a list with the reason in a fixed column; four and
@@ -240,7 +240,7 @@ The presentation is two-stage, and that is a decision, not a phase:
    the hardware).
 2. It then collapses to a **4 px accent bar on the left edge of the account
    band** that reported the block; the account name turns `ACCENT_100`, and the
-   reason arrives in capitals on the line with the plan name. The bar sits in
+   reason appears in capitals on the line with the plan name. The bar sits in
    the margin area, so the band's layout does not shift by a pixel, and it has
    the band's full height. The state stops being *takeover*, it does not stop
    being *true* — usage comes back on screen, and the fact that something is
@@ -294,7 +294,7 @@ updates, so every change to the text is a full 355 ms, and seconds would turn
 live clock on the card — the hour in the banner is the static moment the
 prompt appeared, more precisely the start of the **oldest wait on screen**.
 Since rows go newest first, that is usually not the moment of the block that
-just came in: the banner says how long all of this has already been standing,
+just came in: the banner says how long all of this has already been going on,
 and the first row says what arrived most recently.
 
 The card's design and all four layouts are described in
@@ -327,7 +327,7 @@ Seconds stay where they are in the mockup: in the countdown below an hour, and
 in the reading age below a minute. They come in exactly when you are working —
 which is when they are most needed. Outside work the values roll into minutes
 and hours on their own, and the panel goes quiet. The exception is the clock
-in the header: it ticks independent of work, so it shows HH:MM.
+in the header: it ticks independently of work, so it shows HH:MM.
 
 ## Drawing rules that must not be simplified
 
@@ -341,7 +341,7 @@ in the header: it ticks independent of work, so it shows HH:MM.
   reinforces that rule, it does not weaken it: an account silent for 12 h with
   a week at 100 % shows 100 %, not a reassuring zero. The hatched track with a
   diagonal and the words `unknown` are reserved for a series that **never**
-  had a measurement — there there really is nothing to draw, and the `%` sign
+  had a measurement — there really is nothing to draw, and the `%` sign
   then disappears ("unknown %" is a real pitfall).
 - **The plan is always visible.** "40 %" means something different on Max 20×
   than on a Team seat. An unknown tier is shown raw, rather than disappearing
@@ -390,14 +390,14 @@ strokes, it would not survive that) or a payload whose length does not fit the
 rectangle. Omitted means `0`. To check without changing the file:
 `python -m panel --identify turing-rev-a#0 --rotate 180`.
 
-**Brightness is per screen, because the scales do not compare**: `ax206` is
+**Brightness is per screen, because the scales are not comparable**: `ax206` is
 0..7 (a firmware property), `turing-rev-a` is 0..100 %. Omitted means "this
 driver's default". A top-level `brightness` next to `panels` is a
 **configuration error**, not a compromise — `5` would mean mid-range on one
 screen and nearly off on the other.
 
 **The old shape (`"device": {...}` plus a top-level `brightness`) still
-works** and turns into a one-entry `ax206` list. It is allowed to migrate it,
+works** and turns into a one-entry `ax206` list. Migrating it automatically is safe,
 because it had exactly one possible meaning — there was one driver. That is
 the difference from `location`, where the value itself was untrustworthy.
 `device` and `panels` together is an error: merging them would mean guessing.
@@ -406,7 +406,7 @@ and silently fall through to "the only thing visible".
 
 **Accounts are two named fields, not a list** — the shape of the
 configuration is the shape of the screen here, so a third account cannot be
-added by inattention. After `/login` to a new account you have to point at it
+added by accident. After `/login` to a new account you have to point at it
 here and restart the client: the subscription is fixed when the connection is
 made, and SSE has no back-channel.
 
@@ -433,7 +433,7 @@ controller, port 4 of the hub on that port. Three things to know about it:
   controllers sharing the same port number), the selection ends in an error —
   never a shot in the dark.
 - **Moving the plug changes the key.** That is unavoidable when identifying by
-  topology, which is why `--list` prints a ready line to paste in.
+  topology, which is why `--list` prints a line ready to paste in.
 
 Measured: `ports=(3,4)` matches the count from `DEVPKEY_Device_LocationPaths`
 (`...#USB(3)#USB(4)`) and survives a device reset despite the USB address

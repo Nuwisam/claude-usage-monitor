@@ -378,7 +378,7 @@ async def test_skewed_client_clock_does_not_break_dating(db):
     assert stamps == {arrived - timedelta(seconds=120)}
 
     b = (await db.execute(select(IngestBatch))).scalars().one()
-    assert b.clock_offset_s == 5 * 3600, "offset musi byc odtwarzalny z bazy"
+    assert b.clock_offset_s == 5 * 3600, "the offset must be reproducible from the database"
 
 
 # --------------------------------------------------------------------------- status

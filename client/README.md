@@ -31,7 +31,7 @@ data, while the file can be a few minutes older.
 The probe merges one with the other: structure from the cache, fresh percentages laid on top.
 The result has **exactly the same shape** as the old HTTP response, so `backend/app/parsing.py`
 did not need a single change. Losing the decimal places from `Math.floor` in stdout **is not a
-loss** — the API itself returns whole numbers (verified on the raw payload).
+loss** — the API itself returns whole numbers (verified against the raw payload).
 
 ## `/usage` does not consume the limit
 
@@ -102,7 +102,7 @@ On Linux and macOS, usually only `python3` exists.
 
 Ingest authorizes **each machine separately**, with a token from `INGEST_TOKENS`. The remote
 machine has no access to the monitor host, so it cannot generate a token for itself. A
-candidate is produced like this:
+candidate token is produced like this:
 
 ```bash
 python3 -c "import secrets; print(secrets.token_urlsafe(32))"
@@ -170,7 +170,7 @@ curl -s -o /tmp/hs.txt -w '%{http_code}' -X POST "$INGEST_URL" \
 
 **Until you get a 200, don't install the hooks.**
 
-### 4. Under the hooks' path we put a redirect, not a copy
+### 4. At the hooks' path we put a redirect, not a copy
 
 The path
 `%LOCALAPPDATA%\claude-usage-monitor\usage-probe.py` (Windows) or
@@ -207,7 +207,7 @@ mode or administrator rights (`Administrator privilege required`) — the redire
 thing without any privileges, and identically on a remote machine. The only thing that differs
 between them is **`SRC`**: here, the project repo; on a remote machine, the directory the copy
 was handed out to. The probe finds itself via `%LOCALAPPDATA%`, not via `__file__`, so the
-redirect doesn't move anything for it.
+redirect changes nothing for it.
 
 Cost, broken down into components, because one number for the whole run always lies (median of
 20-25 runs, `SRC` on a network drive):
@@ -221,7 +221,7 @@ Cost, broken down into components, because one number for the whole run always l
 | a full run that ends at the throttle | 46.9 ms |
 | a detached `claude -p "/usage"` | ~3.4 s |
 
-The redirect isn't free, then, but it still gets lost against the cost the whole design is
+The redirect isn't free, then, but it is still dwarfed by the cost the whole design is
 about: the probe **does not wait** for `claude`, so that ~3.4 s never enters the run. A remote
 machine reads `SRC` from a local disk and doesn't even pay that 11 ms.
 
@@ -265,7 +265,7 @@ see step 7. In full:
 }
 ```
 
-**Merge, never overwrite.** `settings.json` holds the model, theme and other people's hooks —
+**Merge, never overwrite.** `settings.json` holds the model, theme and hooks added by other tools —
 the only acceptable edit is appending to the existing arrays.
 
 `PostToolUse` with `"async": true` is the main trigger — measured at 0.24 ms overhead. `Stop`
@@ -492,7 +492,7 @@ measured_at = min(ts + offset, arrived_at)      # per series
 i.e. `received_at − age`. The machine's wall clock doesn't enter the calculation — only the
 difference `sent_at − ts` matters, and that stays within a single clock. Entries coming from
 the spool go through the same formula: their `sent_at` comes from the moment of the failed
-attempt, so the age computes itself.
+attempt, so the age comes out right on its own.
 
 An entry whose measurement is **newer** than its `sent_at` is rejected outright — the clock
 went backward between the write and the send, so the dating is unreliable. The entry still
@@ -512,7 +512,7 @@ boundary is valid, so nothing looks contradictory — and we would be publishing
 window where the real figure is ~1%. The cost of rejecting is zero: what remains is the cache
 value, which is both newer and more precise (stdout truncates to whole numbers).
 
-**Certificates on Windows:** the CA store Python uses rejects the Let's Encrypt chain of some
+**Certificates on Windows:** the CA store Python uses rejects the Let's Encrypt chain for some
 hosts with a `certificate has expired` error, even though every link is valid — `curl` goes
 through, Python doesn't. The client uses `certifi` when it's available. Should it be missing,
 point to your own file via `"ca_bundle"` in `config.json`. **Do not disable verification.**

@@ -59,7 +59,7 @@ What v2 added over v1, and why:
 How much **Claude limit is currently left**, for several accounts at once. Today two: one
 **Max**, one **Team**. History accumulates along the way, but it is not the goal.
 
-Data comes from a probe running on the user's machines while working with Claude Code.
+Data comes from a probe that runs on the user's machines while they work with Claude Code.
 **It does not flow when you are not working** — and that is not a bug, just a property of the
 source that the UI has to communicate honestly (see § 4).
 
@@ -137,7 +137,7 @@ from one minute to five, and **this is the only place where that is visible dire
 `…+02:00`) or without one — with no zone UTC is assumed, with a zone the value is
 **converted**, not truncated. Just send `Date.toISOString()`.
 
-This is not a courtesy to the client, just closing a boundary: once contract v2 attached a
+This is not a courtesy to the client, just tying up a loose end: once contract v2 attached a
 zone to outgoing time, the browser started sending it back — and the History view returned
 **500** on every open, because the rest of the backend counts on naive UTC.
 `backend/tests/test_history_endpoint.py` guards this.
@@ -205,7 +205,7 @@ Four things worth knowing before you hook this up:
    anything the stream had not already delivered. What the poll is really for changes **with
    the passage of time**, not with new data.
 
-   Ever since freshness is carried by the age label, the `live → stale` transition **changes
+   Now that freshness is carried by the age label, the `live → stale` transition **changes
    nothing in the UI** — the age is computed from `confirmedAt` against a locally ticking
    "now", so it grows correctly even when the poll brought back not a single byte. The poll's
    real job is the one transition that still **changes the drawing**:
@@ -390,7 +390,7 @@ This moment is computed by the **server**: `min(client_time + offset, receipt_ti
 `offset = receipt_time − measurement.sent_at`. So the client supplies the *age* of the
 measurement, not a date — its wall clock has no effect on the timeline. The practical effect
 for the UI: `spend:org` and `extra:usage` more often show an age on the order of minutes,
-because they come from the Claude Code cache and not from a fresh `/usage` dump. **This is a
+because they come from the Claude Code cache and not from a fresh `/usage` dump. **This is the
 truth surfacing, not a regression** — they used to get the dump's time, which the data did not
 actually carry.
 
@@ -489,7 +489,7 @@ why **every stamp read relative to "now"** goes through one function (`lib/time.
 | further | `26.07 at 11:58`, with the year when different: `26.07.2025 at 11:58` |
 
 The preposition is **part of the stamp**, not text glued on around it — the format is what
-decides it ("at 11:58", but "on Wed. at 11:58"), so the call site has no right to tack on its
+decides it ("at 11:58", but "on Wed. at 11:58"), so the call site must not tack on its
 own "at". The day difference is computed across **local midnights**, not by dividing
 milliseconds: a day at a clock change has 23 or 25 h.
 
@@ -766,6 +766,6 @@ The Team account has already been verified live, in three credit states at once:
 amounts zeroed). All three sit as fixtures in `backend/tests/fixtures/` and the cascade tests
 stand on them — the invented payload with a 9000 USD threshold is gone.
 
-One pitfall to close on: `cap` in the real response is **nested**
+One last pitfall: `cap` in the real response is **nested**
 (`{"credits": null, "money": {"amount_minor": 30000, …}}`), not flat. A flat read passed tests
 against the invented payload and did not work against the real one.

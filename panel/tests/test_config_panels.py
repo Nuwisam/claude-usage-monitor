@@ -154,7 +154,7 @@ def test_a_quarter_turn_says_why_not():
     assert any("rotate" in p and "portrait" in p for p in ps)
 
 
-@pytest.mark.parametrize("value", ["do gory nogami", float("nan"), True])
+@pytest.mark.parametrize("value", ["upside-down", float("nan"), True])
 def test_a_nonsense_angle_is_a_problem_not_an_exception(value):
     ps = problems(panels=[{"backend": "ax206", "rotate": value}])
     assert any("rotate" in p for p in ps)
@@ -172,5 +172,5 @@ def test_two_entries_differing_only_by_the_angle_are_still_one_device():
 def test_broken_width_does_not_break_panel_validation():
     """The canvas is validated further down; asking a driver for its capabilities
     must not be the place that trips over "480"."""
-    ps = problems(width="szeroko", panels=[{"backend": "ax206", "brightness": 5}])
+    ps = problems(width="wide", panels=[{"backend": "ax206", "brightness": 5}])
     assert any("width" in p for p in ps)

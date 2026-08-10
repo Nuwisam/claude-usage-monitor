@@ -108,7 +108,7 @@ def test_usage_over_limit_does_not_upend_cascade_or_amounts():
         assert r.utilization is None or 0.0 <= r.utilization <= 100.0
 
 
-def test_cap_money_is_read_when_limit_did_not_arrive():
+def test_nested_cap_money_is_read_when_the_limit_key_is_missing():
     """`cap` in the real response is NESTED: {"credits": null, "money": {...}}.
     A flat read took the outer dictionary itself, so the fallback never fired on real
     data — even though a test on a made-up, flat `cap` would have let it through."""

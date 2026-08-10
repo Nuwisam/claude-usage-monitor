@@ -59,7 +59,7 @@ def test_bare_api_without_endpoint_is_also_not_the_shell(client):
     assert client.get("/api/").status_code == 404
 
 
-def test_health_still_works_under_statics(client):
+def test_health_still_works_alongside_static_files(client):
     r = client.get("/api/health")
     assert r.status_code == 200 and r.json() == {"status": "ok"}
 

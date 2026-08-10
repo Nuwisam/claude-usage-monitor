@@ -16,7 +16,7 @@ and pushed through its own quantization, that is, **exactly what the glass will 
 | [`card-many.png`](handout/card-many.png) | five blocks — three rows and a counter for the rest |
 | [`card-flooded.png`](handout/card-flooded.png) | a **full** frame of the motion layer: banner in the accent plus the 6 px rail |
 | [`bands-marker-upper.png`](handout/bands-marker-upper.png) | state after folding away — a 4 px bar next to the upper account |
-| [`bands-marker-lower.png`](handout/bands-marker-lower.png) | the same at the lower account (with credits — the band is just as tall) |
+| [`bands-marker-lower.png`](handout/bands-marker-lower.png) | the same next to the lower account (with credits — the band is just as tall) |
 | [`bands-no-alert.png`](handout/bands-no-alert.png) | the same screen without an alert, for comparison |
 
 Regenerate:
@@ -33,14 +33,14 @@ python tools/render-png.py --marker lower --zoom 3 --rgb565 --out ../docs/handou
 python tools/render-png.py                --zoom 3 --rgb565 --out ../docs/handout/bands-no-alert.png
 ```
 
-`--rgb565` is **mandatory** for review: without it you're looking at the prettier truth of
-the desktop.
+`--rgb565` is **mandatory** for review: without it you are looking at how much nicer the
+same thing happens to look on a desktop screen, not at what the panel draws.
 
 ---
 
 ## Canvas and material
 
-- **480 × 320 px, one landscape layout.** A quarter turn does not exist — the panel accepts
+- **480 × 320 px, one landscape layout.** There is no quarter turn — the panel accepts
   only 0° or 180°, because a 90° rotation would need a second layout (320 × 480).
 - **RGB565 (5/6/5).** Every background/foreground pair has to survive quantization; that's
   guarded by `panel/tests/test_render.py::test_colors_survive_quantization` and
@@ -73,7 +73,7 @@ These last two rows are not duplicates. In CSS, `color-mix(…, transparent)` mi
 whatever is **actually underneath** it, so the same percentage over the tile and over the
 card background is two different colors. The panel has no alpha — it mixes up front — so
 every (percentage, background) pair has to be its own constant. The backgrounds differ by
-(5, 4, 4), which after 5/6/5 quantization is audible on the green channel; the fidelity
+(5, 4, 4), which after 5/6/5 quantization shows up on the green channel; the fidelity
 audit caught it on the label in the tile and in both footers.
 
 **There is no red in the design.** `DANGER` and `draw.warn_triangle` were removed together
@@ -91,7 +91,7 @@ three names don't fit in 34 px.
 
 What counts is the number of blocks **waiting**, not those from the last five minutes: the
 takeover window belongs to the **set**, so as long as any one of them is inside the window,
-the card lists all of them. As long as the window was counted separately per entry, three of
+the card lists all of them. Back when the window was counted separately per entry, three of
 these four layouts had no way onto the screen — two blocks would have had to start within
 the same five-minute window.
 
@@ -111,7 +111,7 @@ block was already shown solo when it arrived** — once cut down to three rows, 
 showing are the ones you haven't seen yet.
 **The hour in the banner is the start of the oldest wait on screen**, not the header's
 `since` — rows go youngest first, so the first of them is by definition the newest, and the
-banner says how long all of this has already been standing.
+banner says how long all of this has already been going on.
 
 With many blocks the banner reads `WAITING · 3`, not "3 waiting" or "3 are waiting": the
 count sits after the noun precisely so nothing has to agree with it — a bare label reads
@@ -228,7 +228,7 @@ These are judgment calls, not measurements, and all three are keys in `panel.jso
   of the box — and Pillow's `anchor="ls"` puts it at `base − 1`. `BANNER_BASE` and
   `MODE_BASE` stood two pixels too low for it, until the fidelity audit measured them again
   (24.33 px and 306.33 px on the mockup rendered at 3×). Guarded by
-  `test_ink_of_banner_and_strip_sits_where_the_mockup_says`.
+  `test_banner_and_strip_ink_sits_where_the_mockup_says`.
 - **Rectangles in the half-open convention** (`draw.fill_rect`, `draw.rounded`): Pillow
   counts bounds inclusively, so a banner `(0, 0, 480, 38)` comes out 39 px.
 - `draw.ellipsize` on **every** string of unknown length; `draw.ellipsize_tracked` wherever a

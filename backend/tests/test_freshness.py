@@ -28,7 +28,7 @@ def test_an_older_sample_in_an_ongoing_window_is_still_valid():
     assert freshness(NOW, m(60), NOW + timedelta(hours=1), m(60)) == STALE
 
 
-def test_after_reset_with_no_activity_we_infer_zero():
+def test_after_reset_with_no_activity_zero_is_inferred():
     """The window has passed, the client was silent the whole time => nobody burned anything."""
     reset = NOW - timedelta(hours=2)
     assert freshness(NOW, m(240), reset, m(240)) == INFERRED_RESET

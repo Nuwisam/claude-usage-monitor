@@ -439,7 +439,7 @@ def test_reason_does_not_push_title_past_band():
 
 
 def test_band_marker_has_full_height_and_sits_in_the_margin():
-    """The 4 px bar stands in the margin field (PAD_X 14), so the band's layout does not
+    """The 4 px marker sits in the margin field (PAD_X 14), so the band's layout does not
     shift by a pixel — and it has the band's full height whatever the number of rows inside."""
     from panel import draw, layout as L
 
@@ -452,8 +452,8 @@ def test_band_marker_has_full_height_and_sits_in_the_margin():
         px = img.load()
         assert all(px[x, y] == theme.ACCENT
                    for x in range(L.MARK_W) for y in range(b.top, b.bottom))
-        assert px[L.MARK_W, b.top] != theme.ACCENT, "the bar is wider than 4 px"
-        assert L.MARK_W < L.PAD_X, "the bar would have to take room from the band's content"
+        assert px[L.MARK_W, b.top] != theme.ACCENT, "the marker is wider than 4 px"
+        assert L.MARK_W < L.PAD_X, "the marker would have to take room from the band's content"
 
 
 # --- cost on the wire -------------------------------------------------------
@@ -565,7 +565,7 @@ def test_list_shows_three_but_counts_all():
     assert "5" in state.title
 
 
-def test_banner_gives_oldest_wait_not_the_header():
+def test_banner_shows_the_oldest_wait_while_the_top_row_shows_the_newest():
     """The first row is the NEWEST block, while the hour in the banner is the start of the
     OLDEST wait on the screen. Those are two different things and they have to diverge."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
@@ -626,7 +626,7 @@ def _ink_bottom(px, x0, x1, y0, y1, bg, threshold=25):
     return last
 
 
-def test_ink_of_banner_and_strip_sits_where_the_mockup_says():
+def test_banner_and_strip_ink_sits_where_the_mockup_says():
     """The baselines are MEASURED on the rendered mockup, so the test guards a measurement,
     not a formula.
 

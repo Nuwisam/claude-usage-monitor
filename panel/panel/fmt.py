@@ -145,7 +145,7 @@ def countdown(target_ms, now_ms):
 def ago(since_ms, now_ms):
     """"3 s ago" / "5 min ago" / "1 h 25 min ago" / "3 d 4 h ago".
 
-    A day rung shaped like countdown(), because ever since freshness is carried by the
+    A day-level step shaped like countdown(), because now that freshness is carried by the
     label itself, three days of silence has to read at once — "76 h 00 min ago" needs
     division in the head. The boundary exactly at 24 h gives "1 d 0 h ago";
     countdown() prints "1 d 0 h" for the same input, so that is consistent.

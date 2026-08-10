@@ -98,7 +98,7 @@ def test_rows_merge_only_when_the_span_matches():
     same = surface.coalesce({(1, 0), (1, 1)})
     assert same == [(TILE, 0, 2 * TILE, 2 * TILE)]
     wider = surface.coalesce({(1, 0), (1, 1), (2, 1)})
-    assert len(wider) == 2, "roznie szerokie wiersze nie moga sie skleic"
+    assert len(wider) == 2, "rows of different widths must not be merged into one"
 
 
 def test_separate_regions_stay_separate():

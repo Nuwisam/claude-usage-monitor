@@ -47,7 +47,7 @@ def _cascade(card):
 
 
 # --------------------------------------------------------------------------- write
-async def test_dedup_does_not_write_rows_through_whole_block(db):
+async def test_dedup_does_not_write_rows_through_the_whole_block(db):
     """The block lasts for hours, and the payload is identical the whole time. If a missing
     measurement were written like a change, the table would swell for the whole outage."""
     now = _base()

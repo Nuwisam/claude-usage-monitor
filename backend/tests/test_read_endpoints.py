@@ -64,7 +64,7 @@ async def test_batches_carry_measurement_provenance_instead_of_http_codes(api, d
     (`cli_merged`) or only the cache went out (`cli_usage_cache`, up to 5 min old). Without
     it a resolution drop from one minute to five is undetectable — data keeps flowing."""
     b = (await api.get("/api/batches")).json()
-    assert b, "ingest musial zostawic batche"
+    assert b, "ingest must have left batches behind"
     assert b[0]["measurementSource"] == "cli_merged"
     assert b[0]["cacheAgeS"] == 42 and b[0]["freshAgeS"] == 7
     assert b[0]["scriptVersion"] == 5

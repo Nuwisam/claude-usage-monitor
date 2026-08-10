@@ -97,7 +97,7 @@ class AlertSolo:
     # Why: the panel typeface (Segoe UI) has different vertical metrics than the mockup
     # font, so the same box model puts the ink 1-3 px elsewhere. The gap between boxes is
     # invisible, the position of the ink is visible — so the ink is the contract. Checked
-    # by measurement in tests/test_alert.py::test_ink_of_banner_and_strip_sits_where_the_mockup_says.
+    # by measurement in tests/test_alert.py::test_banner_and_strip_ink_sits_where_the_mockup_says.
     PROJECT_BASE = 87
     META_BASE = 112
     WAITED_BASE = 158

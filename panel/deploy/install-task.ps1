@@ -149,7 +149,7 @@ $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" 
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Settings $settings -Principal $principal -Force `
-    -Description "Limity Claude na panelu USB AX206 (repo: $PanelDir)" | Out-Null
+    -Description "Claude limits on the AX206 USB panel (repo: $PanelDir)" | Out-Null
 
 # --- 4. start and confirmation --------------------------------------------
 # Wait for a LINE IN THE LOG, not for "State = Running". A task can be
@@ -204,7 +204,7 @@ if ($opened.Count + $unacked.Count -gt 0) {
         # went out. A screen unplugged, rotated or skewed will write down
         # exactly the same, so there is nothing here to count as "drawing".
         Write-Host "  $line"
-        Write-Host "    ^ unacknowledged - check with your eyes whether anything is visible"
+        Write-Host "    ^ unacknowledged - check visually that something is actually showing"
     }
 } elseif ($busy) {
     Write-Host "PANEL BUSY - another process has it:"
@@ -215,7 +215,7 @@ if ($opened.Count + $unacked.Count -gt 0) {
     Write-Host "  retrying every 30 s and will resume drawing ON ITS OWN once the panel frees up;"
     Write-Host "  no need to restart it or install it again."
 } elseif ($dup) {
-    Write-Host "PANEL WAS ALREADY RUNNING - the new instance backed off at the lock:"
+    Write-Host "PANEL WAS ALREADY RUNNING - the new instance backed off when it hit the lock:"
     Write-Host "  $dup"
     Write-Host "  This is not an error. The one that was already running keeps drawing."
 } elseif ($bad) {

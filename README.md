@@ -9,8 +9,8 @@ the monitor just that measurement.
 
 No token ever leaves the machine, and **none is used to authenticate anything** on our side: the
 request is made by the first-party client with its own, self-refreshing token. The token endpoint
-is never called, so this has none of the main vector for losing an account — rotation of the
-one-time refresh token.
+is never called, so the main vector for losing an account — rotation of the one-time refresh
+token — does not apply here at all.
 
 ## Status
 
@@ -55,7 +55,7 @@ machine running Claude Code                          server
 ```
 
 **Two containers, not three.** The backend serves the UI statics (the `node` stage in its
-Dockerfile builds them). A separate nginx with `auth_request` carries a trap where `$scheme`
+Dockerfile builds them). A separate nginx with `auth_request` hides a trap: `$scheme`
 inside the container is `http` and `$request_uri` carries no prefix — so the return after login
 lands on the service's root. Here the gate is the backend itself, building `redirect_url` from
 explicit `PUBLIC_ORIGIN` + `APP_BASE_PATH`.
@@ -66,7 +66,7 @@ Approaches tried and rejected:
 
 - **Statusline hook** — would be free (zero API calls), but **does not work in the VS Code
   extension**; it's a CLI/TUI-only feature ([#55643](https://github.com/anthropics/claude-code/issues/55643),
-  closed as `not_planned`). The reference repo stands on exactly this mechanism, which is
+  closed as `not_planned`). The reference repo is built on exactly this mechanism, which is
   precisely why it isn't a path for us. It also only gives `five_hour` and `seven_day` — no
   cascade, no dollar quotas, no `is_active` and no `severity`.
 - **Server-side poller** — would require holding tokens and **rotating the refresh token**,
@@ -110,7 +110,7 @@ in the table, not columns — a new bucket at Anthropic's end needs no migration
 `limits[].is_active` says what is really constraining *right now*.
 
 **Four freshness states, and `unknown` is never zero.** The worst failure mode is showing a
-false, confidently-looking 0% — because that's the basis on which you'd launch a big task and
+false, confident-looking 0% — because that's the basis on which you'd launch a big task and
 hit a wall. `ingest_batches` distinguishes "the client is quiet" (a reset can be inferred) from
 "the client is running, but there are no samples" (a failure — we say "I don't know").
 
@@ -119,8 +119,8 @@ you switch accounts through `/login`, and `settings.json` is shared — a static
 assign half the samples to the wrong account and silently poison both histories.
 
 **A blocked session is a signal, not a datum.** When Claude is waiting on your approval, your
-reply, or acceptance of a plan, the turn simply stands still — and nothing tells you that if
-you've stepped away. The probe then raises a toast locally and sends an alert to the panel. It
+reply, or acceptance of a plan, the turn simply stands still — and if you have stepped away from
+the desk, nothing tells you. The probe then raises a toast locally and sends an alert to the panel. It
 travels through the backend, because **the session may be running on a remote machine while the
 panel sits locally**, but **it never reaches the database**: the block clears the moment you
 click "yes", so a table would mean migrations and a row lifecycle for a state that is meant to
@@ -159,7 +159,7 @@ from the network. Do not change `BACKEND_BIND` to `0.0.0.0` while the mode is st
 
 **Behind a reverse proxy.** `AUTH_MODE=header` (the proxy supplies the address in a header — it
 must *strip* that header from incoming requests) or `AUTH_MODE=verify` (the backend asks an
-identity service). In both cases take away the published port, because the proxy reaches the
+identity service). In both cases remove the published port, because the proxy reaches the
 container over the Docker network — `BACKEND_BIND=` **isn't enough**, since `:-` fires on an
 empty value too:
 
@@ -191,7 +191,7 @@ against a **real payload** from a Max account (`backend/tests/fixtures/usage_max
 invented one. Billing amounts in the fixtures are rescaled; the percentages stayed
 original, so `spend.percent` still agrees with the `used/limit` pair beside it.
 
-Several of them guard against bugs that already reached production unnoticed once — dedup and
+Several of them guard against bugs that once already reached a live deployment unnoticed — dedup and
 the monotonicity guard against a wobbling `resets_at`, the SPA fallback swallowing API errors,
 a timezone-bearing time in `/history` parameters, `unknown` rendered as zero, diagnostic
 endpoints reading columns a migration had dropped. When changing code near these, start by

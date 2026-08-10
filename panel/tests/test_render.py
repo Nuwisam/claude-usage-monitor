@@ -38,7 +38,7 @@ def test_everything_fits_within_screen():
             assert band.top <= y0 < y1 <= band.bottom, "%s runs off vertically" % name
 
 
-def test_number_column_and_block_do_not_overlap():
+def test_number_column_and_bar_column_do_not_overlap():
     band = L.Layout(480, 320).band_a
     assert band.num_right < band.block_x0
 

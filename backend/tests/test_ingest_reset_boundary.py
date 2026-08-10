@@ -176,7 +176,7 @@ async def test_no_boundary_on_either_side_still_deduplicates(db):
 
 
 # -------------------------------------------------- F2: what has to keep the state
-async def test_still_valid_boundary_survives_measurement_without_boundary(db):
+async def test_a_still_valid_boundary_survives_a_measurement_without_one(db):
     """A measurement with no boundary does not erase a boundary that HAS NOT PASSED YET —
     that one still describes the window in progress, and off it live the countdown,
     `secondsToReset`, clamping the delta to the window and the `inferred_reset` inference.

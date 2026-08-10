@@ -1,7 +1,7 @@
 # AGENTS.md — working rules for this repo
 
 Claude usage-limit monitor for multiple accounts. Details: `README.md`.
-The reconnaissance this project stands on — the "Why this way, not another" section in
+The groundwork this project rests on — the "Why this way, not another" section in
 `README.md`.
 
 ## Rules that must not be broken
@@ -21,7 +21,7 @@ version 3 removes the whole problem, because the request is made by the first-pa
 its own, self-refreshed token.
 
 We still read `.credentials.json` — but **only for plan metadata** (`subscriptionType`,
-`rateLimitTier`, `expiresAt`), read-only, and `accessToken` is never used for anything out of it.
+`rateLimitTier`, `expiresAt`), read-only, and `accessToken` is never used for anything at all.
 The dividing line sits at **using the token**, not at reading the file: reading it is a purely
 local operation, sending a request with it is not.
 
@@ -63,7 +63,7 @@ straight into a wall. Regression test: `test_a_live_client_with_no_samples_gives
 In pixels, this rule is carried by the **reading's age label**, not a separate drawing of the
 track. The UI computes the value as `utilization ?? rawUtilization` — meaning that under
 `unknown` it shows the **last MEASURED** percentage, never zero and never a word standing in for
-a known number — and what that number is worth is said by the label standing next to it,
+a known number — and the label next to it says what that number is worth:
 "confirmed Wed. at 11:58 · 3 d 4 h ago". `live`, `stale` and `unknown` therefore look
 **identical**; a separate drawing is reserved for `inferred_reset` (an inference, not a
 measurement) and for a series that was **never** measured at all — there an empty track would
@@ -150,7 +150,7 @@ ones, `git grep -n i18n-keep` finds the sanctioned ones, and neither sees diacri
 Polish — so a grep is a floor and a read is the check.
 
 **11. Time comes in through `NaiveUtcDt`, goes out through `UtcDt`.**
-Ever since the output carries a zone, the browser **sends it back** (`Date.toISOString()`), while
+Ever since the output started carrying a zone, the browser **sends it back** (`Date.toISOString()`), while
 the database, `utcnow()` and the samples are naive UTC. A plain `datetime` in a query parameter
 lets a zoned timestamp in, and it doesn't fall over until a layer further down — History was
 returning 500 on every open. The worse variant is silent: the MySQL driver formats the datetime
