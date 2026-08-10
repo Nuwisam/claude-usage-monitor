@@ -134,7 +134,7 @@ def caps_for(canvas=None):
 
 def unavailable(options=None):
     if serial is None:
-        return ("brak pakietu pyserial (uruchom "
+        return ("the pyserial package is missing (run "
                 "pip install -r panel/requirements.txt)")
     return None
 
@@ -172,8 +172,8 @@ def open_panel(selector, options=None):
         # would mean writing bitmap commands into whatever answered.
         targets = [t for t in targets if t.handle == com]
         if not targets:
-            raise DriverError("nie widze ekranu %s na porcie %s" % (NAME, com))
-    picked = select(targets, selector, what="ekran %s" % NAME)
+            raise DriverError("no %s screen on port %s" % (NAME, com))
+    picked = select(targets, selector, what="screen %s" % NAME)
     release(targets, keep=picked)
     return Turing(picked.handle).open()
 
@@ -267,7 +267,7 @@ class Turing:
 
     def _send(self, cmd, payload=b"", expect=0):
         if self.port is None:
-            raise DriverError("port nie jest otwarty")
+            raise DriverError("the port is not open")
         self._write_all(cmd, tail=expect)
         if payload:
             self._write_all(payload)
@@ -292,11 +292,11 @@ class Turing:
             except serial.SerialTimeoutException as e:
                 sent += self._transferred()
                 self._pad(total - sent + tail)
-                raise DriverError("zapis przeterminowany po %d z %d B (%s)"
+                raise DriverError("write timed out after %d of %d B (%s)"
                                   % (sent, total, e)) from e
             except serial.SerialException as e:
                 self._pad(total - sent + tail)
-                raise DriverError("zapis nieudany po %d z %d B (%s)"
+                raise DriverError("write failed after %d of %d B (%s)"
                                   % (sent, total, e)) from e
             if written is None:
                 written = len(chunk)
@@ -306,12 +306,12 @@ class Turing:
                 # only for exceptions would tear the payload silently.
                 sent += written
                 self._pad(total - sent + tail)
-                raise DriverError("zapis skrocony: %d z %d B" % (sent, total))
+                raise DriverError("write cut short: %d of %d B" % (sent, total))
             sent += written
         try:
             self.port.flush()
         except Exception as e:
-            raise DriverError("flush nieudany: %s" % e) from e
+            raise DriverError("flush failed: %s" % e) from e
 
     def _transferred(self):
         """How many bytes the last timed-out write actually delivered.

@@ -197,9 +197,9 @@ def load(dll_path=None):
             tried.append("%s (%s)" % (candidate, e))
     if dll is None:
         raise AX206Error(
-            "nie moge zaladowac libusb-1.0.dll. Proby: %s. Biblioteke daje "
-            "pakiet `libusb` z requirements.txt; sterownikiem urzadzenia "
-            "pozostaje libusb-win32." % "; ".join(tried))
+            "cannot load libusb-1.0.dll. Tried: %s. The library comes from the "
+            "`libusb` package in requirements.txt; the device driver stays "
+            "libusb-win32." % "; ".join(tried))
 
     dll.libusb_init.argtypes = [C.POINTER(C.c_void_p)]
     dll.libusb_exit.argtypes = [C.c_void_p]
@@ -375,7 +375,7 @@ def unavailable(options=None):
     try:
         load((options or {}).get("dll"))
     except (DriverError, OSError) as e:
-        return "libusb-1.0 niedostepne (%s)" % e
+        return "libusb-1.0 unavailable (%s)" % e
     return None
 
 
@@ -405,7 +405,7 @@ def open_panel(selector, options=None):
         picked = None
         try:
             picked = select(targets, selector,
-                            what="modul %04x:%04x" % (VID, PID))
+                            what="module %04x:%04x" % (VID, PID))
         finally:
             release(targets, keep=picked)
         return picked.handle
@@ -467,7 +467,7 @@ class AX206:
     def open(self):
         found = self.finder()
         if found is None:
-            raise AX206Error("nie znalazlem wskazanego modulu %04x:%04x" % (VID, PID))
+            raise AX206Error("the named module %04x:%04x was not found" % (VID, PID))
         # The `found` reference belongs to this function and must go back to libusb
         # on EVERY exit from it. A successful `libusb_open` takes a reference of
         # its own, so the handle lives on without this one — and on an error there
@@ -522,7 +522,7 @@ class AX206:
             except AX206Error as e:
                 last = e
                 time.sleep(0.5)
-        raise AX206Error("modul nie wrocil po resecie: %s" % last)
+        raise AX206Error("the module did not come back after the reset: %s" % last)
 
     def resync(self):
         """Clears halts and drains the replies left behind by a previous process."""
@@ -585,7 +585,7 @@ class AX206:
         it correctly ends in a stall on EP IN (checked).
         """
         if not self.h:
-            raise AX206Error("panel nie jest otwarty")
+            raise AX206Error("the panel is not open")
         cbw = bytearray(31)
         cbw[0:4] = b"USBC"
         cbw[4:8] = bytes((0xDE, 0xAD, 0xBE, 0xEF))
@@ -595,7 +595,7 @@ class AX206:
 
         rc, n, _ = self._bulk(EP_OUT, bytes(cbw), len(cbw), 1000)
         if rc != 0 or n != len(cbw):
-            raise AX206Error("zapis CBW nieudany (%d/%d): %s"
+            raise AX206Error("CBW write failed (%d/%d): %s"
                              % (n, len(cbw), self._err(rc)))
 
         out = None
@@ -603,12 +603,12 @@ class AX206:
             if direction == DIR_OUT:
                 rc, n, _ = self._bulk(EP_OUT, bytes(data), length, timeout)
                 if rc != 0 or n != length:
-                    raise AX206Error("zapis danych urwany (%d/%d): %s"
+                    raise AX206Error("data write torn (%d/%d): %s"
                                      % (n, length, self._err(rc)))
             else:
                 rc, n, buf = self._bulk(EP_IN, None, length, timeout)
                 if rc != 0:
-                    raise AX206Error("odczyt danych nieudany: %s" % self._err(rc))
+                    raise AX206Error("data read failed: %s" % self._err(rc))
                 out = buf.raw[:n]
 
         # A full frame takes ~0.5 s, so a healthy CSW fits inside 1.5 s. The tight
@@ -673,17 +673,17 @@ class AX206:
             rect = (0, 0, self.width, self.height)
         x0, y0, x1, y1 = rect
         if not (0 <= x0 < x1 <= self.width and 0 <= y0 < y1 <= self.height):
-            raise AX206Error("prostokat %r wychodzi poza %dx%d"
+            raise AX206Error("rectangle %r falls outside %dx%d"
                              % (rect, self.width, self.height))
         if (x0, y0, x1, y1) != (0, 0, self.width, self.height):
             raise AX206Error(
-                "prostokat czesciowy %r: ten firmware rysuje WYLACZNIE pelny "
-                "ekran (0,0,%d,%d). Zmierzone: kazdy blit czesciowy jest "
-                "przyjmowany, nie potwierdzany i nie rysowany."
+                "partial rectangle %r: this firmware draws the FULL screen ONLY "
+                "(0,0,%d,%d). Measured: every partial blit is accepted, never "
+                "acknowledged and never drawn."
                 % (rect, self.width, self.height))
         expect = (x1 - x0) * (y1 - y0) * 2
         if len(rgb565) != expect:
-            raise AX206Error("bufor ma %d B, a prostokat %r wymaga %d B"
+            raise AX206Error("the buffer has %d B, and rectangle %r needs %d B"
                              % (len(rgb565), rect, expect))
         cmd = self._excmd(USBCMD_BLIT)
         cmd[7] = x0 & 0xFF

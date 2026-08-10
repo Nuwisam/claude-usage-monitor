@@ -286,7 +286,7 @@ def test_an_impossible_angle_backs_off_instead_of_dying(clock, caplog, monkeypat
         assert link.ensure() is False
     assert link.dev is None and link.caps is None
     assert dev.closed == 1, "a handle we do not keep must be given back"
-    assert any("obrot" in r.getMessage() for r in caplog.records)
+    assert any("rotation" in r.getMessage() for r in caplog.records)
 
 
 def test_failures_log_once_per_changed_message(clock, caplog):

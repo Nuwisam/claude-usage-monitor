@@ -117,10 +117,10 @@ class PanelLink:
         # brand new Surface (which knows nothing) forces the next frame out whole.
         self.surface = surfaces.for_caps(caps, log=log().warning)
         if self.spec.rotate:
-            log().info("%s: otwarty (jasnosc %s, obrot %d st.)",
+            log().info("%s: opened (brightness %s, rotation %d deg.)",
                        self.tag, self.brightness, self.spec.rotate)
         else:
-            log().info("%s: otwarty (jasnosc %s)", self.tag, self.brightness)
+            log().info("%s: opened (brightness %s)", self.tag, self.brightness)
         return True
 
     def _fail(self, message):
@@ -160,7 +160,7 @@ class PanelLink:
             # SCRATCH, so it goes through the same raw ctypes calls as ensure() —
             # and since the CSW threshold is reached in seconds, a reset happens
             # more often, not less.
-            self.drop("reset nieudany: %s: %s" % (type(e).__name__, e))
+            self.drop("reset failed: %s: %s" % (type(e).__name__, e))
             return False
 
     # -- sending -----------------------------------------------------------
@@ -203,7 +203,7 @@ class PanelLink:
             # A partially written frame leaves the glass in a state we cannot
             # describe, so the next plan has to be a whole one.
             self.surface.invalidate()
-            self.drop("zapis nieudany: %s: %s" % (type(e).__name__, e))
+            self.drop("write failed: %s: %s" % (type(e).__name__, e))
             return False
 
         if first:

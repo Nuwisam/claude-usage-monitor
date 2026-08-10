@@ -206,21 +206,21 @@ class StreamClient(threading.Thread):
             if reason == "bye":
                 # Resume at once and WITHOUT flashing the "no link" mark — this is
                 # a planned close after STREAM_MAX_LIFETIME_SEC.
-                log().info("strumien: bye po %.0f s, wznawiam", lived)
+                log().info("stream: bye after %.0f s, resuming", lived)
                 backoff = 3.0
                 continue
 
             self.q.put(("down", reason))
             if reason in ("invalid-token", "too-many-streams"):
                 # A bad token retried every 3 s for a week is pure noise in the log.
-                log().error("strumien: %s — czekam 60 s", reason)
+                log().error("stream: %s — waiting 60 s", reason)
                 delay = 60.0
             else:
                 # A connection shorter than 5 s counts as a failure even if it sent
                 # something: otherwise an error loop would exhaust STREAM_MAX_CLIENTS.
                 if lived >= 5.0:
                     backoff = 3.0
-                log().warning("strumien: %s (zylo %.0f s), ponawiam za %.0f s",
+                log().warning("stream: %s (lived %.0f s), retrying in %.0f s",
                               reason, lived, backoff)
                 delay = backoff
                 backoff = min(backoff * 2, 30.0)

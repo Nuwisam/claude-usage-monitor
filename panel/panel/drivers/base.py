@@ -112,8 +112,8 @@ class Caps:
             return self
         if extra != 180:
             raise DriverError(
-                "obrot %r nie jest obslugiwany: wolno 0 albo 180 (cwierc obrotu "
-                "wymagalaby ukladu pionowego, ktorego nie ma)" % (extra,))
+                "rotation %r is not supported: 0 or 180 only (a quarter turn would "
+                "need a portrait layout, and there is none)" % (extra,))
         return Caps(name=self.name, canvas=self.canvas, native=self.native,
                     rotate=(self.rotate + extra) % 360,
                     byte_order=self.byte_order, rect_updates=self.rect_updates,
@@ -198,7 +198,7 @@ def select(targets, selector, what="module"):
     a failure that cannot be traced back from the outside.
     """
     if not targets:
-        raise DeviceNotFound("nie widze zadnego urzadzenia (%s)" % what)
+        raise DeviceNotFound("no device found (%s)" % what)
     selector = selector or {}
 
     port_path = selector.get("port_path")
@@ -208,13 +208,13 @@ def select(targets, selector, what="module"):
             return hits[0]
         if not hits:
             raise DeviceNotFound(
-                "nie ma urzadzenia o port_path=%s; widze: %s"
+                "there is no device with port_path=%s; found: %s"
                 % (port_path, ", ".join(t.describe() for t in targets)))
         # Only possible with two USB controllers using the same port number. One
         # of these could belong to another program, so neither is picked.
         raise DeviceNotFound(
-            "port_path=%s wskazuje na %d urzadzenia (rozne magistrale: %s) — "
-            "rozstrzygnij przez index"
+            "port_path=%s points at %d devices (different buses: %s) — "
+            "settle it with index"
             % (port_path, len(hits), ", ".join(str(t.bus) for t in hits)))
 
     index = selector.get("index")
@@ -222,16 +222,16 @@ def select(targets, selector, what="module"):
         hits = [t for t in targets if t.index == index]
         if not hits:
             # %r, not %d: `index` comes from panel.json and is sometimes a string.
-            raise DeviceNotFound("nie ma urzadzenia o indeksie %r (widze %d)"
+            raise DeviceNotFound("there is no device at index %r (found %d)"
                                  % (index, len(targets)))
         return hits[0]
 
     if len(targets) == 1:
         return targets[0]
     raise DeviceNotFound(
-        "widze %d urzadzen i zadne nie jest wskazane w konfiguracji. Uruchom "
-        "`python -m panel --list`, potem `--identify`, i wpisz wybrany lancuch "
-        "portow do panel.json jako "
+        "found %d devices and none of them is named in the configuration. Run "
+        "`python -m panel --list`, then `--identify`, and write the chosen port "
+        "chain into panel.json as "
         "{\"panels\": [{\"backend\": \"...\", \"port_path\": \"...\"}]}"
         % len(targets))
 

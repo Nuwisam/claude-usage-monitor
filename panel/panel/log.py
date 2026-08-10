@@ -31,7 +31,7 @@ def setup(path, level="INFO", console=None):
         logger.addHandler(handler)
     except OSError as e:
         # A missing log must not stop the panel — its job is to show the limits.
-        print("nie moge otworzyc logu %s: %s" % (path, e), file=sys.stderr)
+        print("cannot open the log %s: %s" % (path, e), file=sys.stderr)
 
     if console is None:
         console = sys.stderr is not None and sys.stderr.isatty()
@@ -74,12 +74,12 @@ def setup(path, level="INFO", console=None):
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc, tb)
             return
-        logger.critical("nieobsluzony wyjatek", exc_info=(exc_type, exc, tb))
+        logger.critical("unhandled exception", exc_info=(exc_type, exc, tb))
 
     sys.excepthook = excepthook
 
     def threadhook(args):
-        logger.critical("nieobsluzony wyjatek w watku %s",
+        logger.critical("unhandled exception in thread %s",
                         getattr(args.thread, "name", "?"),
                         exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
 

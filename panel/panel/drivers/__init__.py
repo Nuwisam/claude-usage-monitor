@@ -36,5 +36,5 @@ def get(name):
         return REGISTRY[name]
     except KeyError:
         from .base import DriverError
-        raise DriverError("nieznany sterownik %r (znam: %s)"
+        raise DriverError("unknown driver %r (known: %s)"
                           % (name, ", ".join(known())))

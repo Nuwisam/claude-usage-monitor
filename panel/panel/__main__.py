@@ -40,7 +40,7 @@ def _parse_id(text):
     try:
         return backend, int(index)
     except ValueError:
-        raise DriverError("nie rozumiem wskazania %r (oczekuje np. ax206#0)" % text)
+        raise DriverError("cannot make sense of the id %r (expected e.g. ax206#0)" % text)
 
 
 def cmd_list(args):
@@ -50,7 +50,7 @@ def cmd_list(args):
     for name in drivers.known():
         why = drivers.REGISTRY[name].unavailable(opts)
         if why:
-            print("%s — niedostepny: %s" % (name, why))
+            print("%s — unavailable: %s" % (name, why))
             continue
         targets = device.list_targets(name, opts)
         try:
@@ -63,17 +63,17 @@ def cmd_list(args):
         finally:
             device.release(targets)
     if not total:
-        print("\n(nic — czy ekran jest wpiety i ma sterownik?)")
+        print("\n(nothing — is a screen plugged in and does it have a driver?)")
         return 1
     if total > 1:
         # The port chain comes from the same enumeration as the handle, so nothing
         # here is guessed. `--identify` exists only so you can see WITH YOUR EYES
         # which screen on the desk is which - no read can settle that.
-        print("\nKtory to ktory na biurku rozrozni tylko wzrok:")
+        print("\nOnly your eyes can tell which screen on the desk is which:")
         for name in drivers.known():
             for t in device.list_targets(name, opts):
                 print("  python -m panel --identify %s" % t.id)
-    print("\nDo panel.json:")
+    print("\nFor panel.json:")
     print('  "panels": [\n%s\n  ]' % ",\n".join(lines))
     return 0
 
@@ -101,7 +101,7 @@ def cmd_identify(args):
         native_w, native_h = caps.native
         dev.write(frame.rgb565(caps.byte_order, caps.rotate),
                   (0, 0, native_w, native_h))
-        print("na ekranie %s#%d powinna byc wielka %d" % (backend, index, index))
+        print("screen %s#%d should be showing a large %d" % (backend, index, index))
     finally:
         dev.close()
     return 0
@@ -118,11 +118,11 @@ def cmd_probe(args):
     dev = device.open_panel(spec, opts)
     try:
         caps = dev.caps.rotated(spec.rotate)
-        print("otwarty: %s  plotno=%dx%d  natywnie=%dx%d  obrot=%d st.  %s  %s  %s"
+        print("opened: %s  canvas=%dx%d  native=%dx%d  rotation=%d deg.  %s  %s  %s"
               % (spec.tag, caps.canvas[0], caps.canvas[1], caps.native[0],
                  caps.native[1], caps.rotate, caps.byte_order,
-                 "prostokaty" if caps.rect_updates else "tylko pelne klatki",
-                 "z potwierdzeniem" if caps.acked else "BEZ potwierdzen"))
+                 "rectangles" if caps.rect_updates else "full frames only",
+                 "with acknowledgement" if caps.acked else "NO acknowledgements"))
 
         width, height = caps.canvas
         img, d = draw.new_canvas((width, height))
@@ -166,7 +166,7 @@ def cmd_probe(args):
             dev.set_brightness(level)
             t0 = time.perf_counter()
             status = dev.write(payload, full)
-            print("  jasnosc %s: status=%s  %.0f ms"
+            print("  brightness %s: status=%s  %.0f ms"
                   % (level, status, (time.perf_counter() - t0) * 1000))
             time.sleep(0.6)
 
@@ -174,17 +174,17 @@ def cmd_probe(args):
             # Turning a hand measurement into a repeatable step: rectangles must
             # land where we say and leave the rest of the glass alone. On a screen
             # that acknowledges nothing this is the only check there is.
-            print("prostokaty: cztery kwadraty 24x24 w rogach obszaru")
+            print("rectangles: four 24x24 squares in the corners of the area")
             _probe_rects(dev, caps)
 
         if caps.acked:
-            print("missed_csw: %d  (0 = kazda klatka potwierdzona)" % dev.missed_csw)
+            print("missed_csw: %d  (0 = every frame acknowledged)" % dev.missed_csw)
             # Last: this command is unreliable and a failed attempt spoils the NEXT
             # transaction, so it cannot stand before the test card.
-            print("probe_geometry(): %s  (zawodne — patrz naglowek ax206.py)"
+            print("probe_geometry(): %s  (unreliable — see the header of ax206.py)"
                   % (dev.probe_geometry(),))
         else:
-            print("ten sterownik nic nie potwierdza — ocena tylko wzrokiem")
+            print("this driver acknowledges nothing — judge by eye alone")
     finally:
         dev.close()
     return 0
@@ -215,12 +215,12 @@ def cmd_once(args):
         return 2
     from .app import App
     got, frame, drew = App(cfg).run_once()
-    print("pierwsza ramka: %s" % ("odebrana" if got else "NIE doczekalem sie"))
+    print("first frame: %s" % ("received" if got else "timed out waiting"))
     for tag, ok in drew:
-        print("  %s: %s" % (tag, "narysowal" if ok else "NIE narysowal"))
+        print("  %s: %s" % (tag, "drew" if ok else "did NOT draw"))
     if args.out:
         frame.image.save(args.out)
-        print("zapisano %s" % args.out)
+        print("saved %s" % args.out)
     # Both halves matter: the stream can be alive while every screen is held by
     # another program, and that used to exit 0.
     return 0 if got and all(ok for _, ok in drew) else 1
@@ -229,21 +229,21 @@ def cmd_once(args):
 def build_parser():
     ap = argparse.ArgumentParser(prog="panel", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--list", action="store_true", help="pokaz widoczne ekrany")
+    ap.add_argument("--list", action="store_true", help="show the screens that are visible")
     ap.add_argument("--identify", metavar="ID",
-                    help="namaluj numer na wskazanym ekranie, np. ax206#0")
-    ap.add_argument("--probe", action="store_true", help="karta testowa na panelu")
+                    help="paint a number on the named screen, e.g. ax206#0")
+    ap.add_argument("--probe", action="store_true", help="test card on the panel")
     ap.add_argument("--once", action="store_true",
-                    help="jedna klatka z prawdziwych danych i wyjscie")
-    ap.add_argument("--out", help="dodatkowo zapisz klatke do PNG (z --once)")
-    ap.add_argument("--dll", help="sciezka do libusb-1.0.dll")
-    ap.add_argument("--backend", help="wymus sterownik, np. ax206")
-    ap.add_argument("--index", type=int, help="wymus urzadzenie o tym indeksie")
+                    help="one frame from real data, then exit")
+    ap.add_argument("--out", help="also save the frame to a PNG (with --once)")
+    ap.add_argument("--dll", help="path to libusb-1.0.dll")
+    ap.add_argument("--backend", help="force this driver, e.g. ax206")
+    ap.add_argument("--index", type=int, help="force the device at this index")
     ap.add_argument("--port-path", dest="port_path",
-                    help="wymus urzadzenie o tym lancuchu portow, np. 3.4")
+                    help="force the device on this port chain, e.g. 3.4")
     ap.add_argument("--rotate", type=int, choices=C.ROTATIONS,
-                    help="jak ekran wisi: 180 = do gory nogami (domyslnie "
-                         "z panel.json)")
+                    help="how the screen hangs: 180 = upside down (default "
+                         "from panel.json)")
     return ap
 
 
@@ -268,8 +268,8 @@ def main(argv=None):
             return C.PanelSpec(backend, selector, rotate=args.rotate or 0)
         if not panels:
             raise DriverError(
-                "nie wiem, ktory ekran wziac: brak `panels` w panel.json. "
-                "Uruchom `python -m panel --list`")
+                "cannot tell which screen to take: no `panels` in panel.json. "
+                "Run `python -m panel --list`")
         spec = panels[0]
         if args.rotate is not None:
             # The flag wins, but only over the angle - reusing the configured spec
@@ -293,12 +293,12 @@ def main(argv=None):
         return 0
     except AlreadyRunning as e:
         print("%s" % e, file=sys.stderr)
-        print("Zatrzymaj zadanie, jesli chcesz uruchomic recznie:", file=sys.stderr)
+        print("Stop the scheduled task if you want to run it by hand:", file=sys.stderr)
         print("  Stop-ScheduledTask -TaskName 'Claude Panel AX206'", file=sys.stderr)
         return 4
     except C.ConfigError as e:
         print("config error: %s" % e, file=sys.stderr)
-        print("\nWzor pliku %s:\n%s" % (C.CONFIG_PATH, C.example()), file=sys.stderr)
+        print("\nTemplate for %s:\n%s" % (C.CONFIG_PATH, C.example()), file=sys.stderr)
         return 2
     except (DriverError, OSError) as e:
         # OSError alongside DriverError for the same reason link.DEVICE_ERRORS has

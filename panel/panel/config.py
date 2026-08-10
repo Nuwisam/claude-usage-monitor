@@ -437,16 +437,16 @@ def load(path=CONFIG_PATH):
     """Loads the configuration. A missing file and bad JSON are TWO different
     errors — the first means 'not installed yet', the second 'broken while editing'."""
     if not os.path.exists(path):
-        raise ConfigError("brak pliku konfiguracji: %s" % path)
+        raise ConfigError("missing configuration file: %s" % path)
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except ValueError as e:
-        raise ConfigError("panel.json jest niepoprawnym JSON-em: %s" % e) from e
+        raise ConfigError("panel.json is invalid JSON: %s" % e) from e
     except OSError as e:
-        raise ConfigError("nie moge odczytac %s: %s" % (path, e)) from e
+        raise ConfigError("cannot read %s: %s" % (path, e)) from e
     if not isinstance(data, dict):
-        raise ConfigError("panel.json musi zawierac obiekt JSON")
+        raise ConfigError("panel.json must contain a JSON object")
     return Config(data, path)
 
 
@@ -454,8 +454,8 @@ def example():
     """A template to paste in — used by --list and the README."""
     return json.dumps({
         "stream_url": DEFAULTS["stream_url"],
-        "stream_token": "<wpis z STREAM_TOKENS o etykiecie panel>",
-        "account_1": {"uuid": "<uuid konta>", "name": "you@example.org"},
-        "account_2": {"uuid": "<uuid konta>", "name": "billing@example.org"},
+        "stream_token": "<the STREAM_TOKENS entry labeled panel>",
+        "account_1": {"uuid": "<account uuid>", "name": "you@example.org"},
+        "account_2": {"uuid": "<account uuid>", "name": "billing@example.org"},
         "panels": [{"backend": "ax206", "port_path": "3.4", "brightness": 5}],
     }, indent=2, ensure_ascii=False)

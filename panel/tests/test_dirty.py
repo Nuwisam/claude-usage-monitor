@@ -178,7 +178,7 @@ def test_a_canvas_that_does_not_divide_by_the_tile_degrades_loudly():
     said = []
     s = surface.for_caps(caps(native=(300, 481)), log=said.append)
     assert isinstance(s, surface.FullFrameSurface)
-    assert said and "pelne klatki" in said[0]
+    assert said and "full frames" in said[0]
 
 
 def test_rotation_and_byte_order_come_from_caps():

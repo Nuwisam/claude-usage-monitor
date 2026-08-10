@@ -138,11 +138,11 @@ def test_liczba_w_cudzyslowie_jest_konwertowana():
 
 def test_brak_pliku_to_inny_blad_niz_zepsuty_json(tmp_path):
     """Two different messages: 'not installed yet' and 'broken while being edited'."""
-    with pytest.raises(C.ConfigError, match="brak pliku"):
+    with pytest.raises(C.ConfigError, match="missing configuration file"):
         C.load(str(tmp_path / "nie-ma.json"))
     zly = tmp_path / "zly.json"
     zly.write_text("{to nie json", encoding="utf-8")
-    with pytest.raises(C.ConfigError, match="niepoprawnym JSON"):
+    with pytest.raises(C.ConfigError, match="invalid JSON"):
         C.load(str(zly))
 
 
