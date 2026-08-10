@@ -237,7 +237,7 @@ def test_sanitize_znosi_brakujacy_resets_at(probe):
 # the text with `text.find`.
 def test_powod_wylaczenia_kredytow_rozroznia_trzy_stany(probe):
     """The only field that on its own tells an exhausted OWN pool from the organization
-    ceiling: in the `spend.disabled_reason` band an exhausted pool leaves it `null`."""
+    ceiling: in `spend.disabled_reason` an exhausted pool leaves it `null`."""
     from tests.team import CLAUDE_JSON_STATES
 
     for path, oczekiwany in CLAUDE_JSON_STATES:

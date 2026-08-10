@@ -168,7 +168,7 @@ HTTP 200 i poprawnie wyglądającej odpowiedzi. Oba typy leżą obok siebie w `a
 | sygnalizator | signaller |
 | ramka | frame (stream frame vs display frame — qualify when ambiguous) |
 | pas / pasy | band / bands |
-| pasmo | banner (deliberately NOT "band") |
+| pasmo | Decide by referent, like `licznik`. **banner** for the panel's strip across the top of a card — the thing that is drawn. **band** when the word is doing the ordinary in-band / out-of-band job: data carried inside the payload itself, as against a signal arriving on a side channel (`spend.disabled_reason`, the client cache). Test: if "out of" could be said of it, it is a band. Six sites in the backend, the probe and the frontend use it that way, and "in-banner data" is not English. |
 | karta | card |
 | pasek | bar |
 | tor | track |
