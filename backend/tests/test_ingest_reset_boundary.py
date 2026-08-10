@@ -142,7 +142,7 @@ async def test_guard_nadal_zamraza_gdy_obie_granice_sa_znane(db):
     strips away the only protection against a machine that holds an older token cache while
     its reading only looks fresh (its own `captured_at`, so `newest` will not stop it).
 
-    The boundary on the laptop's side differs by a second: that is JITTER, not another
+    The boundary on the laptop's side differs by a second: that is the WOBBLE, not another
     window (rule 9)."""
     t0 = (utcnow() - timedelta(seconds=180)).replace(microsecond=0)
     granica = t0 + timedelta(hours=3)
@@ -175,7 +175,7 @@ async def test_brak_granicy_po_obu_stronach_nadal_deduplikuje(db):
         "seria bez granicy o niezmienionej wartosci to jeden wiersz, nie trzy"
 
 
-# ----------------------------------------------------- F2: what the state must keep
+# -------------------------------------------------- F2: what has to keep the state
 async def test_wciaz_wazna_granica_przezywa_pomiar_bez_granicy(db):
     """A measurement with no boundary does not erase a boundary that HAS NOT PASSED YET —
     that one still describes the window in progress, and off it live the countdown,

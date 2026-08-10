@@ -1,10 +1,16 @@
 """State -> appearance. A port of frontend/src/lib/freshness.ts for the panel.
 
-DELIBERATE DIFFERENCE FROM THE WEB: the panel HAS NO separate freshness states in
-the drawing. Recency is carried entirely by the reading-age label ("16 min ago")
-standing next to the account. The web tells `live` from `stale` by fill color and
-gives `unknown` a drawing of its own, because there is no clock on every row there
-— here there is, so a second channel for the same information would be noise.
+NOT A DIFFERENCE FROM THE WEB, though this file claimed one for a long time: the
+panel has no separate freshness states in the drawing, and neither has the web.
+Recency is carried on both sides by the reading-age label ("16 min ago") standing
+next to the account. `freshness.ts` says so in its own header and `describeSeries()`
+returns no field that tells `live` from `stale`, so the claim that the web colors the
+fill was false in both languages. The port and its original agree.
+
+THE REAL DIFFERENCE is narrower and runs the other way: `freshness.ts` says "no meter"
+when `unavailableReason` is set, while `missing_view()` below can only say "unknown",
+because `panel/panel/model.py` carries no such field. On the glass a withdrawn meter
+and a series that was never measured look the same.
 
 In practice: when a LAST MEASUREMENT exists (`rawUtilization`), the panel shows it
 like any other value, and the reading age next to it says how much it is worth.

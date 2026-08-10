@@ -122,11 +122,16 @@ frame, banner, card. `display_label` is refreshed on every ingest, so a dictiona
 series registered earlier.
 
 This rule states the target, not the current tree: the Polish→English migration is in flight and
-runs over several waves. Series labels served by the API are already English while the UI around
-them is not — the cascade rung labels in `frontend/src/components/Cascade.tsx` ("Sesja 5 h") and
-the phrases in `frontend/src/lib/format.ts` ("brak danych z ostatniej godziny") are work not yet
-done, not counter-examples to the rule; the dot decimal separator declared at the top of
-`format.ts` is likewise ahead of its own `pct` and `money`, which still emit a comma.
+runs over several waves. What is still Polish is Polish because its wave has not run, not because
+it is a counter-example to the rule. Named by CATEGORY on purpose — an earlier version of this
+paragraph cited three individual strings as evidence and all three were translated out from under
+it, twice, which is how a note about unfinished work becomes the false statement it was warning
+about. Outstanding: test function names, helpers and test data (one wave, tracked by a rename
+ledger, because no grep can see a Polish word across an underscore); every document under `docs/`
+and the three READMEs; the panel's CLI text in `panel/panel/__main__.py`; and the installer's
+console output in `panel/deploy/install-task.ps1`. To ask the tree rather than this paragraph:
+`git grep -nE '[ąćęłńóśźż]' -- . ':!docs/handout'` plus a read, since the accent-keyed sweep
+misses diacritic-free Polish and is a floor, never a completion signal.
 
 **11. Czas wchodzi przez `NaiveUtcDt`, wychodzi przez `UtcDt`.**
 Odkąd wyjście ma strefę, przeglądarka ją **odsyła** (`Date.toISOString()`), a baza,

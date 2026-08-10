@@ -135,7 +135,7 @@ def edges():
     """Layout extremes: a long name, a three-digit session, no second account."""
     a = account(
         "cccc3333-0000-0000-0000-000000000003",
-        "bardzo.dluga.nazwa.konta.ktora.nie.miesci.sie@przyklad.example.pl",
+        "very.long.account.name.that.does.not.fit.here@example.example.com",
         cascade=[rung("credits", "on", isCurrent=True, usedMinor=123456,
                       limitMinor=200000, currency="USD", exponent=2)],
         series=[

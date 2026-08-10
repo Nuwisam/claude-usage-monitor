@@ -37,9 +37,11 @@ export interface SeriesStatus {
    *  (observed: `org_level_disabled_until`, `org_spend_cap_reached`). The set IS
    *  open, so branch on `!== null`, never on the contents (rule 5).
    *
-   *  When it is set, BOTH value fields are null — this is not a 0% measurement, it is a
-   *  missing meter. It tells apart two states that look identical in the payload: an account
-   *  that never had credits, and one whose organization has just cut them off. */
+   *  When it is set, `utilization` is null — this is not a 0% measurement, it is a missing
+   *  meter. `rawUtilization` survives: it holds the last MEASURED percent, so the reading
+   *  stays on screen with its age. It tells apart two states that look identical in the
+   *  payload: an account that never had credits, and one whose organization has just cut
+   *  them off. */
   unavailableReason: string | null;
   resetsAt: string | null;
   secondsToReset: number | null;

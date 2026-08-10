@@ -56,7 +56,8 @@ interface Spec {
   primary?: boolean;
   dupOf?: string | null;
   extra?: Record<string, unknown> | null;
-  /** Reason the meter was withdrawn. Set => `u` and `raw` MUST be null. */
+  /** Reason the meter was withdrawn. Set => `u` is null; `raw` keeps the last measured
+   *  percent when there is one. */
   reason?: string | null;
 }
 

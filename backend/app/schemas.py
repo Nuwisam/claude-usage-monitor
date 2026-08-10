@@ -86,9 +86,11 @@ class SeriesStatus(CamelModel):
     raw_utilization: float | None      # the last MEASURED value, with no inference
     # The reason this series CANNOT BE measured — verbatim from Anthropic (observed:
     # `org_level_disabled_until`, `org_spend_cap_reached`; the set IS open, so a consumer
-    # checks `!== null` and not the content). When it is set, BOTH value fields are null —
+    # checks `!== null` and not the content). When it is set, `utilization` is null —
     # otherwise the UI, which computes `utilization ?? rawUtilization`, would draw a
-    # measured 0% at the very moment of a hard block.
+    # measured 0% at the very moment of a hard block. `raw_utilization` is NOT null: it
+    # keeps the last MEASURED percent, so the reading survives with its age beside it
+    # (`services/status.py:221-269` builds exactly that).
     unavailable_reason: str | None = None
     resets_at: UtcDt | None
     seconds_to_reset: int | None
