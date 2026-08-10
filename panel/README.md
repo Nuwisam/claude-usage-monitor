@@ -1,24 +1,25 @@
-# panel — limity Claude na wyświetlaczach USB
+# panel — Claude limits on USB displays
 
-Klient headless, który subskrybuje `/api/stream` i rysuje stan limitów na
-ekranach stojących na biurku. Układ **4a** z makiety: dwa konta w pasach, procent
-obok bloku, kredyty na dole pasa. Renderer jest jeden i rysuje jedno logiczne
-płótno 480×320; ekrany różnią się tym, co z tym płótnem robią.
+A headless client that subscribes to `/api/stream` and draws the state of the
+limits on screens sitting on a desk. Layout **4a** from the mockup: two accounts
+in bands, the percentage next to the block, credits at the bottom of the band.
+There is one renderer and it draws a single logical 480×320 canvas; the screens
+differ only in what they do with that canvas.
 
 ```
-python -m panel                          pętla (to samo, co robi zadanie harmonogramu)
-python -m panel --list                   jakie ekrany widać i na których portach
-python -m panel --identify ax206#0       namaluj wielki numer na wskazanym ekranie
-python -m panel --probe [--backend N]    karta testowa: kolory, paski, ogonki, prostokąty
-python -m panel --once                   jedna klatka z prawdziwych danych i wyjście
+python -m panel                          loop (same as what the scheduled task runs)
+python -m panel --list                   which screens are visible and on what ports
+python -m panel --identify ax206#0       paint a big number on the given screen
+python -m panel --probe [--backend ax206]  test card: colors, bars, descenders, rectangles
+python -m panel --once                   one frame of real data, then exit
 ```
 
-Jedna wyrenderowana klatka idzie na **wszystkie** skonfigurowane ekrany; każdy ma
-własne połączenie, własny backoff i własną pamięć tego, co pokazuje. Sterowniki
-siedzą w [`panel/drivers/`](panel/drivers) — jeden plik na typ ekranu, rejestr
-jest jawnym słownikiem w `__init__.py`.
+One rendered frame goes to **every** configured screen; each has its own
+connection, its own backoff and its own memory of what it is showing. The
+drivers live in [`panel/drivers/`](panel/drivers) — one file per screen type,
+and the registry is an explicit dictionary in `__init__.py`.
 
-Bez sprzętu:
+Without hardware:
 
 ```
 python tools/render-png.py --scene states --zoom 3 --rgb565 --out out.png
@@ -26,68 +27,75 @@ python tools/replay.py %LOCALAPPDATA%\claude-usage-monitor\panel.log.sse
 python -m pytest tests -q
 ```
 
-## Sprzęt — co trzeba wiedzieć, zanim się coś zepsuje
+## Hardware — what you need to know before something breaks
 
-Moduł: `USB\VID_1908&PID_0102`, GEMBIRD/QDtech „USB-Display", układ **Appotech
-AX206**. Protokół to firmowa komenda SCSI `0xCD`
-opakowana w parę CBW/CSW transportu USB Bulk-Only Mass Storage; punkt wyjścia to
-[`dpf-ax`](https://github.com/dreamlayers/dpf-ax), ale **ten firmware różni się
-od opisanego tam** i różnice są tu największym źródłem niespodzianek.
+Module: `USB\VID_1908&PID_0102`, GEMBIRD/QDtech "USB-Display", **Appotech
+AX206** chip. The protocol is a proprietary SCSI command `0xCD` wrapped in a
+CBW/CSW pair of the USB Bulk-Only Mass Storage transport; the starting point is
+[`dpf-ax`](https://github.com/dreamlayers/dpf-ax), but **this firmware differs
+from the one described there** and those differences are the biggest source of
+surprises here.
 
 | | |
 |---|---|
-| rozdzielczość | 480 × 320, RGB565 **starszy bajt pierwszy**, bez obrotu |
-| pełna klatka | 307 200 B → **~355 ms** dla ciemnego układu (≈2,8 kl./s) |
-| pakowanie pikseli | 1,55 ms (`bytes.translate` + jedno OR na dużych liczbach; numpy zbędne) |
-| jasność | `SETPROPERTY`/`BRIGHTNESS`, 0–7 |
-| uchwyt | **wyłączny** — albo AIDA64, albo my |
-| sterownik urządzenia | libusb-win32 (`libusb0.sys`) — ten sam, którego używa AIDA64 |
-| biblioteka klienta | **libusb-1.0** (pakiet `libusb` z `requirements.txt`) |
+| resolution | 480 × 320, RGB565 **high byte first**, no rotation |
+| full frame | 307 200 B → **~355 ms** for a dark layout (≈2.8 fps) |
+| pixel packing | 1.55 ms (`bytes.translate` + one OR on big integers; numpy unnecessary) |
+| brightness | `SETPROPERTY`/`BRIGHTNESS`, 0–7 |
+| handle | **exclusive** — either AIDA64 or us |
+| device driver | libusb-win32 (`libusb0.sys`) — the same one AIDA64 uses |
+| client library | **libusb-1.0** (the `libusb` package from `requirements.txt`) |
 
-**Sterownik i biblioteka to dwie różne rzeczy** i mylenie ich jest tu gotową
-pułapką. Urządzenie zostaje pod libusb-win32; zmieniła się tylko biblioteka, przez
-którą z nim rozmawiamy. Backend windowsowy libusb-1.0 obsługuje urządzenia
-związane z `libusb0.sys` (zmierzone: 1200 klatek, `missed_csw = 0`), więc
-przepinanie sterownika na WinUSB jest niepotrzebne i zerwałoby AIDA64.
+**The driver and the library are two different things**, and confusing them is
+a ready-made pitfall here. The device stays under libusb-win32; only the
+library we talk to it through has changed. The libusb-1.0 Windows backend
+supports devices bound to `libusb0.sys` (measured: 1200 frames,
+`missed_csw = 0`), so switching the driver to WinUSB is unnecessary and would
+break AIDA64.
 
-Powód zmiany biblioteki jest jeden: `libusb_get_port_numbers()` podaje **łańcuch
-portów** z tego samego uchwytu, który otwieramy. API 0.1 z libusb-win32 nie
-podawało żadnej topologii (`bus-0`, `devnum=0`) — moduł trzeba było szukać
-w rejestrze Windows i łączyć jedno z drugim po kolejności.
+The reason for changing the library is a single one: `libusb_get_port_numbers()`
+gives the **port chain** from the same handle we open. The 0.1 API from
+libusb-win32 gave no topology at all (`bus-0`, `devnum=0`) — the module had to
+be looked up in the Windows registry and matched to the handle by ordering.
 
-**Czas klatki zależy od treści**, mimo stałej liczby bajtów na drucie. Zmierzone
-na tym module, ten sam blit 307 200 B: karta testowa (ciemna) 354 ms, pełna czerń
-356 ms, pasy nasyconych kolorów 514 ms. Układ docelowy jest ciemny, więc obowiązuje
-~355 ms. Syntetyczne testy nasyconymi pasami mierzą najgorszy przypadek —
-i właśnie one kazały przez chwilę uwierzyć w nieistniejącą regresję po
-migracji (libusb-win32 dawał na tych samych pasach 503–533 ms).
+**Frame time depends on content**, despite a constant byte count on the wire.
+Measured on this module, same 307 200 B blit: test card (dark) 354 ms, full
+black 356 ms, bands of saturated colors 514 ms. The target layout is dark, so
+~355 ms is what applies. Synthetic tests with saturated bands measure the worst
+case — and they are exactly what made us briefly believe in a regression that
+never existed, after the migration (libusb-win32 gave 503–533 ms on the same
+bands).
 
-**Rysuje wyłącznie pełne klatki.** Prostokąt w komendzie blit nie jest obszarem
-do przerysowania — ustawia *okno rysowania*, w które firmware wlewa cały strumień,
-zawijając go. Mniejsze okno pokazuje więc **ogon** ładunku, nie jego początek
-(ładunek dopełniony zerami daje okno czarne — tak wyglądały pierwsze, mylące
-wyniki). Transfer zawsze musi mieć 307 200 B, więc blit w okno 480×60 kosztuje
-tyle samo co pełny ekran. Prostokąt równy dokładnie jednemu wypełnieniu okna też
-nie jest potwierdzany. `blit()` odrzuca więc prostokąty częściowe, zamiast po
-cichu nic nie robić.
+**Draws full frames only.** The rectangle in the blit command is not an area to
+redraw — it sets a *drawing window* that the firmware pours the whole stream
+into, wrapping it. A smaller window therefore shows the **tail** of the
+payload, not its start (a zero-padded payload gives a black window — that is
+what the first, misleading results looked like). The transfer always has to be
+307 200 B, so a blit into a 480×60 window costs exactly as much as the full
+screen. A rectangle equal to exactly one window's worth is not confirmed
+either. `blit()` therefore rejects partial rectangles instead of silently doing
+nothing.
 
-**Brak CSW to nasz błąd, nie kaprys panelu.** Identyczna komenda potwierdza się
-normalnie, dopóki przed nią nie pójdzie blit o złej liczbie bajtów; potem potok
-milczy aż do `reset()`. Licznik `missed_csw` czytaj jako „wysłaliśmy coś źle".
+**A missing CSW is our bug, not the panel's whim.** The identical command
+confirms normally, until a blit with the wrong byte count goes out before it;
+after that the pipe stays silent until `reset()`. Read the `missed_csw` counter
+as "we sent something wrong."
 
-**Z zestawu komend `dpf-ax` działa tylko blit i jasność.** `FILLRECT` (0x11),
-`COPYRECT` (0x13) i właściwość `FGCOLOR` nie są potwierdzane nawet po resecie.
-Komenda odpytania o geometrię jest **zawodna**: raz zwraca poprawne 480×320, raz
-milczy, a nieudana próba psuje następną transakcję — dlatego geometria jest
-konfiguracją, a `probe_geometry()` woła się na samym końcu `--probe`.
+**Of the `dpf-ax` command set only blit and brightness work.** `FILLRECT`
+(0x11), `COPYRECT` (0x13) and the `FGCOLOR` property are not confirmed even
+after a reset. The geometry-query command is **unreliable**: sometimes it
+returns the correct 480×320, sometimes it stays silent, and a failed attempt
+spoils the next transaction — which is why geometry is configuration, and
+`probe_geometry()` is called at the very end of `--probe`.
 
-**Ekran trzyma ostatnią klatkę** bez podłączonego hosta. Klient celowo nie czyści
-go przy wyjściu: po zamknięciu komputera na biurku zostaje ostatni znany stan.
+**The screen holds its last frame** with no host attached. The client
+deliberately does not clear it on exit: once the desk machine is shut down,
+the last known state stays on.
 
-Gotowa biblioteka [`pyax206`](https://github.com/sayajinpt/pyax206) implementuje
-identyczny protokół (komenda blit zgadza się co do bajtu), ale na tym egzemplarzu
-nie działa: jej `init()` traktuje brak CSW jako błąd krytyczny i wywala się
-w każdej próbie, także po czystym resecie.
+The ready-made [`pyax206`](https://github.com/sayajinpt/pyax206) library
+implements the identical protocol (the blit command matches byte for byte),
+but it does not work on this unit: its `init()` treats a missing CSW as a
+critical error and blows up on every attempt, even after a clean reset.
 
 ## The second screen: Turing rev A over a serial port
 
@@ -176,102 +184,122 @@ write. With partial updates the clock writes something every minute, so timing i
 off "last write" would mean it never fires — and on a link that confirms nothing,
 that repaint is the only way back from a silent desync.
 
-## Skąd biorą się dane
+## Where the data comes from
 
-`GET /api/stream?account=<uuid>&account=<uuid>` z `Authorization: Bearer`.
-To **jedyny** endpoint przyjmujący token — `/api/status` jest wyłącznie za SSO
-(`backend/app/auth.py:54-89`), więc panel nie ma skąd zrobić pollingu i nie
-potrzebuje go: każda ramka `account` niesie pełną kartę `AccountStatus`, więc
-zgubiona ramka jest nieszkodliwa.
+`GET /api/stream?account=<uuid>&account=<uuid>` with `Authorization: Bearer`.
+This is the **only** endpoint that accepts a token — `/api/status` is SSO-only
+(`backend/app/auth.py:54-89`), so the panel has nowhere to poll from and does
+not need to: every `account` frame carries the full `AccountStatus` card, so a
+lost frame is harmless.
 
-- `bye` po 900 s jest **normalne** — wznawiamy natychmiast, bez migania „brak łącza".
-- Timeout gniazda 35 s (ponad dwa odstępy ping). Bez tego półotwarte TCP przez
-  Apache wisiałoby w nieskończoność, a panel pokazywałby stare liczby z pełnym
-  przekonaniem.
-- Odczyt strumienia idzie przez `read1()`, nie `read()`. `read(n)` czeka na całe
-  `n` bajtów, więc kolejne karty i pingi zostawały w buforze, a panel stał
-  z pierwszą ramką **wyglądając na żywego**.
+- A `bye` after 900 s is **normal** — we reconnect right away, with no "link
+  down" flicker.
+- A 35 s socket timeout (over two ping intervals). Without it a half-open TCP
+  connection through Apache would hang forever, and the panel would keep
+  showing stale numbers with full confidence.
+- Reading the stream goes through `read1()`, not `read()`. `read(n)` waits for
+  the full `n` bytes, so later cards and pings would sit stuck in the buffer,
+  and the panel would stand on the first frame **looking alive**.
 
-## Zablokowana sesja Claude Code
+## A blocked Claude Code session
 
-Panel pokazuje nie tylko zużycie, ale i to, że **Claude na Ciebie czeka**: prośbę
-o zgodę na narzędzie, `AskUserQuestion` albo `ExitPlanMode`. Sygnał zbiera
-`client/usage-probe.py` na maszynie z sesją, wysyła do backendu i ten rozsyła
-go ramką `alert` (`docs/API.md` § 3.2). **Sesja może chodzić na maszynie zdalnej** —
-panel widzi wyłącznie to, co przyszło strumieniem.
+The panel shows not only usage but also the fact that **Claude is waiting on
+you**: a tool permission request, `AskUserQuestion` or `ExitPlanMode`. The
+signal is collected by `client/usage-probe.py` on the machine running the
+session, sent to the backend, which fans it out as an `alert` frame
+(`docs/API.md` § 3.2). **The session can be running on a remote machine** —
+the panel sees only what arrived over the stream.
 
-Prezentacja jest dwustopniowa i to jest decyzja, nie etap:
+The presentation is two-stage, and that is a decision, not a phase:
 
-1. Karta **przejmuje cały ekran** przez `alert_takeover_sec` — liczba sekund (domyślnie
-   300), `0` (od razu znacznik, bez karty) albo `"infinity"` (karta stoi, dopóki nie
-   odpowiesz, i zużycie jest przez ten czas niewidoczne). Układ wybiera **liczba blokad
-   czekających**: jedna — nazwa projektu bohaterem, kafel `Szczegół` i listwa `Tryb`;
-   dwie — dwie równe połowy; trzy — lista z powodem w stałej kolumnie; cztery i więcej —
-   trzy najnowsze plus licznik reszty.
+1. The card **takes over the whole screen** for `alert_takeover_sec` — a number
+   of seconds (300 by default), `0` (the marker right away, no card) or
+   `"infinity"` (the card stands until you answer, and usage is invisible for
+   that whole time). The layout is chosen by the **number of waiting blocks**:
+   one — the project name as the hero, a `Detail` tile and a `Mode` strip; two —
+   two equal halves; three — a list with the reason in a fixed column; four and
+   more — the three newest plus a counter for the rest.
 
-   Przez `alert_flash_sec` karta **miga**, czyli podmienia klatkę pustą na **zalaną
-   akcentem**: pasmo i rail 6 px na lewej krawędzi przechodzą na `ACCENT`, napisy
-   w paśmie na tło. Rail stoi tam **w obu klatkach** — w spoczynkowej w `NEUTRAL_900`,
-   więc zalanie zmienia kolor, a nie układ, i karta ma stałą lewą krawędź także po
-   wygaśnięciu okna. Bez migania karta wchodzi cicho, bo jest ciemna jak reszta ekranu. Wartość to liczba
-   sekund (domyślnie 20), `0` wyłącza, a `"infinity"` miga przez całe życie karty. Zapala
-   się raz na **klucz** blokady, więc tyknięcie „czeka N min" niczym nie miga.
+   For `alert_flash_sec` the card **blinks**, that is, it swaps the blank frame
+   for one **flooded with the accent**: the banner and the 6 px rail on the left
+   edge turn `ACCENT`, and the text in the banner turns to the background color.
+   The rail stands there **in both frames** — in the resting one it is
+   `NEUTRAL_900` — so the flood changes the color, not the layout, and the card
+   keeps a fixed left edge even after the window expires. Without blinking, the
+   card comes in quietly, because it is as dark as the rest of the screen. The
+   value is a number of seconds (20 by default), `0` disables it, and
+   `"infinity"` blinks for the card's whole life. It lights up once per block
+   **key**, so a "waiting N min" tick does not blink anything.
 
-   **Migają dwie klatki, nie animacja w krokach.** Panel przerysowuje się linia po linii,
-   więc klatki pośrednie rozjechałyby się na przebiegu. Zalanie to ~13 % klatki
-   (pasmo plus przemalowany rail), czyli ok. 0,24 s na Turingu i 355 ms na AX206 — oba
-   zdążą w ticku.
-   Pełnoekranowy błysk jest tu strukturalnie niemożliwy: to z definicji pełna klatka,
-   a Turing maluje ją 1,87 s progresywnie (sprawdzone na sprzęcie).
-2. Potem zwija się do **paska akcentu 4 px na lewej krawędzi pasa** konta, które zgłosiło
-   blokadę; nazwa konta przechodzi na `ACCENT_100`, a powód dochodzi wersalikami w linii
-   z nazwą planu. Pasek siedzi w polu marginesu, więc układ pasa nie drga ani o piksel,
-   i ma pełną wysokość pasa. Stan przestaje być *przejmujący*, nie przestaje być
-   *prawdziwy* — zużycie wraca na ekran, a to, że coś czeka, dalej widać.
-   **Czerwieni w projekcie nie ma**: cała sygnalizacja stoi na rampie akcentu.
+   **Two frames blink, not a stepped animation.** The panel repaints line by
+   line, so intermediate frames would tear over the sweep. The flood is ~13 % of
+   the frame (the banner plus the repainted rail), i.e. about 0.24 s on the
+   Turing and 355 ms on the AX206 — both make it within a tick.
+   A full-screen flash is structurally impossible here: that is by definition a
+   full frame, and the Turing paints it progressively over 1.87 s (verified on
+   the hardware).
+2. It then collapses to a **4 px accent bar on the left edge of the account
+   band** that reported the block; the account name turns `ACCENT_100`, and the
+   reason arrives in capitals on the line with the plan name. The bar sits in
+   the margin area, so the band's layout does not shift by a pixel, and it has
+   the band's full height. The state stops being *takeover*, it does not stop
+   being *true* — usage comes back on screen, and the fact that something is
+   waiting is still visible.
+   **There is no red in the project**: all the signalling stands on the accent
+   ramp.
 
-Okno liczy się od `since` z serwera, nie od chwili, w której panel zobaczył wpis:
-inaczej restart panelu wskrzeszałby kartę dla blokady sprzed godziny.
+The window is counted from the server's `since`, not from the moment the panel
+saw the entry: otherwise restarting the panel would resurrect the card for a
+block from an hour ago.
 
-**Okno należy do zbioru, nie do wpisu.** Dopóki którakolwiek czekająca blokada mieści się
-w oknie, karta wypisuje **wszystkie** — także te, które wypaliły się na własnym liczniku.
-Nowa blokada otwiera więc okno dla całego zbioru, a nie tylko dla siebie. Bez tego trzy
-układy z czterech były martwe: dwie blokady musiałyby zacząć się w tym samym
-pięciominutowym oknie, a przy pracy sekwencyjnej to się nie zdarza. Czasu karty na ekranie
-to nie wydłuża — predykat „karta stoi" jest ten sam, zmienia się jej zawartość.
+**The window belongs to the set, not to the entry.** As long as any waiting
+block still fits in the window, the card lists **all** of them — including the
+ones that already burned out on their own counter. A new block therefore opens
+the window for the whole set, not just for itself. Without this, three of the
+four layouts were dead: two blocks would have to start within the same
+five-minute window, and with sequential work that does not happen. It does not
+extend the card's time on screen — the predicate "the card stands" is the
+same, only its content changes.
 
-Wiersze idą **od najmłodszej**; powód nie ma na to wpływu, a wpis bez `since` ląduje na
-końcu. Każda blokada była już pokazana solo, gdy wchodziła, więc przy obcięciu do trzech
-wierszy warte pokazania są te, których jeszcze nie widziałeś. Po restarcie panelu obowiązuje
-to samo w drugą stronę: sam restart karty nie wskrzesza, ale pierwsza świeża blokada wciągnie
-na nią także wpisy sprzed godzin.
+Rows go **newest first**; the reason has no effect on this, and an entry
+without `since` lands at the end. Every block was already shown solo when it
+came in, so when truncating to three rows the ones worth showing are the ones
+you have not seen yet. After a panel restart the same rule applies in reverse:
+a restart alone does not resurrect the card, but the first fresh block will
+pull in entries from hours earlier too.
 
-- **`blocked_debounce_sec` (2 s)** — ile blokada musi trwać, zanim karta wejdzie.
-  Bez tego zgoda udzielona od razu dawałaby błysk pełnego ekranu.
-- **`blocked_linger_sec` (10 s)** — ile karta zostaje po zniknięciu blokady,
-  **zamrożona**. Zamrożenie jest istotne: bez niego „czeka N min" tykałoby dalej na
-  prompcie, na który już odpowiedziałeś, a każdy przeskok tego napisu to pełna
-  klatka na AX206.
-- **`session_alerts: false`** wyłącza całość — ramka jest wtedy ignorowana i panel
-  zachowuje się dokładnie jak przedtem. To flaga **wyświetlania**; źródło gasi się
-  osobno, kluczem `session_status` w `config.json` na maszynie z sesją. Dwie flagi,
-  bo to bywają dwie różne maszyny.
+- **`blocked_debounce_sec` (2 s)** — how long a block must last before the card
+  comes in. Without it, permission granted right away would give a full-screen
+  flash.
+- **`blocked_linger_sec` (10 s)** — how long the card stays after the block is
+  gone, **frozen**. Freezing matters: without it, "waiting N min" would keep
+  ticking on a prompt you already answered, and every jump of that text is a
+  full frame on the AX206.
+- **`session_alerts: false`** turns the whole feature off — the frame is then
+  ignored and the panel behaves exactly as before. This is a **display** flag;
+  the source is switched off separately, with the `session_status` key in
+  `config.json` on the machine running the session. Two flags, because those
+  can be two different machines.
 
-Alert **bez dopasowania** do żadnego skonfigurowanego konta ląduje na pasie
-**górnym**. Reguła jest celowo prosta: statyczne mapowanie maszyna → pas rozjechałoby
-się po pierwszym `/login`, a przełączanie kont jest tu rutyną. Konto bierze się
-z `oauthAccount.accountUuid` odczytanego na maszynie z sesją — zasada 7 projektu.
+An alert **with no match** to any configured account lands on the **top**
+band. The rule is deliberately simple: a static machine → band mapping would
+drift out of sync after the first `/login`, and switching accounts is routine
+here. The account comes from `oauthAccount.accountUuid` read on the machine
+running the session — rule 7 of the project.
 
-Czas czekania jest **gruboziarnisty** („chwilę" / „4 min" / „1 h 05 min" / „2 d 3 h")
-i to nie jest kwestia gustu: AX206 nie umie wycinków, więc każda zmiana napisu to
-pełne 355 ms, a sekundy zamieniłyby ~2,5 % obciążenia USB w ~35 % na cały czas
-trwania karty. Żywego zegara na karcie nie ma — godzina w banerze to statyczny moment
-pojawienia się promptu, a dokładniej początek **najstarszego czekania na ekranie**.
-Że wiersze idą od najmłodszej, zwykle nie jest to moment tej blokady, która właśnie weszła:
-pasmo mówi, jak długo to wszystko już stoi, a pierwszy wiersz — co doszło ostatnio.
+The waiting time is **coarse-grained** ("a moment" / "4 min" / "1 h 05 min" /
+"2 d 3 h"), and that is not a matter of taste: the AX206 cannot do partial
+updates, so every change to the text is a full 355 ms, and seconds would turn
+~2.5 % USB load into ~35 % for the card's whole time on screen. There is no
+live clock on the card — the hour in the banner is the static moment the
+prompt appeared, more precisely the start of the **oldest wait on screen**.
+Since rows go newest first, that is usually not the moment of the block that
+just came in: the banner says how long all of this has already been standing,
+and the first row says what arrived most recently.
 
-Projekt karty i wszystkie cztery układy opisuje `docs/PANEL-ALERT-HANDOUT.md`,
-z obrazami przepuszczonymi przez kwantyzację panelu. Podgląd bez sprzętu:
+The card's design and all four layouts are described in
+`docs/PANEL-ALERT-HANDOUT.md`, with images pushed through the panel's
+quantization. A preview without hardware:
 
 ```
 python tools/render-png.py --alert solo   --zoom 3 --rgb565 --out ../docs/handout/card-solo.png
@@ -284,147 +312,156 @@ python tools/render-png.py --marker lower --zoom 3 --rgb565 --out ../docs/handou
 python tools/render-png.py                --zoom 3 --rgb565 --out ../docs/handout/bands-no-alert.png
 ```
 
-Gdyby alert się zawiesił, furtka jest na maszynie z sesją, nie tutaj:
-`del %LOCALAPPDATA%\claude-usage-monitor\session-status\*`.
+If an alert got stuck, the escape hatch is on the machine running the session,
+not here: `del %LOCALAPPDATA%\claude-usage-monitor\session-status\*`.
 
-## Odświeżanie
+## Refreshing
 
-Tick co sekundę, ale na ekran leci **tylko to, co się różni**. Ile z tego wynika,
-zależy od sprzętu: AX206 rysuje wyłącznie pełne klatki, więc oszczędnością jest
-niewysłanie identycznej (zmierzone w spoczynku: 3 klatki na 45 s, ~2,5 % czasu na
-USB); ekran szeregowy przyjmuje prostokąty, więc typowy tick to ~1,5 kB zamiast
-307 kB.
+A tick every second, but **only what differs** goes to the screen. How much
+that buys depends on the hardware: the AX206 draws full frames only, so the
+saving is in not sending an identical one (measured at rest: 3 frames per
+45 s, ~2.5 % of USB time); the serial screen accepts rectangles, so a typical
+tick is ~1.5 kB instead of 307 kB.
 
-Sekundy zostają tam, gdzie są w makiecie: w odliczaniu poniżej godziny i w wieku
-odczytu poniżej minuty. Wchodzą dokładnie wtedy, gdy pracujesz — a wtedy są
-najbardziej potrzebne. Poza pracą wartości same wchodzą w minuty i godziny,
-i panel milknie. Wyjątkiem jest zegar w nagłówku: tyka niezależnie od pracy,
-więc pokazuje HH:MM.
+Seconds stay where they are in the mockup: in the countdown below an hour, and
+in the reading age below a minute. They come in exactly when you are working —
+which is when they are most needed. Outside work the values roll into minutes
+and hours on their own, and the panel goes quiet. The exception is the clock
+in the header: it ticks independent of work, so it shows HH:MM.
 
-## Zasady rysowania, których nie wolno uprościć
+## Drawing rules that must not be simplified
 
-- **Panel nie ma osobnych stanów świeżości w rysunku.** Aktualność niesie
-  w całości etykieta wieku odczytu przy koncie. Gdy backend nie zna bieżącej
-  wartości (`utilization: null`, konto milczy dłużej niż `CLIENT_SILENT_SEC`),
-  panel pokazuje **ostatni pomiar** (`rawUtilization`) jak każdą inną liczbę,
-  a „12 h temu" obok mówi, ile jest wart.
-- **Nigdy zero zamiast braku wiedzy** (zasada 4 z `AGENTS.md`) — powyższe tę
-  zasadę wzmacnia, nie osłabia: konto, które milczy od 12 h z tygodniem na 100 %,
-  pokazuje 100 %, a nie uspokajające zero. Kreskowany tor ze skosem i słowa
-  `nie wiem` zostają wyłącznie dla serii, która **nigdy** nie miała pomiaru —
-  tam faktycznie nie ma czego narysować, a znak `%` wtedy znika („nie wiem %"
-  to realna pułapka).
-- **Plan zawsze widoczny.** „40 %" znaczy co innego na Max 20× niż na miejscu
-  Team. Nieznany tier pokazuje się surowo, zamiast zniknąć (zasada 5).
-- **Wiek liczymy z `confirmedAt`, nigdy z `capturedAt`** — dedup nie zapisuje
-  próbki przy niezmienionej wartości, więc `capturedAt` bywa o godziny starsze.
-- **Odliczanie kotwiczy się na `serverNow`**, lokalnie tylko tyka. Kotwica siedzi
-  na `time.monotonic()`, więc skok NTP nie przesunie countdownów.
-- **Znacznik łącza różni się rysunkiem, nie kolorem** (kropka / pierścień /
-  przekreślony). Gdy strumień padnie, wiek odczytu rośnie obu kontom naraz
-  i wygląda to identycznie jak „przestałeś pracować".
+- **The panel has no separate freshness states in the drawing.** Currency is
+  carried entirely by the reading-age label next to the account. When the
+  backend does not know the current value (`utilization: null`, the account
+  has been silent longer than `CLIENT_SILENT_SEC`), the panel shows the **last
+  measurement** (`rawUtilization`) like any other number, and the "12 h ago"
+  next to it says what it is worth.
+- **Never zero instead of not knowing** (rule 4 in `AGENTS.md`) — the above
+  reinforces that rule, it does not weaken it: an account silent for 12 h with
+  a week at 100 % shows 100 %, not a reassuring zero. The hatched track with a
+  diagonal and the words `unknown` are reserved for a series that **never**
+  had a measurement — there there really is nothing to draw, and the `%` sign
+  then disappears ("unknown %" is a real pitfall).
+- **The plan is always visible.** "40 %" means something different on Max 20×
+  than on a Team seat. An unknown tier is shown raw, rather than disappearing
+  (rule 5).
+- **Age is counted from `confirmedAt`, never from `capturedAt`** — dedup does
+  not store a sample when the value is unchanged, so `capturedAt` can be hours
+  older.
+- **The countdown anchors on `serverNow`**, and only ticks locally. The anchor
+  sits on `time.monotonic()`, so an NTP jump will not shift the countdowns.
+- **The link marker differs by shape, not color** (dot / ring / crossed out).
+  When the stream drops, the reading age grows on both accounts at once, and
+  it looks identical to "you stopped working".
 
-## Instalacja
+## Installation
 
 ```powershell
-.\deploy\install-task.ps1          # venv poza repo + zadanie na logowanie
+.\deploy\install-task.ps1          # venv outside the repo + logon scheduled task
 .\deploy\install-task.ps1 -Uninstall
 ```
 
-Konfiguracja: `%LOCALAPPDATA%\claude-usage-monitor\panel.json` — ten sam katalog
-co `config.json` sondy, ale **osobny plik**: token strumienia ma inny zakres niż
-token ingestu, a plik sondy bywa nadpisywany przy jej aktualizacji.
+Configuration: `%LOCALAPPDATA%\claude-usage-monitor\panel.json` — the same
+directory as the probe's `config.json`, but a **separate file**: the stream
+token has a different scope than the ingest token, and the probe's file gets
+overwritten when it is updated.
 
 ```json
 {
   "stream_url": "https://usage.example.org/claude-usage/api/stream",
-  "stream_token": "<wpis z STREAM_TOKENS o etykiecie panel>",
+  "stream_token": "<the STREAM_TOKENS entry labeled panel>",
   "account_1": {"uuid": "...", "name": "you@example.org"},
   "account_2": {"uuid": "...", "name": "billing@example.org"},
   "panels": [
     {"backend": "ax206",        "port_path": "3.4", "brightness": 5},
-    {"backend": "turing-rev-a", "port_path": "8.4", "brightness": 40, "name": "prawy",
+    {"backend": "turing-rev-a", "port_path": "8.4", "brightness": 40, "name": "right",
      "rotate": 180}
   ]
 }
 ```
 
-**`rotate` mówi, jak ekran wisi**, w stopniach przeciwnie do ruchu wskazówek
-zegara, **doliczane do obrotu, który sterownik i tak stosuje** (`turing-rev-a` ma
-własne 90°, więc `180` daje 270°). Wolno **tylko `0` albo `180`** — ćwierć obrotu
-wymagałaby układu pionowego 320×480, a rysowany jest jeden układ 3:2; sama zmiana
-kąta dałaby albo skalowanie (ten układ to włoskowate linie, nie przetrwa go),
-albo ładunek o długości, która nie pasuje do prostokąta. Pominięte znaczy `0`.
-Do sprawdzenia bez zmiany pliku: `python -m panel --identify turing-rev-a#0
---rotate 180`.
+**`rotate` says how the screen hangs**, in degrees counter-clockwise, **added
+on top of the rotation the driver applies anyway** (`turing-rev-a` has its own
+90°, so `180` gives 270°). Only **`0` or `180`** are allowed — a quarter turn
+would need a portrait 320×480 layout, and only one 3:2 layout is drawn;
+changing the angle alone would give either scaling (this layout is hairline
+strokes, it would not survive that) or a payload whose length does not fit the
+rectangle. Omitted means `0`. To check without changing the file:
+`python -m panel --identify turing-rev-a#0 --rotate 180`.
 
-**Jasność jest per ekran, bo skale są nieporównywalne**: `ax206` to 0..7
-(właściwość firmware'u), `turing-rev-a` to 0..100 %. Pominięta znaczy „domyślna
-tego sterownika". Górne `brightness` obok `panels` jest **błędem konfiguracji**,
-nie kompromisem — `5` znaczyłoby środek zakresu na jednym ekranie i prawie
-zgaszony na drugim.
+**Brightness is per screen, because the scales do not compare**: `ax206` is
+0..7 (a firmware property), `turing-rev-a` is 0..100 %. Omitted means "this
+driver's default". A top-level `brightness` next to `panels` is a
+**configuration error**, not a compromise — `5` would mean mid-range on one
+screen and nearly off on the other.
 
-**Stary kształt (`"device": {...}` + górne `brightness`) nadal działa** i zamienia
-się w jednoelementową listę `ax206`. Wolno go zmigrować, bo miał dokładnie jedno
-możliwe znaczenie — był jeden sterownik. To jest różnica wobec `location`, gdzie
-niewiarygodna była sama wartość. `device` i `panels` naraz to błąd: scalanie
-znaczyłoby zgadywanie. Nieznany klucz w selektorze też jest błędem — kiedyś nie
-pasował do niczego i cicho spadał do „jedyne, co widać".
+**The old shape (`"device": {...}` plus a top-level `brightness`) still
+works** and turns into a one-entry `ax206` list. It is allowed to migrate it,
+because it had exactly one possible meaning — there was one driver. That is
+the difference from `location`, where the value itself was untrustworthy.
+`device` and `panels` together is an error: merging them would mean guessing.
+An unknown key in the selector is also an error — it used to match nothing
+and silently fall through to "the only thing visible".
 
-**Konta to dwa nazwane pola, nie lista** — kształt konfiguracji jest tu kształtem
-ekranu, więc trzeciego konta nie da się dopisać przez nieuwagę. Po `/login` na
-nowe konto trzeba wskazać je tutaj i zrestartować klienta: subskrypcja ustala się
-przy nawiązaniu połączenia, a SSE nie ma kanału zwrotnego.
+**Accounts are two named fields, not a list** — the shape of the
+configuration is the shape of the screen here, so a third account cannot be
+added by inattention. After `/login` to a new account you have to point at it
+here and restart the client: the subscription is fixed when the connection is
+made, and SSE has no back-channel.
 
-**Panel wskazuje się w konfiguracji i klient nigdy nie sięga po inny.** Docelowo
-na magistrali będą dwa takie same moduły (jeden pod innym programem) i oba mają ten sam
-numer seryjny `WCH32` — to stała firmware'u, nie numer egzemplarza. Windows
-wyprowadza z tego seryjnego zarówno ID instancji (`USB\VID_1908&PID_0102\WCH32`),
-jak i `ContainerID`, więc **obie te wartości będą dla dwóch modułów identyczne**
-i jako selektory nie odróżniają niczego.
+**The screen is pointed at in the configuration, and the client never reaches
+for another one.** Eventually there will be two identical modules on the bus
+(one under a different program), and both carry the same `WCH32` serial
+number — that is a firmware constant, not a per-unit number. Windows derives
+both the instance ID (`USB\VID_1908&PID_0102\WCH32`) and the `ContainerID`
+from that serial, so **both of those values will be identical for the two
+modules** and, as selectors, do not tell them apart at all.
 
-Kluczem jest więc `port_path` — łańcuch portów, np. `"3.4"`: port 3 kontrolera,
-port 4 huba na tym porcie. Trzy rzeczy, które o nim wiedzieć:
+The key is therefore `port_path` — a port chain, e.g. `"3.4"`: port 3 of the
+controller, port 4 of the hub on that port. Three things to know about it:
 
-- **Nie zawiera licznika enumeracji.** Poprzednia wersja brała
-  `LocationInformation` z rejestru (`"Port_#0004.Hub_#0005"`), gdzie `Hub_#NNNN`
-  jest indeksem instancji huba nadawanym przy wykrywaniu. Ten indeks przeskoczył
-  przy nieruszonej wtyczce i klient przestał widzieć swój moduł. Stary
-  `"location"` w `panel.json` kończy się teraz **czytelnym błędem konfiguracji**
-  z instrukcją, nie cichą migracją.
-- **Numer magistrali do klucza nie wchodzi** — jest syntetycznym indeksem
-  kontrolera, czyli tej samej natury co `Hub_#`. `--list` go pokazuje jako
-  diagnostykę. Gdyby dwa moduły dały ten sam łańcuch (możliwe tylko przy dwóch
-  kontrolerach USB o tym samym numerze portu), wybór kończy się błędem —
-  nigdy strzałem na chybił trafił.
-- **Przełożenie wtyczki zmienia klucz.** To nieuniknione przy identyfikacji po
-  topologii, dlatego `--list` wypisuje gotową linię do wklejenia.
+- **It contains no enumeration counter.** The previous version took
+  `LocationInformation` from the registry (`"Port_#0004.Hub_#0005"`), where
+  `Hub_#NNNN` is a hub instance index assigned at detection. That index jumped
+  with the plug untouched, and the client stopped seeing its module. The old
+  `"location"` in `panel.json` now ends in a **readable configuration error**
+  with instructions, not a silent migration.
+- **The bus number does not enter the key** — it is a synthetic index of the
+  controller, the same nature as `Hub_#`. `--list` shows it as diagnostics.
+  Should two modules give the same chain (possible only with two USB
+  controllers sharing the same port number), the selection ends in an error —
+  never a shot in the dark.
+- **Moving the plug changes the key.** That is unavoidable when identifying by
+  topology, which is why `--list` prints a ready line to paste in.
 
-Zmierzone: `ports=(3,4)` zgadza się co do liczby z `DEVPKEY_Device_LocationPaths`
-(`...#USB(3)#USB(4)`) i przeżywa reset urządzenia mimo skaczącego adresu USB.
-Sprawdzone dla **jednego** modułu naraz. Różnica
-wobec poprzedniej wersji jest jednak jakościowa: nie ma już czego z czym parować,
-bo łańcuch przychodzi z tej samej enumeracji co otwierany uchwyt. Który moduł na
-biurku jest który, i tak rozstrzyga wyłącznie `--identify` — tego żaden odczyt
-nie załatwi.
+Measured: `ports=(3,4)` matches the count from `DEVPKEY_Device_LocationPaths`
+(`...#USB(3)#USB(4)`) and survives a device reset despite the USB address
+jumping. Verified for **one** module at a time. The difference from the
+previous version is qualitative, though: there is no longer anything to pair
+up, because the chain comes from the same enumeration as the handle being
+opened. Which module on the desk is which is, either way, settled only by
+`--identify` — no reading resolves that.
 
-Instalator przyjmuje liczbę ekranów: `.\deploy\install-task.ps1 -Panels 2`. Bez
-niej „OK" po pierwszej linii z logu znaczyłoby „rysuje jeden z dwóch". Skrypt
-celowo nie czyta `panel.json` — przy pierwszej instalacji tego pliku jeszcze nie ma.
+The installer accepts a screen count: `.\deploy\install-task.ps1 -Panels 2`.
+Without it, "OK" after the first line from the log would mean "drawing one out
+of two". The script deliberately does not read `panel.json` — on a first
+install that file does not exist yet.
 
-Zadanie harmonogramu musi mieć „uruchom **tylko gdy użytkownik jest zalogowany**"
-(dysk sieciowy jest mapowany per sesja, a USB wymaga sesji interaktywnej) i wyłączone
-„zatrzymaj po 3 dniach" — domyślnie włączone, zabijałoby panel co tydzień.
+The scheduled task must have "run **only when the user is logged on**" (the
+network drive is mapped per session, and USB requires an interactive session)
+and "stop after 3 days" turned off — enabled by default, it would kill the
+panel every week.
 
-## Diagnostyka
+## Diagnostics
 
-| objaw | gdzie patrzeć |
+| symptom | where to look |
 |---|---|
-| panel czarny / stara treść | `panel.log`; czy zadanie chodzi; czy inny program nie trzyma modułu |
-| „panel zajęty przez inny proces" | inny program albo drugi egzemplarz klienta |
-| `missed_csw` rośnie | wysłaliśmy złą liczbę bajtów — błąd w kodzie, nie w sprzęcie (tylko AX206; ekran szeregowy nic nie potwierdza) |
-| ekran szeregowy: kolory zamienione, obraz „przesunięty" | rozjazd bajtowy po urwanym zapisie. Pełne przemalowanie tego **nie** naprawia — wypnij i wepnij wtyczkę |
-| jeden ekran rysuje, drugi nie | każdy panel ma własny backoff; szukaj w logu linii z jego tagiem (`turing-rev-a 8.4: …`) |
-| liczby stoją, wiek rośnie | strumień żyje, ale sonda milczy — to poprawny obraz |
-| „nie wiem" na obu kontach | brak ramek; sprawdź token i UUID-y w `panel.json` |
-| twarda awaria bez śladu | `panel.log.fault` (faulthandler — nie ma konsoli pod `pythonw`) |
+| panel black / stale content | `panel.log`; is the task running; is another program not holding the module |
+| "panel held by another process" | another program or a second instance of the client |
+| `missed_csw` rising | we sent the wrong byte count — a bug in the code, not in the hardware (AX206 only; the serial screen confirms nothing) |
+| serial screen: colors swapped, image "shifted" | byte drift after a torn write. A full repaint does **not** fix this — unplug and replug the screen |
+| one screen draws, the other does not | each panel has its own backoff; look in the log for the line with its tag (`turing-rev-a 8.4: …`) |
+| numbers stand still, age keeps rising | the stream is alive, but the probe is silent — that is the correct picture |
+| "unknown" on both accounts | no frames; check the token and the UUIDs in `panel.json` |
+| a hard failure with no trace | `panel.log.fault` (faulthandler — there is no console under `pythonw`) |
