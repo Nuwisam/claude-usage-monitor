@@ -54,7 +54,7 @@ export function useStatus() {
 }
 
 /** A one-second tick for the countdowns. Separate from the query, because a countdown has to
- *  run every second while data arrives every 15 s — otherwise the meter would jump by 15 s. */
+ *  run every second while data arrives every 15 s — otherwise the countdown would jump by 15 s. */
 export function useTick(intervalMs = 1000): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {

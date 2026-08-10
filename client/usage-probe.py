@@ -141,8 +141,9 @@ def _find(name, in_claude_dir=False):
 
 def _extract_block(text, key):
     """Cuts out the balanced {...} block after a key. Immune to duplicate keys differing
-    only in letter case (c:/... and C:/...), on which whole-file parsers fail —
-    ~/.claude.json REALLY does have such keys, json.load() over the whole file trips on them.
+    only in letter case (the same path spelled with the drive letter in both cases), on which
+    whole-file parsers fail — ~/.claude.json REALLY does have such keys, json.load() over the
+    whole file trips on them.
 
     Two callers: `read_claude_json` (account identity and measurement cache) and
     `account_uuid` from the alert section (which panel band the marker lands on). Before

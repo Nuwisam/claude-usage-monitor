@@ -23,7 +23,7 @@ libusb==1.0.29.post7
 # Bump it deliberately, once it stops trusting your server's certificate chain.
 certifi==2026.7.22
 # pyserial drives the SECOND screen (Turing rev A on a CH340). The version is pinned
-# also because the driver reads one private thing from it: the byte meter
+# also because the driver reads one private thing from it: the byte count
 # from `_overlapped_write.InternalHigh` after a write that timed out. Without it there
 # is no way to push through the exact remainder of a truncated bitmap, and that is the
 # only known way out of a desync on a link that acknowledges nothing.

@@ -139,7 +139,7 @@ class UsageSeries(Base):
 # --------------------------------------------------------------------------- ingest
 class RawPayload(Base):
     """Content-addressed. The probe polls every ~120 s, and while nothing is happening the
-    response is byte-identical — the hash folds that into one row and a meter. This is dedup,
+    response is byte-identical — the hash folds that into one row and a counter. This is dedup,
     NOT compaction: every batch still points at its own exact body."""
     __tablename__ = "raw_payloads"
 

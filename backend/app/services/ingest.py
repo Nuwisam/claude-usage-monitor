@@ -150,7 +150,7 @@ async def get_or_create_series(db: AsyncSession, o: Observation,
 
 async def store_raw(db: AsyncSession, usage: Any) -> tuple[RawPayload, str]:
     """Content-addressed — while idle the response is byte-identical, so instead of
-    thousands of copies we have one row and a meter."""
+    thousands of copies we have one row and a counter."""
     body = json.dumps(usage, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
     rp = (await db.execute(select(RawPayload).where(RawPayload.sha256 == digest))).scalar_one_or_none()

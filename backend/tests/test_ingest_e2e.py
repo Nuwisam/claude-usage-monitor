@@ -494,7 +494,7 @@ async def test_swiezosc_liczy_sie_z_potwierdzenia_a_nie_z_probki(db):
 
 async def test_value_since_nie_przesuwa_sie_przy_niezmienionej_wartosci(db, monkeypatch):
     """"Unchanged since" must point at the start of the constant value. Were a heartbeat
-    write to move it, the meter would reset on every heartbeat and show an untruth."""
+    write to move it, the counter would reset on every heartbeat and show an untruth."""
     monkeypatch.setattr(settings, "sample_heartbeat_sec", 60)
     t0 = _t0(600)
     await send(db, payload(captured_at=t0))

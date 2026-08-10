@@ -152,7 +152,7 @@ HTTP 200 i poprawnie wyglądającej odpowiedzi. Oba typy leżą obok siebie w `a
 | szczebel | rung |
 | miernik | meter |
 | wycofany | withdrawn |
-| licznik | meter (NOT "counter") |
+| licznik | Decide by referent. **meter** only for the usage meter an organization can withdraw — the thing `meter_withdrawn` names, that goes dark, works, tells the truth or has a threshold. Otherwise the ordinary English word for the referent: **counter** for a tally that increments (`seen_count`, a loop or retry counter), **count** for a plain number of things, **countdown** for time running down. Test: if "withdrawn" could not be said of it, it is not a meter. |
 | blokada | block |
 | zgoda | permission (the concept, matching the `permission` reason key). The panel's `SHORT` display value is `ALLOW`: measured 39 px against `AlertList.REASON_W = 58`, where `PERMISSION` is 66 px and `APPROVAL` 59 px and both overflow. |
 | kredyty | credits |

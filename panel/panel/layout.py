@@ -268,7 +268,7 @@ class AlertMany(AlertList):
     step and the tool disappears: with five blocks the detail of any one of them is
     arbitrary, so in its place the footer counts the rest and lists them by name.
 
-    The meter in the banner counts ALL of them, not only the ones written out."""
+    The counter in the banner counts ALL of them, not only the ones written out."""
 
     FOOTER_H = 38           # one line instead of two, because here the footer has no label above the text
     F_PROJECT = 17

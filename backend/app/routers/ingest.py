@@ -154,7 +154,7 @@ async def ingest(
         for entry in backlog[: settings.max_backlog_entries]:
             if not isinstance(entry, dict):
                 # Counted, even though not written. `accepted` is a POSITION, not a
-                # success meter: skipping it without an increment shifts the numbering
+                # success counter: skipping it without an increment shifts the numbering
                 # of every later entry and the probe trims the wrong piece of the
                 # spool — losing data, or sending it twice. Such an entry can never be
                 # written, so owning up to it is correct.
