@@ -78,6 +78,6 @@ function statsLabel(points: Parameters<typeof statsOf>[0] | undefined, loading: 
   if (!points) return "";
   const s = statsOf(points);
   if (!s) return "no data in the range";
-  const n = s.n.toLocaleString("pl-PL");
+  const n = s.n.toLocaleString("en-US");
   return `min ${pct(s.min)} · max ${pct(s.max)} · last ${pct(s.last) ?? "—"} · n = ${n}`;
 }

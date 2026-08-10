@@ -62,7 +62,7 @@ Celowo plik lokalny, a nie repo — token maszyny nie ma prawa trafic do gita.
 """
 import sys, os, json, time, re
 
-SCRIPT_VERSION = 11
+SCRIPT_VERSION = 12
 
 # Znacznik dziedziczony przez proces potomny. `claude -p "/usage"` to normalna sesja
 # Claude Code — odpali hook Stop, ktory odpali sonde, ktora odpalilaby kolejnego
@@ -1263,10 +1263,10 @@ def publish(cfg):
         pass
 
 
-# --------------------------------------------------------------- toast lokalny
-TOAST_TITLES = {"permission": "Claude czeka na zgodę",
-                "question": "Claude ma pytanie",
-                "plan": "Claude czeka na akceptację planu"}
+# --------------------------------------------------------------- local toast
+TOAST_TITLES = {"permission": "Claude is waiting for permission",
+                "question": "Claude has a question for you",
+                "plan": "Claude is waiting for plan approval"}
 
 
 def _xml(s):
@@ -1289,7 +1289,7 @@ def toast(reason, project, detail):
     if os.name != "nt":
         return
     import base64, subprocess
-    line1 = TOAST_TITLES.get(reason, "Claude czeka na Ciebie")
+    line1 = TOAST_TITLES.get(reason, "Claude is waiting for you")
     line2 = project or ""
     if detail:
         line2 = ("%s — %s" % (line2, detail))[:90] if line2 else detail[:90]
