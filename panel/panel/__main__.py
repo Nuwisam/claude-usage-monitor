@@ -128,21 +128,21 @@ def cmd_probe(args):
         img, d = draw.new_canvas((width, height))
         f_head = draw.font(18)
         f_body = draw.font(13)
-        d.text((14, 10), "%s — karta testowa" % caps.name.upper(),
+        d.text((14, 10), "%s — test card" % caps.name.upper(),
                font=f_head, fill=theme.TEXT)
 
-        bars = [("wartosc jest", SeriesView(measured=True, bar_pct=62, full=False,
-                                            hatch=False, stub=False,
-                                            ghost=False, ghost_pct=0)),
-                ("100% — koniec", SeriesView(measured=True, bar_pct=100, full=True,
-                                             hatch=False, stub=False,
-                                             ghost=False, ghost_pct=0)),
-                ("reset wywnioskowany", SeriesView(measured=False, bar_pct=0, full=False,
-                                                   hatch=False, stub=True,
-                                                   ghost=False, ghost_pct=0)),
-                ("nie wiem", SeriesView(measured=False, bar_pct=0, full=False,
-                                        hatch=True, stub=False,
-                                        ghost=True, ghost_pct=42))]
+        bars = [("measured", SeriesView(measured=True, bar_pct=62, full=False,
+                                        hatch=False, stub=False,
+                                        ghost=False, ghost_pct=0)),
+                ("100% — end", SeriesView(measured=True, bar_pct=100, full=True,
+                                          hatch=False, stub=False,
+                                          ghost=False, ghost_pct=0)),
+                ("inferred reset", SeriesView(measured=False, bar_pct=0, full=False,
+                                              hatch=False, stub=True,
+                                              ghost=False, ghost_pct=0)),
+                ("unknown", SeriesView(measured=False, bar_pct=0, full=False,
+                                       hatch=True, stub=False,
+                                       ghost=True, ghost_pct=42))]
         y = 44
         for label, v in bars:
             d.text((14, y), label, font=f_body, fill=theme.TEXT_60)

@@ -1,11 +1,11 @@
-"""Paleta — z frontend/src/styles/theme.css, jako krotki RGB.
+"""Palette — from frontend/src/styles/theme.css, as RGB tuples.
 
-W CSS polprzezroczystosci robi `color-mix(... , transparent)`. Panel rysuje na
-nieprzezroczystym tle, wiec mieszamy z gory: `mix()` daje gotowy kolor i w czasie
-rysowania nie ma zadnej alfy.
+In CSS the translucency is done by `color-mix(... , transparent)`. The panel draws on
+an opaque background, so we mix up front: `mix()` yields a finished color and at draw
+time there is no alpha at all.
 
-Wszystkie pary tlo/pierwszy plan musza przezyc kwantyzacje RGB565 (5/6/5) —
-pilnuje tego tests/test_render.py::test_kolory_przezywaja_kwantyzacje.
+Every background/foreground pair has to survive RGB565 (5/6/5) quantization —
+tests/test_render.py::test_kolory_przezywaja_kwantyzacje holds it to that.
 """
 
 BG = (0x1C, 0x1B, 0x19)
@@ -29,46 +29,47 @@ NEUTRAL_100 = (0xD6, 0xD2, 0xC6)
 
 
 def mix(fg, pct, bg=BG):
-    """`color-mix(in srgb, fg pct%, transparent)` polozony na `bg`."""
+    """`color-mix(in srgb, fg pct%, transparent)` laid over `bg`."""
     k = pct / 100.0
     return tuple(int(round(f * k + b * (1 - k))) for f, b in zip(fg, bg))
 
 
-# Nazwane odcienie z makiety 4a — trzymane tutaj, zeby w draw.py i render.py
-# nie bylo ani jednej surowej liczby procentowej.
-TEXT_78 = mix(TEXT, 78)     # zegar
-TEXT_70 = mix(TEXT, 70)     # podpis resetu sesji
-TEXT_62 = mix(TEXT, 62)     # narzedzie i maszyna na karcie 1a
-TEXT_60 = mix(TEXT, 60)     # etykieta tygodnia, podpis resetu tygodnia
-TEXT_58 = mix(TEXT, 58)     # to samo w polowce karty 1b — ciasniej, wiec ciszej
-TEXT_55 = mix(TEXT, 55)     # znak procenta
-TEXT_52 = mix(TEXT, 52)     # wiek odczytu
-TEXT_50 = mix(TEXT, 50)     # plan, etykieta kredytow gdy nie sa biezace
-TEXT_45 = mix(TEXT, 45)     # limit kredytow
+# Named shades from mockup 4a — kept here so that draw.py and render.py do not
+# carry a single raw percentage figure.
+TEXT_78 = mix(TEXT, 78)     # clock
+TEXT_70 = mix(TEXT, 70)     # session reset caption
+TEXT_62 = mix(TEXT, 62)     # tool and machine on card 1a
+TEXT_60 = mix(TEXT, 60)     # week label, week reset caption
+TEXT_58 = mix(TEXT, 58)     # the same on the half-card 1b — tighter, so quieter
+TEXT_55 = mix(TEXT, 55)     # percent sign
+TEXT_52 = mix(TEXT, 52)     # reading age
+TEXT_50 = mix(TEXT, 50)     # plan, credits label when they are not the current one
+TEXT_45 = mix(TEXT, 45)     # credits limit
 TEXT_40 = mix(TEXT, 40)
-TEXT_28 = mix(TEXT, 28)     # kontur kreskowany
+TEXT_28 = mix(TEXT, 28)     # dashed outline
 TEXT_26 = mix(TEXT, 26)
-TEXT_25 = mix(TEXT, 25)     # tor kredytow gdy brak danych
-TEXT_10 = mix(TEXT, 10)     # skos w konturze
-DIVIDER = mix(TEXT, 14)     # separator pasow
-GHOST = mix(TEXT, 45)       # kreska ostatniego pomiaru
+TEXT_25 = mix(TEXT, 25)     # credits track when there is no data
+TEXT_10 = mix(TEXT, 10)     # the diagonal hatching inside the outline
+DIVIDER = mix(TEXT, 14)     # band separator
+GHOST = mix(TEXT, 45)       # tick mark of the last measurement
 
-# Odcienie polozone na INNYM tle niz `BG`.
+# Shades laid on a background OTHER than `BG`.
 #
-# W CSS `color-mix(..., transparent)` miesza sie z tym, co akurat jest pod spodem, wiec
-# ten sam procent nad kaflem `Szczegół` i nad tlem karty to DWA ROZNE kolory. Panel nie
-# ma alfy — miesza z gory — wiec kazda para (procent, tlo) musi byc osobna stala.
-# Uzycie tu `TEXT_45` zamiast `TEXT_45_SURFACE` nie jest zaokragleniem: roznica tel to
-# (5, 4, 4), czyli po kwantyzacji 5/6/5 slychac ja na kanale zielonym.
-TEXT_78_SURFACE = mix(TEXT, 78, SURFACE)    # tresc w kaflu `Szczegół`
-TEXT_45_SURFACE = mix(TEXT, 45, SURFACE)    # etykieta w tym kaflu
-TEXT_72_SUNKEN = mix(TEXT, 72, SUNKEN)      # szczegol najnowszej w stopce listy
-TEXT_70_SUNKEN = mix(TEXT, 70, SUNKEN)      # wartosc w listwie `Tryb`
-TEXT_62_SUNKEN = mix(TEXT, 62, SUNKEN)      # nazwy reszty w stopce ukladu 1d
-TEXT_45_SUNKEN = mix(TEXT, 45, SUNKEN)      # etykiety w listwie i w stopce
+# In CSS `color-mix(..., transparent)` mixes with whatever happens to be underneath, so
+# the same percentage over the `Detail` tile and over the card's background are TWO
+# DIFFERENT colors. The panel has no alpha — it mixes up front — so every pair
+# (percentage, background) has to be its own constant. Using `TEXT_45` here instead of
+# `TEXT_45_SURFACE` is not a rounding: the backgrounds differ by (5, 4, 4), which after
+# 5/6/5 quantization still shows on the green channel.
+TEXT_78_SURFACE = mix(TEXT, 78, SURFACE)    # body text in the `Detail` tile
+TEXT_45_SURFACE = mix(TEXT, 45, SURFACE)    # the label in that tile
+TEXT_72_SUNKEN = mix(TEXT, 72, SUNKEN)      # detail of the newest one in the list footer
+TEXT_70_SUNKEN = mix(TEXT, 70, SUNKEN)      # value in the `Mode` strip
+TEXT_62_SUNKEN = mix(TEXT, 62, SUNKEN)      # names of the rest in layout 1d's footer
+TEXT_45_SUNKEN = mix(TEXT, 45, SUNKEN)      # labels in the strip and in the footer
 
 
 def to_rgb565_pair(c):
-    """Kolor po kwantyzacji panelu — do testow czytelnosci."""
+    """The color after the panel's quantization — for the legibility tests."""
     r, g, b = c
     return (r >> 3, g >> 2, b >> 3)

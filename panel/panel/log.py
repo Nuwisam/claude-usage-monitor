@@ -1,9 +1,9 @@
-"""Log panelu.
+"""The panel's log.
 
-Klient chodzi pod `pythonw.exe` z zadania harmonogramu, wiec NIE MA konsoli.
-Bez przechwycenia wyjatkow i faulthandlera petla restartow co minute nie
-zostawialaby po sobie ani jednej linijki — a to jest dokladnie ta awaria,
-ktora chce sie zobaczyc po powrocie do komputera.
+The client runs under `pythonw.exe` from a scheduled task, so there is NO console.
+Without catching exceptions and without faulthandler, a restart loop firing every
+minute would leave behind not a single line — and that is exactly the failure
+one wants to see after coming back to the machine.
 """
 import faulthandler
 import logging
@@ -16,7 +16,7 @@ _fault_file = None
 
 
 def setup(path, level="INFO", console=None):
-    """Ustawia log pliku (rotacja 2 MB x 3) i, gdy jest konsola, take na ekran."""
+    """Sets up the file log (rotation 2 MB x 3) and, with a console, the screen too."""
     global _fault_file
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(getattr(logging, str(level).upper(), logging.INFO))
@@ -30,7 +30,7 @@ def setup(path, level="INFO", console=None):
             "%(asctime)s %(levelname)-7s %(message)s", "%Y-%m-%d %H:%M:%S"))
         logger.addHandler(handler)
     except OSError as e:
-        # Brak logu nie moze zatrzymac panelu — on ma pokazywac limity.
+        # A missing log must not stop the panel — its job is to show the limits.
         print("nie moge otworzyc logu %s: %s" % (path, e), file=sys.stderr)
 
     if console is None:
@@ -40,13 +40,13 @@ def setup(path, level="INFO", console=None):
         stream.setFormatter(logging.Formatter("%(levelname)-7s %(message)s"))
         logger.addHandler(stream)
 
-    # Traceback z twardej awarii (np. w ctypes) trafia do osobnego pliku —
-    # faulthandler pisze do deskryptora, wiec nie moze isc przez logging.
+    # A traceback from a hard failure (e.g. inside ctypes) goes to a separate file —
+    # faulthandler writes to a descriptor, so it cannot go through logging.
     #
-    # Poprzedni uchwyt zamykamy JAWNIE. setup() wola sie w tym procesie wiecej
-    # niz raz — run.pyw konfiguruje log ponownie, lapiac AlreadyRunning albo
-    # ConfigError — a samo przypisanie do globalnej zostawialo otwarty deskryptor,
-    # do ktorego faulthandler wciaz trzymal referencje.
+    # The previous handle is closed EXPLICITLY. setup() is called more than once in
+    # this process — run.pyw configures the log again after catching AlreadyRunning
+    # or ConfigError — and merely assigning to the global left behind an open
+    # descriptor that faulthandler still held a reference to.
     if _fault_file is not None:
         try:
             faulthandler.disable()
@@ -56,10 +56,10 @@ def setup(path, level="INFO", console=None):
         _fault_file = None
     fault_path = path + ".fault"
     try:
-        # NIE kasujemy przy starcie: sens tego pliku to slad po petli restartow,
-        # a truncate zjadalby wlasnie te wczesniejsze iteracje, ktore mowia, od
-        # czego sie zaczelo. Zamiast tego jedna rotacja przy 1 MB — glowny log
-        # jest rotowany od poczatku, ten nie byl ograniczony niczym.
+        # NOT wiped at startup: the whole point of this file is the trace a restart
+        # loop leaves, and a truncate would eat precisely those earlier iterations
+        # that say what it all started from. Instead, one rotation at 1 MB — the
+        # main log has been rotated from the start, this one was bounded by nothing.
         if os.path.getsize(fault_path) > 1024 * 1024:
             os.replace(fault_path, fault_path + ".1")
     except OSError:

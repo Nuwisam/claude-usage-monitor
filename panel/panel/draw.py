@@ -1,16 +1,18 @@
-"""Prymitywy rysunkowe: czcionki, tekst z wielokropkiem, paski, plakietki.
+"""Drawing primitives: fonts, text with an ellipsis, bars, badges.
 
-Czcionka: Segoe UI. Pillow ma tu `raqm: False`, wiec nie da sie poprosic
-o `tabular-nums` z makiety — cyfry musza byc tabularne SAME Z SIEBIE. Segoe UI
-Regular takie jest w kazdym zmierzonym rozmiarze; Segoe UI Light NIE (cyfra 1
-jest tam wezsza od 0), wiec wielka liczba drgalaby przy kazdej zmianie.
+Font: Segoe UI. Pillow here has `raqm: False`, so there is no way to ask
+for the mockup's `tabular-nums` — the digits have to be tabular BY THEMSELVES. Segoe UI
+Regular is, at every measured size; Segoe UI Light is NOT (its digit 1
+is narrower than its 0), so a large number would jitter on every change.
 """
 from PIL import ImageDraw, ImageFont
 
 from . import theme
 
-# Napis probny do mierzenia wysokosci: ogonki ida w gore, ogony w dol. Mierzenie
-# po nominalnym rozmiarze obcinaloby "Ń" i "ą" przy 10-12 px.
+# Probe string for measuring height: the diacritics reach up, the tails reach down.
+# Measuring by the nominal size would clip "Ń" and "ą" at 10-12 px.
+# Keep these exact glyphs: swapping them for plain English letters would silently
+# change every line height computed on the panel.
 PROBE = "ĄĘŚŹŻgjpqy"
 
 FONT_CANDIDATES = ("segoeui.ttf", "tahoma.ttf", "arial.ttf", "DejaVuSans.ttf")
@@ -46,31 +48,31 @@ def line_height(f):
 
 
 def baseline_for_centre(f, sample, centre_y):
-    """Pozycja linii bazowej, przy ktorej `sample` stoi pionowo na srodku.
+    """Baseline position at which `sample` stands vertically centered.
 
-    Liczone z FAKTYCZNEGO obrysu, nie z nominalnego rozmiaru: cyfry nie siegaja
-    ani ascendera, ani descendera, wiec centrowanie po metryce fontu klamie
-    o kilka pikseli — a przy liczbie 42 px to widac.
+    Computed from the ACTUAL bounding box, not from the nominal size: digits reach
+    neither the ascender nor the descender, so centering by the font metrics lies
+    by a few pixels — and at a 42 px number that shows.
     """
     box = f.getbbox(sample, anchor="ls")
     return int(round(centre_y - (box[1] + box[3]) / 2.0))
 
 
 def baseline_for_top(f, top, line_height):
-    """Linia bazowa tekstu, ktorego PUDELKO LINII zaczyna sie na `top`.
+    """Baseline of text whose LINE BOX starts at `top`.
 
-    Odpowiednik pudelka z makiety: CSS zna wysokosc linii i rozklada nadmiar po
-    rowno nad i pod krojem, a Pillow zna wylacznie ascender. Bez tego rachunku
-    "margin-top: 7px" pod nazwa 34 px wychodzi na panelu ujemne — ascender plus
-    descender Segoe UI to przy 34 px az 46 px, czyli o 11 px wiecej niz line-height
-    1,02 z makiety.
+    The equivalent of the mockup's box: CSS knows the line height and spreads the excess
+    evenly above and below the typeface, while Pillow knows the ascender alone. Without
+    this arithmetic a "margin-top: 7px" under a 34 px name comes out negative on the panel —
+    the ascender plus the descender of Segoe UI is a full 46 px at 34 px, which is 11 px more
+    than the mockup's line-height of 1.02.
     """
     asc, desc = f.getmetrics()
     return int(round(top + (line_height - (asc + desc)) / 2.0 + asc))
 
 
 def ellipsize(text, f, max_w):
-    """Ucina z wielokropkiem. Nazwy kont bywaja dluzsze niz 480 px pozwala."""
+    """Truncates with an ellipsis. Account names are sometimes longer than 480 px allows."""
     if not text or text_width(text, f) <= max_w:
         return text
     ell = "…"
@@ -88,20 +90,20 @@ def ellipsize(text, f, max_w):
 
 
 def wrap_lines(text, f, max_w, max_lines=2):
-    """Zawija po slowach do `max_lines`; nadmiar wpada w ostatnia linie i tam jest
-    obcinany wielokropkiem.
+    """Wraps on words up to `max_lines`; the overflow falls into the last line and is
+    truncated there with an ellipsis.
 
-    Jedyne miejsce w projekcie, ktore lamie tekst — `detail` z ramki alertu bywa
-    zdaniem. Obcinanie zostaje robota `ellipsize`, zeby nie bylo dwoch prawd o tym,
-    jak wyglada za dlugi napis.
+    The only place in the project that wraps text — the `detail` from the alert box is
+    sometimes a whole sentence. Truncating stays the job of `ellipsize`, so that there
+    are not two truths about how an over-long string looks.
     """
     if not text:
         return []
     lines, cur = [], ""
     for word in text.split():
         trial = word if not cur else cur + " " + word
-        # `not cur` przepuszcza slowo dluzsze niz cala linia: stoi samo i dostaje
-        # wielokropek, zamiast wpadac w nieskonczona petle albo znikac.
+        # `not cur` lets through a word longer than a whole line: it stands alone and gets
+        # an ellipsis, instead of falling into an infinite loop or vanishing.
         if not cur or text_width(trial, f) <= max_w:
             cur = trial
         else:
@@ -126,11 +128,11 @@ def tracked_width(s, f, tracking):
 
 
 def ellipsize_tracked(s, f, max_w, tracking=1):
-    """`ellipsize` dla napisu, ktory pojdzie przez `text_tracked`.
+    """`ellipsize` for a string that will go through `text_tracked`.
 
-    Osobna funkcja, bo odstep miedzy literami wchodzi do szerokosci: przy wersalikach
-    pasma (tracking 2 na 15 px) zwykly `ellipsize` puscilby napis o kilkanascie pikseli
-    za szeroki i godzina po prawej dostalaby nim po palcach.
+    A separate function, because the spacing between letters counts into the width: with the
+    banner's caps (tracking 2 at 15 px) a plain `ellipsize` would let a string through a dozen
+    or so pixels too wide, and it would run straight into the hour on the right.
     """
     if not s or tracked_width(s, f, tracking) <= max_w:
         return s
@@ -141,8 +143,8 @@ def ellipsize_tracked(s, f, max_w, tracking=1):
 
 
 def text_tracked(d, xy, s, f, fill, tracking=1, anchor=None):
-    """Etykiety wersalikami maja w makiecie letter-spacing ~0.07em. Przy 10 px
-    to niecaly piksel, ale bez niego wersaliki zlewaja sie w plame."""
+    """Labels in caps have letter-spacing ~0.07em in the mockup. At 10 px that is
+    less than a whole pixel, but without it the caps blur into a smudge."""
     if not s:
         return 0
     x, y = xy
@@ -153,28 +155,28 @@ def text_tracked(d, xy, s, f, fill, tracking=1, anchor=None):
 
 
 def fill_rect(d, box, colour):
-    """Prostokat w konwencji POL-OTWARTEJ: `x1` i `y1` sa WYLACZNE, jak w makiecie.
+    """A rectangle in the HALF-OPEN convention: `x1` and `y1` are EXCLUSIVE, as in the mockup.
 
-    Pillow liczy granice wlacznie, wiec pasmo (0, 0, 480, 38) wychodzi u niego
-    39 px wysokosci, a kafel konczacy sie na x1 = 462 zjada piksel prawego marginesu.
-    Roznica jednego piksela, ale karta jest zbudowana z pol stykajacych sie
-    krawedziami — jeden piksel za duzo w pasmie przesuwa cala reszte.
+    Pillow counts the bounds inclusively, so a banner of (0, 0, 480, 38) comes out
+    39 px tall there, and a tile ending at x1 = 462 eats a pixel of the right margin.
+    A difference of one pixel, but the card is built out of fields that meet at their
+    edges — one pixel too many in the banner shifts all the rest.
     """
     x0, y0, x1, y1 = box
     d.rectangle((x0, y0, x1 - 1, y1 - 1), fill=colour)
 
 
 def rounded(d, box, radius, fill=None, outline=None, width=1):
-    """Jak `fill_rect`, tylko z zaokraglonymi rogami — ta sama konwencja granic."""
+    """Like `fill_rect`, only with rounded corners — the same bounds convention."""
     x0, y0, x1, y1 = box
     d.rounded_rectangle((x0, y0, x1 - 1, y1 - 1), radius=radius, fill=fill,
                         outline=outline, width=width)
 
 
 def dashed_rounded(d, box, radius, colour, dash=3, gap=3, width=1):
-    """Kontur przerywany. Pillow nie ma kreskowania, wiec kladziemy segmenty
-    recznie po obwodzie prostokata (zaokraglenia pomijamy — przy r<=6 i kresce
-    3 px roznica jest niewidoczna, a kod prostszy o polowe)."""
+    """A dashed outline. Pillow has no dashing, so the segments are laid down
+    by hand along the perimeter of the rectangle (the roundings are skipped — at r<=6 and a
+    3 px dash the difference is invisible, and the code is half as long)."""
     x0, y0, x1, y1 = box
     step = dash + gap
     for x in range(int(x0), int(x1), step):
@@ -188,8 +190,8 @@ def dashed_rounded(d, box, radius, colour, dash=3, gap=3, width=1):
 
 
 def hatch(d, box, colour, spacing=8, thickness=3):
-    """Skos 135 stopni wewnatrz prostokata — sygnal 'to nie jest brak zuzycia,
-    tylko brak wiedzy'. Odwzorowuje repeating-linear-gradient z makiety."""
+    """A 135-degree diagonal inside the rectangle — the signal for 'this is not an absence
+    of usage, only an absence of knowledge'. Reproduces the mockup's repeating-linear-gradient."""
     x0, y0, x1, y1 = (int(v) for v in box)
     h = y1 - y0
     for start in range(x0 - h, x1 + 1, spacing):
@@ -198,13 +200,13 @@ def hatch(d, box, colour, spacing=8, thickness=3):
 
 
 def bar(d, box, view, fill_colour, track_colour=theme.NEUTRAL_900):
-    """Tor limitu w jednym z dwoch rysunkow.
+    """The limit track in one of two drawings.
 
-    Dwa, nie cztery: panel nie rozroznia rysunkiem stanow swiezosci, bo obok stoi
-    wiek odczytu (patrz view.py). Rozroznienie, ktore zostaje, jest fundamentalne:
-    czy wartosc W OGOLE JEST.
+    Two, not four: the panel does not tell freshness states apart by the drawing, because
+    the age of the reading stands right next to it (see view.py). The distinction that
+    remains is fundamental: whether the value IS THERE AT ALL.
 
-    Przy 100% nie ma zadnego dodatkowego znacznika — pelny tor mowi to sam.
+    At 100% there is no extra marker of any kind — a full track says it by itself.
     """
     x0, y0, x1, y1 = box
     h = y1 - y0
@@ -217,12 +219,12 @@ def bar(d, box, view, fill_colour, track_colour=theme.NEUTRAL_900):
             rounded(d, (x0, y0, x0 + max(w, h), y1), r, fill=fill_colour)
         return
 
-    # Ksztalt bez masy: kontur zamiast wypelnienia.
+    # Shape without mass: an outline instead of a fill.
     if view.hatch:
         hatch(d, (x0 + 1, y0 + 1, x1 - 1, y1 - 1), theme.TEXT_10)
     dashed_rounded(d, box, r, theme.TEXT_28)
     if view.stub:
-        # Kikut przy zerze: reset wywnioskowany, nie zmierzony.
+        # A stub at zero: the reset was inferred, not measured.
         rounded(d, (x0 + 2, y0 + 2, x0 + 8, y1 - 2), max(1, r - 2), fill=theme.TEXT_28)
     if view.ghost:
         gx = x0 + int(round((x1 - x0) * view.ghost_pct / 100.0))
@@ -248,8 +250,8 @@ def cross(d, centre, radius, colour, width=1):
 
 
 def clock_glyph(d, centre, radius, colour):
-    """Ikonka zegara zamiast fontu Phosphor z makiety — jeden import mniej
-    i pewnosc, ze przy 12 px nie zamieni sie w plame."""
+    """A clock icon instead of the mockup's Phosphor font — one import fewer
+    and the certainty that at 12 px it will not turn into a smudge."""
     cx, cy = centre
     d.ellipse((cx - radius, cy - radius, cx + radius, cy + radius),
               outline=colour, width=1)
@@ -258,7 +260,7 @@ def clock_glyph(d, centre, radius, colour):
 
 
 def arrow_down_right(d, box, colour):
-    """Strzalka przy kredytach: to one sa teraz biezacym szczeblem."""
+    """The arrow next to credits: they are the current rung now."""
     x0, y0, x1, y1 = box
     d.line((x0, y0, x1, y1), fill=colour, width=1)
     d.line((x1 - 3, y1, x1, y1), fill=colour, width=1)
