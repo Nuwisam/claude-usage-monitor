@@ -1,25 +1,25 @@
-/** Legenda wykresu. Zdanie na koncu nie jest ozdoba — pokrycie tego narzedzia jest
- *  z natury dziurawe, wiec dziura jest informacja, a nie usterka rysowania. */
+/** The chart legend. The closing sentence is not decoration — this tool's coverage is
+ *  full of holes by nature, so a gap is information, not a defect in the drawing. */
 export function Legend({ bucket }: { bucket?: string }) {
   return (
     <div className="legend">
       <span className="legend-item">
         <span className="sw-line" />
-        średnia w koszyku{bucket ? ` ${bucket}` : ""}
+        average in bucket{bucket ? ` ${bucket}` : ""}
       </span>
       <span className="legend-item">
         <span className="sw-reset" />
-        granica resetu
+        reset boundary
       </span>
       <span className="legend-item">
         <span className="sw-silent" />
-        cisza klienta
+        client silent
       </span>
       <span className="legend-item">
         <span className="sw-nosamples" />
-        brak próbek serii
+        no samples for this series
       </span>
-      <span className="legend-closing">Brak danych jest informacją, nie usterką wykresu.</span>
+      <span className="legend-closing">Missing data is information, not a defect in the chart.</span>
     </div>
   );
 }

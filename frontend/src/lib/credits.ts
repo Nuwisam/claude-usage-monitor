@@ -1,68 +1,71 @@
-/** Tresc wyjasnienia przy wierszu wydatkow — to, czego PASEK pokazac nie umie.
+/** The content of the explainer next to the spend row — what the BAR cannot show.
  *
- *  Powod istnienia tego pliku: `spend` i `extra_usage` to dwa widoki tej samej puli, wiec
- *  backend gasi wiersz `extra:usage` (`primary: false`, patrz services/status.py). Jego dane
- *  jednak zostaja w odpowiedzi i to sa jedyne miejsca, w ktorych UI widzi, KTO kredyty
- *  wylaczyl i czy sciana juz padla. Bez tego „?" ta wiedza zniknelaby razem z wierszem.
+ *  Why this file exists: `spend` and `extra_usage` are two views of the same pool, so the
+ *  backend suppresses the `extra:usage` row (`primary: false`, see services/status.py). Its
+ *  data stays in the response all the same, and these are the only places where the UI sees
+ *  WHO turned the credits off and whether the wall has fallen. Without this "?" that knowledge
+ *  would disappear together with the row.
  *
- *  NIE w `lib/freshness.ts`: tamten plik jest jedynym miejscem decyzji „stan -> wyglad",
- *  a to nie jest swiezosc.
+ *  NOT in `lib/freshness.ts`: that file is the only place where the "state -> appearance"
+ *  decision is made, and this is not freshness.
  *
- *  `extra` to jedyne pole kontraktu BEZ SCHEMATU — czytamy je defensywnie, tak jak
- *  `spendNote`: brak pola i pole zlego typu znacza to samo, czyli „nie wiem", i wtedy
- *  wiersz po prostu nie powstaje. Nigdy nie zgadujemy.
+ *  `extra` is the only schema-less contract field — read defensively, just like `spendNote`:
+ *  a missing field and a field of the wrong type mean the same thing, "not known", and then
+ *  the row simply does not come into being. Nothing is ever guessed.
  */
 import type { SeriesStatus } from "../api/types";
 
 export interface CreditsFact {
   term: string;
   value: string;
-  /** Doslowny kod od Anthropic — do wyswietlenia czcionka o stalej szerokosci, bez
-   *  tlumaczenia (zasada 5: zbior jest otwarty, wiec rozgalezamy sie na ISTNIENIE pola,
-   *  a nie na jego brzmienie). */
+  /** The literal code from Anthropic — to be shown in a fixed-width font, untranslated
+   *  (rule 5: the set is open, so what branches us is the field's existence, not its
+   *  wording). */
   code?: string;
 }
 
-/** Jedno zdanie, ktore odpowiada na pytanie „czyj to limit". Etykieta serii mowi
- *  „(Twoja pula)", ale skrot nie tlumaczy, czym rozni sie od sufitu organizacji — a to
- *  wlasnie ta roznica sprawia, ze wyczerpanie sufitu GASI ten licznik zamiast go dopelnic. */
+/** One sentence answering the question "whose limit is this". The series label says
+ *  "(your pool)", but that shorthand does not explain how it differs from the organization
+ *  ceiling — and it is exactly that difference which makes an exhausted ceiling GO DARK on
+ *  this meter instead of topping it up. */
 export const POOL_DEFINITION =
-  "Pula przydzielona Tobie, nie sufit całej organizacji. Sufitu Anthropic w ogóle nie " +
-  "raportuje — gdy się wyczerpie, ten licznik nie rośnie, tylko gaśnie.";
+  "The pool allotted to you, not the ceiling of the whole organization. Anthropic does not " +
+  "report the ceiling at all — when it runs out, this meter does not rise, it goes dark.";
 
-/** Tylko prawdziwy bool cokolwiek znaczy (jak `_flag` w services/cascade.py). */
+/** Only a real bool means anything (like `_flag` in services/cascade.py). */
 function flag(extra: Record<string, unknown> | null, key: string): boolean | null {
   const v = extra?.[key];
   return typeof v === "boolean" ? v : null;
 }
 
-/** Pelna precyzja, w odroznieniu od `pct()` z lib/format.ts, ktore obcina do jednego
- *  miejsca. Tutaj precyzja JEST trescia: pasek stoi na zaokraglonym `spend.percent`
- *  (93), a zmierzone bylo 92,656 — i to jest cala roznica miedzy tymi dwoma seriami. */
+/** Full precision, unlike `pct()` from lib/format.ts, which cuts to a single decimal place.
+ *  Here the precision IS the content: the bar stands on a rounded `spend.percent` (93),
+ *  while the measurement was 92.656 — and that is the whole difference between the two series. */
 function exact(v: number): string {
-  return String(Number(v.toFixed(3))).replace(".", ",");
+  return String(Number(v.toFixed(3)));
 }
 
-/** Fakty o kredytach, ktorych wiersz `spend` nie niesie sam.
+/** Credit facts that the `spend` row does not carry on its own.
  *
- *  `eu` bywa NIEOBECNE i to jest poprawny stan, nie awaria: na koncie, ktore kredytow nigdy
- *  nie mialo, `extra_usage.utilization` jest null na zawsze, wiec seria nie wchodzi do
- *  `series[]` (filtr `ever_non_null` w services/status.py). Zostaje wtedy sama definicja
- *  i ewentualny powod wycofania — z NIEOBECNOSCI serii nie wnioskujemy nic, bo brak danych
- *  nie jest danymi (zasada 4 w duchu). */
+ *  `eu` is sometimes ABSENT, and that is a correct state, not a failure: on an account that
+ *  never had credits `extra_usage.utilization` is null forever, so the series does not enter
+ *  `series[]` (the `ever_non_null` filter in services/status.py). What is left then is the
+ *  definition alone and a possible withdrawal reason — from the ABSENCE of the series nothing
+ *  is inferred, because missing data is not data (rule 4 in spirit). */
 export function creditsFacts(spend: SeriesStatus, eu: SeriesStatus | undefined): CreditsFact[] {
   const out: CreditsFact[] = [];
 
-  // NAJPIERW powod wycofania, i to NIE z `extra`: przy wycofanym mierniku backend podmienia
-  // `extra` na to z ostatniego prawdziwego pomiaru (`services/status.py`), wiec lezy tam
-  // jeszcze `disabled_reason: null` z czasow, gdy brama byla otwarta. Prawda o wycofaniu
-  // siedzi w `unavailableReason` — polu pierwszej kategorii, a nie w bezschematowym `extra`.
+  // THE WITHDRAWAL REASON FIRST, and NOT from `extra`: with a withdrawn meter the backend
+  // swaps `extra` for the one from the last true measurement (`services/status.py`), so what
+  // still lies there is the `disabled_reason: null` from the time when the gate was open. The
+  // truth about the withdrawal sits in `unavailableReason` — a first-class field, not the
+  // schema-less `extra`.
   //
-  // Czytamy je z WIERSZA WYDATKOW, nie z `eu`: dziala wiec takze na koncie, na ktorym `eu`
-  // w ogole nie ma, i jest to jedyny fakt, ktory tam dojezdza.
+  // Read from the SPEND ROW, not from `eu`: it therefore works on an account that has no `eu`
+  // at all, and it is the only fact that gets through there.
   const withdrawn = spend.unavailableReason ?? eu?.unavailableReason ?? null;
   if (withdrawn !== null) {
-    out.push({ term: "Wyłączone przez", value: "organizację", code: withdrawn });
+    out.push({ term: "Disabled by", value: "the organization", code: withdrawn });
   }
 
   if (!eu) return out;
@@ -71,42 +74,42 @@ export function creditsFacts(spend: SeriesStatus, eu: SeriesStatus | undefined):
   const measured = eu.utilization ?? eu.rawUtilization;
   if (measured !== null) {
     out.push({
-      term: withdrawn ? "Ostatnio zmierzone" : "Zmierzone dokładnie",
+      term: withdrawn ? "Last measured" : "Measured exactly",
       value: `${exact(measured)}%`,
     });
   }
 
   const enabled = flag(x, "is_enabled");
   if (enabled !== null) {
-    out.push({ term: "Kredyty", value: enabled ? "włączone" : "wyłączone" });
+    out.push({ term: "Credits", value: enabled ? "on" : "off" });
   }
 
-  // Tylko `true`. Brak sciany nie jest informacja, a wiersz „nieosiągnięty" przy kazdym
-  // zdrowym koncie robilby z tego panelu szum.
+  // `true` only. The absence of a wall is not information, and a "not reached" row on every
+  // healthy account would turn this panel into noise.
   if (flag(x, "spend_limit_reached") === true) {
-    out.push({ term: "Limit wydatków", value: "osiągnięty" });
+    out.push({ term: "Spend limit", value: "reached" });
   }
 
-  // Dwie rozne rzeczy, ktore w samym `enabled: false` wygladaja identycznie: przelacznik
-  // zdjety przez CIEBIE i brama zamknieta przez organizacje. Pierwsze cofniesz sam.
+  // Two different things that look identical in `enabled: false` alone: a switch flipped off
+  // by YOU and a gate shut by the organization. The first one you can undo yourself.
   if (flag(x, "user_disabled") === true) {
-    out.push({ term: "Wyłączone przez", value: "Ciebie" });
+    out.push({ term: "Disabled by", value: "you" });
   }
-  // Tylko gdy `unavailableReason` nie powiedzialo tego wyzej — inaczej ten sam fakt stalby
-  // w panelu dwa razy, raz z kodem z pasma, raz z kodem sprzed wycofania.
+  // Only when `unavailableReason` did not already say so above — otherwise the same fact would
+  // stand in the panel twice, once with the in-band code, once with the pre-withdrawal one.
   const reason = x?.disabled_reason;
   if (withdrawn === null && typeof reason === "string") {
-    out.push({ term: "Wyłączone przez", value: "organizację", code: reason });
+    out.push({ term: "Disabled by", value: "the organization", code: reason });
   }
 
   if (flag(x, "credits_ever_enabled") === false) {
-    out.push({ term: "Kredyty na tym koncie", value: "nigdy nie były włączone" });
+    out.push({ term: "Credits on this account", value: "have never been turned on" });
   }
 
-  // Podlimity dobowy i tygodniowy wewnatrz miesiecznego. W kazdym zaobserwowanym payloadzie
-  // sa null — wiersz istnieje po to, zeby dzien, w ktorym Anthropic je zapelni, nie wymagal
-  // zmiany kodu (zasada 5). Tresci nie interpretujemy, bo nie znamy jej ksztaltu.
-  const subLimits = [["daily", "Podlimit dobowy"], ["weekly", "Podlimit tygodniowy"]] as const;
+  // Daily and weekly sub-limits inside the monthly one. In every observed payload they are
+  // null — the row exists so that the day Anthropic fills them in needs no code change
+  // (rule 5). The content is not interpreted, because its shape is unknown.
+  const subLimits = [["daily", "Daily sub-limit"], ["weekly", "Weekly sub-limit"]] as const;
   for (const [key, term] of subLimits) {
     const v = x?.[key];
     if (v !== null && v !== undefined) out.push({ term, value: JSON.stringify(v) });

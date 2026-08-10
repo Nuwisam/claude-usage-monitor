@@ -284,7 +284,7 @@ Weryfikacja UI (żadna nie wymaga sesji):
 ```bash
 B=https://usage.example.org/claude-usage
 curl -s -o /dev/null -w '%{http_code} %{content_type}\n' $B/          # 200 text/html
-curl -s -o /dev/null -w '%{http_code}\n' $B/historia                  # 200 — fallback SPA
+curl -s -o /dev/null -w '%{http_code}\n' $B/history                   # 200 — fallback SPA
 curl -s $B/api/nieistnieje                                            # 404 JSON, NIE index.html
 curl -sI $B | grep -i location                                        # 301 na /claude-usage/
 ```

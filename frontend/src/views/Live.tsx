@@ -22,10 +22,10 @@ export function Live() {
 
       {q.data.accounts.length === 0 && (
         <div className="state-block">
-          <h4>Brak kont</h4>
+          <h4>No accounts</h4>
           <p>
-            Żadna maszyna jeszcze nic nie zaraportowała. Konta tworzą się same przy pierwszym
-            pomiarze — sprawdź, czy sonda jest wpięta w hooki i czy ma <code>config.json</code>.
+            No machine has reported anything yet. Accounts create themselves on the first
+            measurement — check that the probe is wired into the hooks and has <code>config.json</code>.
           </p>
         </div>
       )}

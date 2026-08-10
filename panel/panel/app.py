@@ -1,9 +1,9 @@
-"""Petla klienta.
+"""The client loop.
 
-Rytm: tick co sekunde, ale klatka leci na panel TYLKO gdy obraz sie rozni
-(link.send). Przy zegarze bez sekund i zaokraglonych odliczeniach obraz zmienia
-sie mniej wiecej raz na minute plus przy kazdym zdarzeniu SSE — czyli ~2 % czasu
-na USB zamiast 38 %.
+Rhythm: a tick every second, but a frame goes to the panel ONLY when the image
+differs (link.send). With a clock without seconds and rounded countdowns the image
+changes roughly once a minute plus on every SSE event — that is ~2 % of the time
+on USB instead of 38 %.
 """
 import os
 import queue
@@ -21,11 +21,11 @@ class AlreadyRunning(Exception):
 
 
 def seconds(raw, default=0.0):
-    """Prog czasu z panel.json -> liczba sekund. "infinity" daje inf.
+    """A time threshold from panel.json -> a number of seconds. "infinity" gives inf.
 
-    Wspolny dla `alert_flash_sec` i `alert_takeover_sec`, bo obie wartosci sa recznie
-    edytowane i obie ida do POROWNANIA: goly string wywraca tick TypeError-em.
-    Smieci znacza `default`, nie wyjatek.
+    Shared by `alert_flash_sec` and `alert_takeover_sec`, because both values are edited
+    by hand and both go into a COMPARISON: a bare string knocks the tick over with a
+    TypeError. Garbage means `default`, not an exception.
     """
     if isinstance(raw, str) and raw.strip().lower() in ("infinity", "inf"):
         return float("inf")
@@ -33,17 +33,17 @@ def seconds(raw, default=0.0):
         value = float(raw)
     except (TypeError, ValueError):
         return default
-    if value != value or value < 0:         # NaN albo ujemna
+    if value != value or value < 0:         # NaN or negative
         return default
     return value
 
 
 def single_instance(path=None):
-    """Blokada na pliku. Zwraca uchwyt, ktory trzeba trzymac do konca procesu.
+    """A file lock. Returns a handle that has to be held until the process ends.
 
-    Wylaczny uchwyt USB juz gwarantuje, ze rysuje tylko jeden proces — ale druga
-    instancja krecilaby sie wtedy w petli "panel zajety przez inny proces",
-    ktora czyta sie jak awaria sprzetu, a nie jak "juz dziala".
+    The exclusive USB handle already guarantees that only one process draws — but the
+    second instance would then spin in a loop of "panel zajety przez inny proces",
+    which reads like a hardware failure rather than like "it is already running".
     """
     import msvcrt
 
@@ -61,9 +61,9 @@ def single_instance(path=None):
 class App:
     def __init__(self, cfg, monotonic=time.monotonic):
         self.cfg = cfg
-        # Zegar wstrzykiwalny, bo `holding()` i znaczniki debounce/linger czytaja go
-        # wprost, a testy nie moga czekac 300 s na wypalenie karty. `fmt.ServerClock`
-        # jest wstrzykiwany od poczatku — to ten sam idiom, nie nowy.
+        # An injectable clock, because `holding()` and the debounce/linger stamps read
+        # it directly, and the tests cannot wait 300 s for the card to burn out.
+        # `fmt.ServerClock` has been injected from the start — the same idiom, not a new one.
         self.monotonic = monotonic
         self.clock = fmt.ServerClock(monotonic)
         self.renderer = render.Renderer(cfg.width, cfg.height)
@@ -80,18 +80,18 @@ class App:
         self.first_data_at = None
         self.started = monotonic()
 
-        # Zablokowane sesje. `alerts` to ostatni PELNY zbior z ramki — przyrostow tu
-        # nie ma, wiec nie ma tez stanu do uzgadniania.
+        # Blocked sessions. `alerts` is the last FULL set from a frame — there are no
+        # increments here, so there is no state to reconcile either.
         self.alerts = []
-        self._seen_at = {}          # klucz -> monotonic pierwszego zobaczenia (debounce)
-        self._card = None           # (AlertState, mono_wygasniecia_lingera albo None)
-        self._carded = set()        # klucze, ktore juz mialy swoj blysk
+        self._seen_at = {}          # key -> monotonic of the first sighting (debounce)
+        self._card = None           # (AlertState, linger expiry mono, or None)
+        self._carded = set()        # keys that already had their flash
         self._flash_until = None
-        # Latch: czy cokolwiek juz namalowalismy w tym biegu. Bez niego karta zgaszona
-        # w 3. sekundzie oddawalaby sterowanie z powrotem do `holding()`.
+        # A latch: whether anything has been painted in this run. Without it a card put
+        # out in the 3rd second would hand control back to `holding()`.
         self.ever_painted = False
 
-    # -- zdarzenia ---------------------------------------------------------
+    # -- events ------------------------------------------------------------
 
     def on_event(self, event, payload):
         if event == "up":
@@ -110,16 +110,16 @@ class App:
             version = payload.get("contractVersion")
             if version != model.CONTRACT_VERSION:
                 self.contract_mismatch = version
-                log().error("kontrakt v%s, panel zna v%s", version,
+                log().error("contract v%s, panel knows v%s", version,
                             model.CONTRACT_VERSION)
             else:
                 self.contract_mismatch = None
             self.unknown_uuids = set(payload.get("unknown") or [])
             if self.unknown_uuids:
-                log().warning("serwer nie zna kont: %s",
+                log().warning("server does not know accounts: %s",
                               ", ".join(sorted(self.unknown_uuids)))
             self.link_state = "live"
-            log().info("hello: subskrypcja %s, ping %ss, zycie %ss",
+            log().info("hello: subscription %s, ping %ss, lifetime %ss",
                        payload.get("subscribed"), payload.get("pingSec"),
                        payload.get("maxLifetimeSec"))
         elif event == "account":
@@ -131,10 +131,10 @@ class App:
                 self.first_data_at = self.first_data_at or self.monotonic()
             self.link_state = "live"
         elif event == "alert":
-            # Ta galaz CELOWO nie ustawia ani `first_data_at`, ani `link_state`.
-            # Pierwsze otworzyloby bramke `holding()` i wytarloby obraz z poprzedniego
-            # biegu; drugie klamaloby, bo alert nie jest dowodem swiezosci danych
-            # o zuzyciu — te przychodza wylacznie ramka `account`.
+            # This branch sets neither `first_data_at` nor `link_state`, DELIBERATELY.
+            # The first would open the `holding()` gate and wipe the image from the
+            # previous run; the second would lie, because an alert is no proof that the
+            # usage data is fresh — that arrives in the `account` frame and nowhere else.
             if not self.cfg.session_alerts:
                 return
             self.alerts = status.parse_frame(payload)
@@ -149,23 +149,23 @@ class App:
         elif event == "ping":
             self.link_state = "live"
         elif event == "lag":
-            # Kazda ramka niesie pelny stan, wiec zaleglosc naprawia sie sama.
-            log().info("strumien: lag (%s)", payload.get("reason"))
+            # Every frame carries the full state, so a backlog repairs itself.
+            log().info("stream: lag (%s)", payload.get("reason"))
         elif event == "bye":
             self.link_state = "reconnecting"
 
-    # -- obraz -------------------------------------------------------------
+    # -- the image ---------------------------------------------------------
 
     def alert_slots(self):
-        """Pasy ze znacznikiem: indeks pasa -> powod jednym slowem.
+        """Bands carrying a mark: band index -> the reason in one word.
 
-        Nie sam zbior indeksow, bo pas pisze przy nazwie planu, NA CO czeka. Przy kilku
-        blokadach na jednym koncie zostaje pierwsza — kolejnosc ustala `status.parse_frame`,
-        wiec pierwsza jest tez najnowsza.
+        Not just the set of indices, because the band writes next to the plan name WHAT
+        it is waiting for. With several blocks on one account the first one stays — the
+        order is set by `status.parse_frame`, so the first is also the newest.
 
-        Alert bez dopasowania do zadnego skonfigurowanego konta laduje na pasie GORNYM.
-        Regula jest prosta i celowo taka zostaje: statyczne mapowanie maszyna -> pas
-        rozjechaloby sie po pierwszym /login, a przelaczanie kont jest tu rutyna.
+        An alert matching no configured account lands on the TOP band. The rule is
+        simple and deliberately stays that way: a static machine -> band mapping would
+        drift apart after the first /login, and account switching is routine here.
         """
         slots = [a.uuid for a in self.cfg.accounts]
         out = {}
@@ -178,21 +178,23 @@ class App:
         return out
 
     def _card_alerts(self, mono, now_ms):
-        """Blokady, ktore maja prawo ZAJAC EKRAN — po debounce, gdy KTORAKOLWIEK jest w oknie.
+        """Blocks entitled to TAKE THE SCREEN — after debounce, when ANY ONE is in window.
 
-        Okno `alert_takeover_sec` nalezy do ZBIORU, nie do wpisu: dopoki jakakolwiek
-        blokada miesci sie w oknie, karta wypisuje WSZYSTKIE czekajace, takze te
-        z wypalonym wlasnym licznikiem. Przy filtrowaniu per wpis trzy uklady z czterech
-        byly martwe — dwie blokady musialyby zaczac sie w tym samym pieciominutowym
-        oknie, a przy pracy sekwencyjnej to sie nie zdarza.
+        The `alert_takeover_sec` window belongs to the SET, not to the entry: as long as
+        any block fits inside the window, the card lists ALL the waiting ones, including
+        those whose own counter has burnt out. With per-entry filtering three layouts out
+        of four were dead — two blocks would have had to start inside the same five-minute
+        window, and with sequential work that does not happen.
 
-        Czas karty na ekranie sie przez to NIE wydluza: predykat "karta stoi" to nadal
-        "istnieje wpis po debounce mlodszy niz okno". Zmienia sie tylko ZAWARTOSC.
+        The card's time on screen is NOT extended by this: the predicate "the card
+        stands" is still "there exists a post-debounce entry younger than the window".
+        Only the CONTENT changes.
 
-        Okno liczy sie od `since` z serwera, nie od chwili, w ktorej panel zobaczyl
-        wpis: inaczej restart panelu wskrzeszalby karte dla blokady sprzed godziny.
-        Debounce liczy sie lokalnie, bo dotyczy migotania, i zostaje PER WPIS — wpis
-        w debounce nie wchodzi na karte i nie otwiera okna.
+        The window counts from the server's `since`, not from the moment the panel saw
+        the entry: otherwise a panel restart would resurrect the card for an hour-old
+        block. Debounce is counted locally, because it is about flicker, and it stays
+        PER ENTRY — an entry in debounce does not get onto the card and does not open
+        the window.
         """
         okno = seconds(self.cfg.alert_takeover_sec, 300.0)
         gotowe, swieza = [], False
@@ -201,12 +203,13 @@ class App:
             if seen is None or mono - seen < self.cfg.blocked_debounce_sec:
                 continue
             gotowe.append(b)
-            # `okno > 0` na zewnatrz, bo wpis bez `since` omija porownanie wieku: bez tego
-            # `alert_takeover_sec: 0` dawaloby mu karte wbrew wlasnej dokumentacji.
+            # `okno > 0` on the outside, because an entry without `since` skips the age
+            # comparison: without this, `alert_takeover_sec: 0` would give it a card
+            # against its own documentation.
             if okno > 0 and (b.since is None
                              or (now_ms - fmt.ms(b.since)) / 1000.0 < okno):
                 swieza = True
-        # stan przestal byc PRZEJMUJACY, nie przestal byc prawdziwy
+        # the state stopped being TAKEOVER-WORTHY, it did not stop being true
         return gotowe if swieza else []
 
     def screen(self):
@@ -215,29 +218,29 @@ class App:
 
         live = self._card_alerts(mono, now_ms)
         if live:
-            # Blysk per KLUCZ, nie per karta: druga blokada tez ma zwrocic uwage,
-            # a tykniecie "czeka N min" niczym nie miga.
+            # The flash is per KEY, not per card: a second block has to draw attention
+            # too, and the tick of "waiting N min" flashes nothing.
             swieze = {b.key for b in live} - self._carded
             okno = seconds(self.cfg.alert_flash_sec)
             if swieze and okno > 0:
                 self._flash_until = mono + okno
             self._carded |= {b.key for b in live}
-            # Faza migania z zegara, nie z licznika ticków: przy zgubionym ticku
-            # (przejscie sceny kosztuje wiecej niz sekunde) licznik rozjechalby sie
-            # z czasem i miganie zwalnialoby razem z panelem.
+            # The blink phase comes from the clock, not from a tick counter: on a lost
+            # tick (a scene change costs more than a second) the counter would drift
+            # away from the time and the blinking would slow down along with the panel.
             flood = (self._flash_until is not None and mono < self._flash_until
                      and int(mono) % 2 == 0)
-            # Niezgodny kontrakt schodzi do stopki zamiast przykrywac alert: to jedyna
-            # rzecz na tym ekranie, ktora wymaga, zebys wstal od biurka.
-            footer = ("panel: niezgodny kontrakt"
+            # A contract mismatch drops into the footer instead of covering the alert:
+            # the alert is the one thing on this screen that calls for getting up.
+            footer = ("panel: contract mismatch"
                       if self.contract_mismatch is not None else None)
             self._card = (render.alert_state(live, now_ms, footer, flood), None)
         elif self._card is not None:
             state, expiry = self._card
             if expiry is None:
-                # Linger: karta zostaje jeszcze chwile i jest ZAMROZONA. Bez zamrozenia
-                # "czeka N min" tykaloby dalej na prompcie, na ktory juz odpowiedziales,
-                # a kazdy przeskok to pelna klatka na AX206.
+                # Linger: the card stays a moment longer and is FROZEN. Without freezing,
+                # "waiting N min" would keep ticking on a prompt already answered, and
+                # every step of it is a full frame on the AX206.
                 self._card = (state, mono + self.cfg.blocked_linger_sec)
             elif mono >= expiry:
                 self._card = None
@@ -248,30 +251,30 @@ class App:
 
         if self.contract_mismatch is not None:
             return render.ScreenState(message=[
-                "Niezgodny kontrakt",
-                "serwer podaje v%s, panel zna v%s" % (self.contract_mismatch,
-                                                      model.CONTRACT_VERSION),
-                "zaktualizuj klienta panelu",
+                "Contract mismatch",
+                "server reports v%s, panel knows v%s" % (self.contract_mismatch,
+                                                         model.CONTRACT_VERSION),
+                "update the panel client",
             ])
 
-        # Bez wlasnej bramki czasu: `holding()` juz odpowiada za "nie dotykaj ekranu,
-        # dopoki nic nie wiesz". Drugi, niezalezny prog w tym miejscu byl bledem —
-        # po zgaszeniu karty alertu sterowanie szlo w pasy z pustymi kontami i malowalo
-        # "brak danych z serwera" przez kilkanascie sekund, czyli dokladnie ten ekran,
-        # ktory `holding()` ma tlumic.
+        # With no time gate of its own: `holding()` already answers for "do not touch
+        # the screen while you know nothing". A second, independent threshold here was
+        # a bug — once the alert card went out, control went into the bands with empty
+        # accounts and painted "no data from server" for a dozen-odd seconds, that is
+        # exactly the screen `holding()` is there to suppress.
         if self.first_data_at is None:
             host = self.cfg.stream_url.split("//")[-1].split("/")[0]
-            reason = ("brak polaczenia" if self.link_state == "down"
-                      else "czekam na pierwsze dane")
+            reason = ("no connection" if self.link_state == "down"
+                      else "waiting for first data")
             return render.ScreenState(message=[
-                "Monitor limitow Claude", host, reason,
+                "Claude Usage Monitor", host, reason,
             ])
 
         flagged = self.alert_slots()
         bands = []
         for index, slot in enumerate(self.cfg.accounts):
             account = self.accounts.get(slot.uuid)
-            note = "nieznane konto" if slot.uuid in self.unknown_uuids else None
+            note = "unknown account" if slot.uuid in self.unknown_uuids else None
             bands.append(render.band_state(account, name=slot.name, now_ms=now_ms,
                                            show_clock=(index == 0), note=note,
                                            alert=flagged.get(index)))
@@ -280,26 +283,26 @@ class App:
         return render.ScreenState(clock=fmt.hm(self.clock.now()),
                                   link=self.link_state, bands=bands)
 
-    # -- petla -------------------------------------------------------------
+    # -- the loop ----------------------------------------------------------
 
     def holding(self):
-        """Czy trzymamy rece przy sobie, zamiast malowac.
+        """Whether we keep our hands off instead of painting.
 
-        Panel trzyma ostatnia klatke bez podlaczonego hosta, wiec do czasu
-        pierwszych danych na szkle stoi obraz z POPRZEDNIEGO biegu — i on jest
-        lepszy niz cokolwiek, co umiemy narysowac, nie wiedzac jeszcze nic.
-        Samo `splash_after_sec` tego nie zalatwialo: bramkowalo wylacznie karte
-        stanu, a pasy z napisem "brak danych z serwera" szly na panel juz
-        w pierwszym ticku — czyli kazdy restart i tak wycieral ekran.
+        The panel holds its last frame with no host attached, so until the first data
+        arrives the glass carries the image from the PREVIOUS run — and that one is
+        better than anything we can draw while knowing nothing yet. `splash_after_sec`
+        alone did not settle this: it gated the status card only, while the bands with
+        "no data from server" went to the panel on the very first tick — that is, every
+        restart wiped the screen anyway.
 
-        Niezgodny kontrakt jest wyjatkiem: to jedyna rzecz, ktora wiemy od razu
-        i ktora unieważnia obraz z poprzedniego biegu. Zablokowana sesja jest
-        drugim — alert jest wiadomoscia, na ktora czekasz, wiec nie ma powodu,
-        zeby czekal na uplyw progu.
+        A contract mismatch is the exception: it is the one thing known right away that
+        invalidates the image from the previous run. A blocked session is the second —
+        an alert is the message being waited for, so there is no reason for it to wait
+        out a threshold.
 
-        `ever_painted` jest LATCHEM: raz namalowany ekran nie moze wrocic do stanu
-        "nie dotykamy". Bez niego karta alertu zgaszona przed uplywem progu oddawala
-        sterowanie z powrotem tutaj i panel zastygal z polowa poprzedniej sceny.
+        `ever_painted` is a LATCH: a screen once painted must not return to the "hands
+        off" state. Without it an alert card put out before the threshold elapsed handed
+        control back here and the panel froze with half of the previous scene.
         """
         return (self.first_data_at is None
                 and self.contract_mismatch is None
@@ -323,8 +326,8 @@ class App:
         uuids = [a.uuid for a in self.cfg.accounts]
         client = stream.StreamClient(self.cfg, uuids, self.q, self.stop)
         client.start()
-        log().info("start: %d konto(a), panele: %s", len(uuids),
-                   ", ".join(link.tag for link in self.panels) or "(brak)")
+        log().info("start: %d account(s), panels: %s", len(uuids),
+                   ", ".join(link.tag for link in self.panels) or "(none)")
         deadline = self.monotonic()
         try:
             while not self.stop.is_set():
@@ -332,18 +335,18 @@ class App:
                 deadline += self.cfg.tick_sec
                 delay = deadline - self.monotonic()
                 if delay < 0:
-                    # Po dlugim blicie albo resecie nie nadrabiamy zaleglosci —
-                    # lepiej zgubic tick niz gonic wlasny ogon.
+                    # After a long blit or a reset we do not make up the backlog —
+                    # better to lose a tick than to chase our own tail.
                     deadline = self.monotonic()
                     delay = 0
                 self.stop.wait(delay)
         finally:
             self.stop.set()
             for link in self.panels:
-                link.close()        # bez czyszczenia ekranu, celowo
+                link.close()        # without clearing the screen, deliberately
 
     def run_once(self, wait_sec=30.0):
-        """Polacz, poczekaj na pierwsza ramke, narysuj raz, wyjdz."""
+        """Connect, wait for the first frame, draw once, exit."""
         uuids = [a.uuid for a in self.cfg.accounts]
         client = stream.StreamClient(self.cfg, uuids, self.q, self.stop)
         client.start()

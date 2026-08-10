@@ -2,12 +2,12 @@ import { type CSSProperties, useRef, useState } from "react";
 
 import type { HistoryGap, HistoryPoint } from "../api/types";
 import { pct } from "../lib/format";
-// `dm`/`hm` zostaja bez `stamp()`: os i tooltip punktu czytaja chwile wzgledem SZEROKOSCI
-// zakresu (`withDay`), nie wzgledem „teraz" — `stamp()` dokleilby date przy kazdym punkcie.
+// `dm`/`hm` stay without `stamp()`: the axis and the point tooltip read an instant against the
+// WIDTH of the range (`withDay`), not against "now" — `stamp()` would glue a date onto every point.
 import { dm, hm, stampRange } from "../lib/time";
 
-/** Wykres z makiety 2c. Geometria przepisana z prototypu, nie dobrana na oko:
- *  viewBox 1000x200, os y=190, siatka 148/106/64/22, pole rysowania 168 px. */
+/** The chart from mockup 2c. Geometry copied from the prototype, not eyeballed:
+ *  viewBox 1000x200, axis y=190, grid 148/106/64/22, drawing field 168 px. */
 const W = 1000;
 const Y0 = 190;
 const Y100 = 22;
@@ -19,8 +19,8 @@ const x = (ms: number, fromMs: number, spanMs: number) =>
 const y = (v: number) => +(Y0 - (v / 100) * H).toFixed(2);
 
 export const GAP_LABEL: Record<string, string> = {
-  client_silent: "cisza klienta",
-  no_samples: "brak próbek dla serii",
+  client_silent: "client silent",
+  no_samples: "no samples for this series",
 };
 
 interface Props {
@@ -29,18 +29,18 @@ interface Props {
   gaps: HistoryGap[];
   from: Date;
   to: Date;
-  /** Unikalny prefiks id — dwa facety na jednej stronie nie moga dzielic <pattern>. */
+  /** Unique id prefix — two facets on one page must not share a <pattern>. */
   uid: string;
 }
 
 interface Hover {
   xPct: number;
-  /** Pozycja kropki w % wysokosci wykresu. null = brak pomiaru, wiec i kropki nie ma. */
+  /** Dot position in % of the chart height. null = no measurement, so there is no dot either. */
   yPct: number | null;
   head: string;
   body: string;
   note: string | null;
-  /** Podpowiedz nad dziura ma inny ton — to nie jest odczyt. */
+  /** The tooltip over a gap has a different tone — it is not a reading. */
   muted: boolean;
 }
 
@@ -53,8 +53,8 @@ export function HistoryChart({ points, resets, gaps, from, to, uid }: Props) {
   const plotRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<Hover | null>(null);
 
-  /** Kolejnosc regul jest nosna: najpierw przyciaganie do realnej probki, potem dziura.
-   *  Odwrotnie dymek nad dziura podstawialby wartosc najblizszego pomiaru. */
+  /** The order of the rules carries meaning: first the snap to a real sample, then the gap.
+   *  The other way round, a tooltip over a gap would substitute the nearest measurement. */
   function hoverAt(clientX: number): Hover | null {
     const rect = plotRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0) return null;
@@ -71,8 +71,8 @@ export function HistoryChart({ points, resets, gaps, from, to, uid }: Props) {
         best = p;
       }
     }
-    // 10 px w jednostkach czasu — przyciaganie ma byc odczuwalne, ale nie siegac przez
-    // pol wykresu przy rzadkich danych.
+    // 10 px in time units — the snap has to be felt, but must not reach across half the
+    // chart when the data is sparse.
     const snapMs = (spanMs / rect.width) * 10;
     const gap = gaps.find((g) => ms >= Date.parse(g.from) && ms <= Date.parse(g.to));
 
@@ -94,15 +94,15 @@ export function HistoryChart({ points, resets, gaps, from, to, uid }: Props) {
       xPct: x(Date.parse(best.t), fromMs, spanMs) / 10,
       yPct: best.avg === null ? null : (y(best.avg) / 200) * 100,
       head: withDay ? `${dm(t)} ${hm(t)}` : hm(t),
-      body: value === null ? "brak pomiaru" : `${value}%`,
+      body: value === null ? "no measurement" : `${value}%`,
       note: noteFor(best),
       muted: value === null,
     };
   }
 
-  /** Sciezka lamie sie na dziurach — osobne `M` na kazdy ciagly odcinek.
-   *  Warunek patrzy na ODCINEK miedzy punktami, nie na punkty w dziurze: dziura to
-   *  wlasnie okres bez probek, wiec szukanie punktow w niej nigdy nic nie znajdzie. */
+  /** The path breaks at the gaps — a separate `M` for every continuous run.
+   *  The condition looks at the SEGMENT between points, not at points inside the gap: a gap
+   *  is precisely a period without samples, so looking for points in it never finds any. */
   const runs: { x: number; y: number }[][] = [];
   let run: { x: number; y: number }[] = [];
   let prevMs: number | null = null;
@@ -126,7 +126,7 @@ export function HistoryChart({ points, resets, gaps, from, to, uid }: Props) {
   const segments = runs
     .filter((r) => r.length > 1)
     .map((r) => `M${r.map((q) => `${q.x} ${q.y}`).join(" L")}`);
-  // Pojedynczy pomiar nie tworzy odcinka, wiec dostaje wlasny marker.
+  // A single measurement makes no segment, so it gets a marker of its own.
   const dots = runs.filter((r) => r.length === 1).map((r) => r[0]!);
 
   const ticks = xTicks(fromMs, spanMs);
@@ -150,10 +150,10 @@ export function HistoryChart({ points, resets, gaps, from, to, uid }: Props) {
             viewBox={`0 0 ${W} 200`}
             preserveAspectRatio="none"
             role="img"
-            aria-label="przebieg wykorzystania limitu w czasie"
+            aria-label="limit utilization over time"
           >
             <defs>
-              {/* skos = klient milczal; kropki = klient dzialal, ale brak probek serii */}
+              {/* diagonal = the client was silent; dots = the client ran, but no samples for the series */}
               <pattern
                 id={`${uid}-silent`}
                 width="8"
@@ -209,14 +209,14 @@ export function HistoryChart({ points, resets, gaps, from, to, uid }: Props) {
                 stroke="var(--color-accent-300)"
                 strokeWidth="1.7"
                 strokeLinejoin="round"
-                // preserveAspectRatio="none" rozciagnelaby tez grubosc kreski
+                // preserveAspectRatio="none" would stretch the stroke width too
                 vectorEffect="non-scaling-stroke"
               />
             ))}
 
           </svg>
 
-          {/* Poza SVG, bo `preserveAspectRatio="none"` sciska os X i zniekształca kolo. */}
+          {/* Outside the SVG, because `preserveAspectRatio="none"` squeezes the X axis and distorts a circle. */}
           {dots.map((d) => (
             <span
               key={`${d.x}-${d.y}`}
@@ -262,11 +262,11 @@ export function HistoryChart({ points, resets, gaps, from, to, uid }: Props) {
   );
 }
 
-/** Podzialka co rowna godzine/dobe, nigdy wiecej niz 8 dzialek.
+/** A tick every whole hour/day, never more than 8 ticks.
  *
- *  Rownamy przez `Date` do granic LOKALNYCH, nie arytmetyka na `ms`: ta trafia w pelne
- *  godziny UTC, wiec w strefie z polowka godziny wszystkie dzialki mialyby ":30".
- *  Przy okazji zalatwia zmiane czasu — doba ze zmiana ma 23 albo 25 godzin. */
+ *  We align through `Date` to LOCAL boundaries, not by arithmetic on `ms`: that one lands on
+ *  whole UTC hours, so in a half-hour zone every tick would read ":30".
+ *  It settles the clock change on the way — a day with a change has 23 or 25 hours. */
 function xTicks(fromMs: number, spanMs: number) {
   const hours = spanMs / 3_600_000;
   const stepH = hours <= 8 ? 1 : hours <= 30 ? 3 : hours <= 200 ? 24 : 24 * 5;
@@ -291,7 +291,7 @@ function xTicks(fromMs: number, spanMs: number) {
   return out;
 }
 
-/** Srednia zaciera piki, wiec obok niej ida min-max i n. Downsampling ma byc widoczny. */
+/** The average blurs peaks, so min-max and n go next to it. Downsampling must be visible. */
 function noteFor(p: HistoryPoint): string | null {
   if (p.n <= 1) return null;
   const lo = pct(p.min);
@@ -300,11 +300,11 @@ function noteFor(p: HistoryPoint): string | null {
   return `n = ${p.n}`;
 }
 
-/** Dymek nie moze wyjechac poza wykres ani zaslonic kropki, ktora opisuje. */
+/** The tooltip must not run off the chart or cover the dot it describes. */
 function tipStyle(h: Hover): CSSProperties {
   const tx = h.xPct < 16 ? "0" : h.xPct > 84 ? "-100%" : "-50%";
   const noDot = h.yPct === null;
-  // yPct rosnie w dol, wiec mala wartosc = wysoki punkt = dymek musi isc POD kropke
+  // yPct grows downwards, so a small value = a high point = the tooltip must go BELOW the dot
   const ty = noDot ? "0" : h.yPct! > 34 ? "calc(-100% - 12px)" : "12px";
   return {
     left: `${h.xPct}%`,

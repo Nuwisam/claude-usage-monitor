@@ -41,8 +41,8 @@ def test_korzen_oddaje_powloke_spa(client):
 
 
 def test_sciezka_routera_tez_oddaje_powloke(client):
-    """Deep link w /historia musi dzialac po odswiezeniu strony, nie dawac 404."""
-    r = client.get("/historia")
+    """Deep link w /history musi dzialac po odswiezeniu strony, nie dawac 404."""
+    r = client.get("/history")
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
 

@@ -8,17 +8,17 @@ import { GAP_LABEL, HistoryChart } from "./HistoryChart";
 
 interface Props {
   account: AccountStatus;
-  /** Seria TEGO konta odpowiadajaca wybranemu `seriesKey`. null = konto jej nie ma. */
+  /** THIS account's series matching the selected `seriesKey`. null = the account has none. */
   series: SeriesStatus | null;
   from: Date;
   to: Date;
-  /** Kotwica minutowa z Historii — nie zegar tykajacy co sekunde, bo widok przeladowywalby
-   *  sie przy kazdym tyknieciu. Facet czyta z widoku tylko liczbe, wiec minuta wystarcza. */
+  /** The minute anchor from History — not a clock ticking every second, because the view
+   *  would reload on every tick. The facet reads only the number from it, so a minute is enough. */
   nowMs: number;
 }
 
-/** Facet per konto, nigdy wspolna os: limit Team zalezy od tier miejsca i jest dzielony
- *  z Claude chat i Cowork, Max ma wlasny — te same 40% to inne ilosci bezwzgledne. */
+/** A facet per account, never a shared axis: the Team limit depends on the seat tier and is
+ *  shared with Claude chat and Cowork, Max has its own — the same 40% is a different amount. */
 export function HistoryFacet({ account, series, from, to, nowMs }: Props) {
   const q = useHistory(account.uuid, series?.seriesId ?? null, from, to);
   const plan = [account.orgType, account.rateLimitTier].filter(Boolean).join(" · ");
@@ -28,7 +28,7 @@ export function HistoryFacet({ account, series, from, to, nowMs }: Props) {
     <section className="facet">
       <div className="facet-head">
         <h5>{account.email ?? account.uuid}</h5>
-        <span className="facet-plan">{plan || "plan nieznany"}</span>
+        <span className="facet-plan">{plan || "plan unknown"}</span>
         <span className="facet-stats">{statsLabel(q.data?.points, q.isLoading)}</span>
         {view?.number !== null && view?.number !== undefined ? (
           <span className="facet-now">{view.number}%</span>
@@ -41,7 +41,7 @@ export function HistoryFacet({ account, series, from, to, nowMs }: Props) {
 
       {series === null ? (
         <div className="empty-slot" style={{ marginTop: "var(--space-4)" }}>
-          to konto nie ma tej serii — nie ma czego rysować
+          this account does not have this series — there is nothing to draw
         </div>
       ) : q.error ? (
         <ErrorBlock error={q.error} onRetry={() => q.refetch()} />
@@ -63,7 +63,7 @@ export function HistoryFacet({ account, series, from, to, nowMs }: Props) {
             ))}
             {q.data && q.data.points.length === 0 && (
               <span className="facet-note">
-                brak próbek w tym zakresie — dane przyrastają tylko wtedy, gdy pracujesz
+                no samples in this range — the data only grows while you work
               </span>
             )}
           </div>
@@ -74,10 +74,10 @@ export function HistoryFacet({ account, series, from, to, nowMs }: Props) {
 }
 
 function statsLabel(points: Parameters<typeof statsOf>[0] | undefined, loading: boolean) {
-  if (loading) return "czytam…";
+  if (loading) return "reading…";
   if (!points) return "";
   const s = statsOf(points);
-  if (!s) return "brak danych w zakresie";
+  if (!s) return "no data in the range";
   const n = s.n.toLocaleString("pl-PL");
-  return `min ${pct(s.min)} · max ${pct(s.max)} · ostatnia ${pct(s.last) ?? "—"} · n = ${n}`;
+  return `min ${pct(s.min)} · max ${pct(s.max)} · last ${pct(s.last) ?? "—"} · n = ${n}`;
 }

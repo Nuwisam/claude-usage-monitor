@@ -337,7 +337,7 @@ def test_alert_bije_niezgodny_kontrakt():
     z.skok(5)
     ekran = a.screen()
     assert ekran.alert is not None
-    assert "kontrakt" in ekran.alert.footer, "informacja o kontrakcie schodzi do stopki"
+    assert "contract" in ekran.alert.footer, "the contract notice drops into the footer"
 
 
 def test_po_karcie_nie_wracamy_do_holding():

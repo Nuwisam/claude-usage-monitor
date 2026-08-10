@@ -7,20 +7,20 @@ import { UtilBar } from "./UtilBar";
 interface Props {
   s: SeriesStatus;
   nowMs: number;
-  /** Zgaszona seria `extra_usage` tego konta — drugi widok TEJ SAMEJ puli kredytow.
-   *  Jej wiersz nie jest rysowany (`primary: false`), ale flagi z niej sa jedyna
-   *  odpowiedzia na pytanie „dlaczego kredyty nie dzialaja", wiec ida pod „?".
-   *  Nieobecna na koncie, ktore kredytow nigdy nie mialo — i to jest poprawny stan. */
+  /** This account's suppressed `extra_usage` series — a second view of THE SAME credit pool.
+   *  Its row is not drawn (`primary: false`), but its flags are the only answer to the
+   *  question "why are the credits not working", so they go under the "?".
+   *  Absent on an account that never had credits — and that is a correct state. */
   eu?: SeriesStatus;
 }
 
-/** Wiersz serii. `isActive` nie przestawia hierarchii widoku — jest kreska i slowem.
- *  Cztery obszary siatki zamiast zagniezdzonych blokow, zeby waski uklad przestawil je
- *  bez zmiany DOM (grid-template-areas w app.css). */
+/** A series row. `isActive` does not rearrange the view hierarchy — it is a dash and a word.
+ *  Four grid areas instead of nested blocks, so that a narrow layout can rearrange them
+ *  without changing the DOM (grid-template-areas in app.css). */
 export function SeriesRow({ s, nowMs, eu }: Props) {
   const v = describeSeries(s, nowMs, spendNote(s));
   const reset = resetNote(s, nowMs);
-  // `source` to enum kontraktu, nie nazwa klucza (zasada 5) — ten sam test co w `spendNote`.
+  // `source` is a contract enum, not a key name (rule 5) — the same test as in `spendNote`.
   const facts = s.source === "spend" ? creditsFacts(s, eu) : null;
 
   return (
@@ -31,7 +31,7 @@ export function SeriesRow({ s, nowMs, eu }: Props) {
           {s.label}
         </span>
         {facts && (
-          <HelpDot label="Czym jest ta pula i w jakim stanie są kredyty">
+          <HelpDot label="What this pool is and what state the credits are in">
             <span className="help-lead">{POOL_DEFINITION}</span>
             {facts.length > 0 && (
               <span className="help-facts">
@@ -48,7 +48,7 @@ export function SeriesRow({ s, nowMs, eu }: Props) {
             )}
           </HelpDot>
         )}
-        {s.isActive && <span className="series-binds">wiąże</span>}
+        {s.isActive && <span className="series-binds">binds</span>}
       </div>
 
       <UtilBar v={v} />
@@ -62,7 +62,7 @@ export function SeriesRow({ s, nowMs, eu }: Props) {
       <div className="series-sub">
         <span className="series-note">
           {v.note} · <span className="series-reset">{reset.lead}</span>
-          {/* Bez „o" — przyimek jest juz w `reset.at`, bo zmienia sie razem z dniem. */}
+          {/* No "at" — the preposition is already in `reset.at`, it changes with the day. */}
           {reset.at && <span className="series-reset-at"> · {reset.at}</span>}
         </span>
       </div>

@@ -108,7 +108,7 @@ async def get_or_create_account(db: AsyncSession, acct: dict,
     if not created and before != after:
         changed = {k: [before[k], after[k]] for k in before if before[k] != after[k]}
         await _event(db, level="info", event_type="plan_changed", account_id=a.id,
-                     message="Zmiana pol planu konta", detail=changed)
+                     message="Account plan fields changed", detail=changed)
     return a, created
 
 
@@ -265,7 +265,7 @@ async def _write_observation(
         if o.unavailable_reason and not was:
             await _event(db, level="warn", event_type="meter_withdrawn",
                          account_id=account.id, batch_id=batch.id,
-                         message="Miernik %s wycofany przez organizacje" % series.series_key,
+                         message="Meter %s withdrawn by the organization" % series.series_key,
                          detail={"series": series.series_key,
                                  "reason": o.unavailable_reason,
                                  # Powod z cache KLIENTA (`cachedExtraUsageDisabledReason`)
@@ -278,7 +278,7 @@ async def _write_observation(
         elif was and not o.unavailable_reason:
             await _event(db, level="info", event_type="meter_restored",
                          account_id=account.id, batch_id=batch.id,
-                         message="Miernik %s znow dziala" % series.series_key,
+                         message="Meter %s is working again" % series.series_key,
                          detail={"series": series.series_key, "was_reason": was,
                                  "client_reason": client_reason,
                                  "utilization": o.utilization})
@@ -423,7 +423,7 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         batch.ok = False
         batch.error_kind = "no_account"
         await _event(db, level="warn", event_type="no_oauth_account", batch_id=batch.id,
-                     message="Payload bez account.uuid — pomiar odrzucony")
+                     message="Payload without account.uuid — measurement rejected")
         return {"samples_written": 0, "batch_id": batch.id, "ok": False,
                 "account_uuid": None}
 
@@ -433,7 +433,7 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
 
     if created:
         await _event(db, level="info", event_type="account_created", account_id=account.id,
-                     batch_id=batch.id, message="Wykryto nowe konto",
+                     batch_id=batch.id, message="New account detected",
                      detail={"email": acct.get("email"), "org_type": acct.get("org_type")})
 
     # para (maszyna, konto) — detekcja zamiast zakazu
@@ -446,7 +446,7 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
                               last_seen_at=now, samples=0))
         await _event(db, level="info", event_type="new_account_for_token",
                      account_id=account.id, batch_id=batch.id,
-                     message="Maszyna %s po raz pierwszy raportuje to konto" % machine_name)
+                     message="Machine %s reports this account for the first time" % machine_name)
     else:
         ma.last_seen_at = now
         ma.samples = (ma.samples or 0) + 1
@@ -460,14 +460,14 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
     )).scalar_one_or_none()
     if prev is not None and prev.account_id != account.id:
         await _event(db, level="info", event_type="account_switched", account_id=account.id,
-                     batch_id=batch.id, message="Przelaczenie konta na maszynie %s" % machine_name,
+                     batch_id=batch.id, message="Account switched on machine %s" % machine_name,
                      detail={"from_account_id": prev.account_id, "to_account_id": account.id})
 
     if not isinstance(usage, dict):
         batch.ok = False
         batch.error_kind = "no_usage"
         await _event(db, level="warn", event_type="parse_error", account_id=account.id,
-                     batch_id=batch.id, message="Brak obiektu usage w payloadzie")
+                     batch_id=batch.id, message="No usage object in the payload")
         # account_uuid despite ok=False: the batch WAS assigned to an account, so
         # `last_batch_at` moved — and that is precisely what lets `freshness()` tell
         # "the client was silent" apart from "the client was alive and there is still no
@@ -510,7 +510,7 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         batch.error_kind = "clock_backwards"
         await _event(db, level="warn", event_type="clock_backwards", account_id=account.id,
                      batch_id=batch.id,
-                     message="Pomiar datowany PO wyslaniu — zegar klienta cofniety",
+                     message="Measurement dated AFTER it was sent — client clock moved back",
                      detail={"captured_at": payload.get("captured_at"),
                              "fresh_at": meas.get("fresh_at"),
                              "sent_at": meas.get("sent_at")})
@@ -522,14 +522,14 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
     if abs(offset.total_seconds()) > settings.clock_skew_tolerance_sec:
         await _event(db, level="warn", event_type="clock_skew", account_id=account.id,
                      batch_id=batch.id,
-                     message="Zegar klienta rozjechany o %ds" % int(offset.total_seconds()),
+                     message="Client clock skewed by %ds" % int(offset.total_seconds()),
                      detail={"sent_at": meas.get("sent_at"),
                              "arrived_at": arrived_at.isoformat()})
 
     parsed = parse_usage(usage, fresh_covered)
     if parsed.problems:
         await _event(db, level="warn", event_type="schema_drift", account_id=account.id,
-                     batch_id=batch.id, message="Nieoczekiwany ksztalt odpowiedzi",
+                     batch_id=batch.id, message="Unexpected response shape",
                      detail={"problems": parsed.problems})
 
     cache: dict[str, UsageSeries] = {}
@@ -564,7 +564,7 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
     if undated:
         await _event(db, level="warn", event_type="no_captured_at", account_id=account.id,
                      batch_id=batch.id,
-                     message="%d obserwacji bez czasu pomiaru — pominiete" % undated,
+                     message="%d observations without a measurement time — skipped" % undated,
                      detail={"captured_at": payload.get("captured_at"),
                              "fresh_at": meas.get("fresh_at")})
 
@@ -576,12 +576,12 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
 
     if new_series:
         await _event(db, level="info", event_type="series_registered", account_id=account.id,
-                     batch_id=batch.id, message="Zarejestrowano nowe serie",
+                     batch_id=batch.id, message="New series registered",
                      detail={"series": new_series})
     if stale:
         await _event(db, level="info", event_type="stale_read", account_id=account.id,
                      batch_id=batch.id,
-                     message="%d nieaktualnych odczytow — stan biezacy nietkniety" % stale)
+                     message="%d stale readings — current state untouched" % stale)
 
     batch.samples_written = written
     return {"samples_written": written, "batch_id": batch.id, "ok": True,

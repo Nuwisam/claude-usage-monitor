@@ -1,10 +1,10 @@
-"""Cel zadania harmonogramu. Rozszerzenie .pyw + pythonw.exe = brak okna konsoli.
+"""The scheduled task's target. The .pyw extension + pythonw.exe = no console window.
 
-Ten plik jest w repo, ale zadanie NIE wskazuje na niego wprost. Pod sciezka
-%LOCALAPPDATA%\\claude-usage-monitor\\panel-run.pyw lezy kilkanascie linijek
-przekierowania, ktore uruchamiaja TEN plik spod repo — ta sama konwencja co
-przy sondzie (client/README.md). Dzieki temu edycja w repo dziala od razu,
-bez kopiowania, a Windows nie wymaga praw administratora na dowiazanie.
+This file lives in the repo, but the task does NOT point at it directly. Under
+%LOCALAPPDATA%\\claude-usage-monitor\\panel-run.pyw sits a dozen-odd lines of
+redirection that run THIS file from the repo — the same convention as with the
+probe (client/README.md). Thanks to that, editing in the repo takes effect at once,
+without copying, and Windows does not demand administrator rights for a link.
 """
 import os
 import sys
@@ -15,32 +15,33 @@ if HERE not in sys.path:
 
 
 def _card(lines):
-    """Pelnoekranowa karta na panelu.
+    """A full-screen card on the panel.
 
-    ConfigError obiecuje w swoim docstringu, ze blad konfiguracji jest WIDOCZNY
-    NA PANELU, a Renderer._message powtarza to samo zdanie. Zadne z nich nie
-    bylo prawda: app.main() rzuca, zanim powstanie App, wiec do urzadzenia nikt
-    nie siegal. Na biurku zostawal ostatni dobry obraz — zamrozone, wiarygodnie
-    wygladajace liczby, czyli dokladnie ten tryb awarii, przed ktorym broni
-    zasada 4 z AGENTS.md. Log tego nie zastepuje: nikt go nie otwiera, dopoki
-    nie zobaczy, ze cos jest nie tak.
+    ConfigError promises in its own docstring that a configuration error is VISIBLE
+    ON THE PANEL, and Renderer._message repeats the same sentence. Neither of them
+    was true: app.main() raises before App comes into being, so nobody ever reached
+    the device. What stayed on the desk was the last good image — frozen,
+    credible-looking numbers, that is exactly the failure mode rule 4 of AGENTS.md
+    defends against. A log is no substitute: nobody opens it until they see that
+    something is wrong.
 
-    Karta idzie na WSZYSTKIE skonfigurowane ekrany, kazdy osobno: pol biurka
-    z bledem, a pol z zamrozonymi, wiarygodnie wygladajacymi liczbami byloby
-    gorsze niz stan sprzed tej funkcji.
+    The card goes to ALL configured screens, each one separately: half a desk with
+    an error and half with frozen, credible-looking numbers would be worse than the
+    state before this function existed.
     """
     from panel import config as C, render
     from panel.drivers import REGISTRY
     from panel.link import PanelLink
 
-    # Z pliku bierzemy WYLACZNIE wskazanie ekranu i sciezke do libusb, i tylko gdy
-    # maja poprawny ksztalt. Powod na "bierzemy": walidacja odrzuca konfiguracje
-    # najczesciej z powodu, ktory z wyborem urzadzenia nie ma nic wspolnego (brak
-    # tokenu, zle uuid), a przy dwoch ekranach domyslny brak selektora nie trafilby
-    # w zaden. Powod na "wylacznie": to jest sciezka wyswietlania BLEDU KONFIGURACJI,
-    # wiec nie wolno jej karmic niesprawdzonymi polami z tego samego pliku —
-    # `"device": "cos"` rzucaloby AttributeError w select(), a `"brightness": "duzo"`
-    # ValueError w set_brightness(). Blad w pokazywaniu bledu zostawia ciemne szklo.
+    # From the file we take ONLY the screen selector and the path to libusb, and only
+    # when they have the right shape. The reason for "we take": validation rejects a
+    # configuration most often for a reason that has nothing to do with the choice of
+    # device (a missing token, a bad uuid), and with two screens the default absence of
+    # a selector would hit neither. The reason for "only": this is the path that shows
+    # a CONFIGURATION ERROR, so it must not be fed unchecked fields from that same
+    # file — `"device": "something"` would raise AttributeError in select(), and
+    # `"brightness": "a lot"` a ValueError in set_brightness(). An error while showing
+    # an error leaves the glass dark.
     try:
         raw = C.load()._d
     except C.ConfigError:
@@ -53,28 +54,27 @@ def _card(lines):
         if not isinstance(entry, dict) or entry.get("backend") not in REGISTRY:
             continue
         mod = REGISTRY[entry["backend"]]
-        # Sanityzacja per wpis: zostaje backend i dobrze otypowany selektor.
-        # `brightness` ODPADA celowo — wartosc z zepsutego pliku poszlaby prosto
-        # do set_brightness(), a to jest jedyna rzecz, ktora ta funkcja musi
-        # przezyc.
+        # Sanitization per entry: the backend and a well-typed selector stay.
+        # `brightness` DROPS OUT deliberately — a value from a broken file would go
+        # straight into set_brightness(), and that is the one thing this function
+        # has to survive.
         clean = {"backend": entry["backend"]}
         for key in mod.SELECTOR_KEYS:
             value = entry.get(key)
             if isinstance(value, (str, int)) and not isinstance(value, bool):
                 clean[key] = value
-        # `rotate` ZOSTAJE, w przeciwienstwie do brightness: ekran powieszony do
-        # gory nogami dostalby karte bledu do gory nogami, czyli nieczytelna —
-        # a to jest dokladnie ta jedna rzecz, ktora ta funkcja ma pokazac.
-        # Bezpiecznie, bo przepuszczamy tylko dwie znane wartosci; cokolwiek
-        # innego znaczy 0 i widoczna karte, nie ciemne szklo.
+        # `rotate` STAYS, unlike brightness: a screen hung upside down would get the
+        # error card upside down, that is unreadable — and that is precisely the one
+        # thing this function is there to show. Safe, because we let through only two
+        # known values; anything else means 0 and a visible card, not dark glass.
         if entry.get("rotate") in C.ROTATIONS:
             clean["rotate"] = entry["rotate"]
         entries.append(clean)
     if not entries:
-        # Nic nie przetrwalo — wracamy do dzisiejszej semantyki: bez selektora,
-        # czyli "dokladnie jeden ekran albo DeviceNotFound". Braniem wszystkiego,
-        # co widac, zlamalibysmy zasade z naglowka device.py wlasnie tam, gdzie
-        # niczego nie da sie sprawdzic.
+        # Nothing survived — we fall back to today's semantics: no selector, that is
+        # "exactly one screen or DeviceNotFound". By taking everything in sight we
+        # would break the rule from device.py's header precisely where nothing can
+        # be checked.
         entries = [{"backend": name} for name in sorted(REGISTRY)]
     safe["panels"] = entries
 
@@ -86,7 +86,7 @@ def _card(lines):
         try:
             link.send(frame, force=True)
         except Exception:
-            # Jeden ekran zajety nie moze zabrac karty pozostalym.
+            # One busy screen must not take the card away from the others.
             pass
         finally:
             link.close()
@@ -108,18 +108,19 @@ def main():
             pass
         return 0
     except C.ConfigError as e:
-        # Bez konsoli komunikat musi trafic do logu — inaczej petla restartow
-        # co minute nie zostawia po sobie nic.
+        # With no console the message has to reach the log — otherwise a restart loop
+        # every minute leaves nothing behind it.
         try:
             logmod.setup(C.DEFAULT_LOG, "INFO", console=False).error(
                 "konfiguracja: %s", e)
         except Exception:
             pass
         try:
-            _card(["Błąd konfiguracji", str(e), C.CONFIG_PATH])
+            _card(["Configuration error", str(e), C.CONFIG_PATH])
         except Exception:
-            # Panel bywa zajety albo wypiety. Komunikat w logu juz poszedl,
-            # a wywrocenie sie tutaj zamienialoby zly config w twarda awarie.
+            # The panel is at times busy or unplugged. The log message has already
+            # gone out, and falling over here would turn a bad config into a hard
+            # failure.
             pass
         return 2
 

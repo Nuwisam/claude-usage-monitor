@@ -33,7 +33,7 @@ export function App() {
       />
       <Routes>
         <Route path="/" element={<Live />} />
-        <Route path="/historia" element={<History />} />
+        <Route path="/history" element={<History />} />
         <Route path="*" element={<Live />} />
       </Routes>
     </div>

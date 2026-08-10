@@ -13,20 +13,20 @@ interface Props {
   stream: StreamState;
 }
 
-/** „15 s" / „3 min" — kadencja w naglowku. Lokalne, bo to jedyne miejsce z takim zapisem;
- *  `ago` i `countdown` z lib/time maja inna semantyke („temu", „po resecie"). */
+/** "15 s" / "3 min" — the cadence in the header. Local, because this is the only place with
+ *  this form; `ago` and `countdown` from lib/time mean something else ("ago", "past reset"). */
 function every(ms: number): string {
   return ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : `${Math.round(ms / 1000)} s`;
 }
 
 export function Nav({ contractVersion, updatedAtMs, nowMs, stalled, stream }: Props) {
   const mismatch = contractVersion !== undefined && contractVersion !== CONTRACT_VERSION;
-  // Nazwac wprost, skad biora sie dane. „na żywo" znaczy, ze pomiar widac natychmiast;
-  // przy zerwanym strumieniu uczciwiej jest pokazac tempo odpytywania niz udawac push.
+  // Name outright where the data comes from. "live" means the measurement shows at once;
+  // with a broken stream it is honester to show the polling rate than to fake a push.
   const cadence =
     stream === "live"
-      ? `na żywo · kontrola co ${every(STATUS_REFETCH_LIVE_MS)}`
-      : `co ${every(STATUS_REFETCH_MS)}`;
+      ? `live · check every ${every(STATUS_REFETCH_LIVE_MS)}`
+      : `every ${every(STATUS_REFETCH_MS)}`;
 
   return (
     <div className="nav app-nav">
@@ -34,7 +34,7 @@ export function Nav({ contractVersion, updatedAtMs, nowMs, stalled, stream }: Pr
       <NavLink to="/" end>
         Live
       </NavLink>
-      <NavLink to="/historia">Historia</NavLink>
+      <NavLink to="/history">History</NavLink>
 
       <div className="app-nav-right">
         <span
@@ -42,23 +42,23 @@ export function Nav({ contractVersion, updatedAtMs, nowMs, stalled, stream }: Pr
           data-mismatch={mismatch}
           title={
             mismatch
-              ? `UI zbudowany na kontrakt v${CONTRACT_VERSION}, backend mówi v${contractVersion} — dane mogą być renderowane błędnie`
-              : "wersja kontraktu API"
+              ? `UI built against contract v${CONTRACT_VERSION}, the backend says v${contractVersion} — the data may be rendered wrongly`
+              : "API contract version"
           }
         >
-          kontrakt v{contractVersion ?? "?"}
+          contract v{contractVersion ?? "?"}
           {mismatch ? ` ≠ v${CONTRACT_VERSION}` : ""}
         </span>
-        {/* Caly napis w JEDNYM spanie: `.live-dot` jest flexem z `gap`, wiec rozbicie go
-            na rodzenstwo rozpychaloby odstepy miedzy slowami. Wasko zostaje samo
-            „3 s temu" (makieta 2b) — reszte chowa @media. */}
+        {/* The whole caption in ONE span: `.live-dot` is a flex with `gap`, so splitting it
+            into siblings would push the spacing between words apart. Narrow leaves just
+            "3 s ago" (mockup 2b) — @media hides the rest. */}
         <span className="live-dot" data-stalled={stalled} data-stream={stream}>
           <span>
             {updatedAtMs === null ? (
-              "brak odczytu"
+              "no reading"
             ) : (
               <>
-                <span className="live-verb">odświeżono </span>
+                <span className="live-verb">refreshed </span>
                 {ago(updatedAtMs, nowMs)}
                 <span className="live-cadence"> · {cadence}</span>
               </>

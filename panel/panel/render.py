@@ -1,9 +1,9 @@
-"""Rysowanie klatki 4a.
+"""Drawing frame 4a.
 
-Renderer rysuje JEDNO logiczne plotno i nie wie o zadnym wyswietlaczu: ani o
-kolejnosci bajtow, ani o obrocie, ani o tym, czy ekran umie przyjac prostokat.
-Klatka powstaje w calosci za kazdym razem (~10 ms); co z niej trafi na szklo
-i w jakiej postaci, rozstrzyga warstwa panelu (panel/surface.py + sterownik).
+The renderer draws ONE logical canvas and knows about no display at all: not the
+byte order, not the rotation, not whether the screen can take a rectangle. The
+frame is built whole every time (~10 ms); what of it reaches the glass, and in
+what form, is settled by the panel layer (panel/surface.py + driver).
 """
 from PIL import Image
 
@@ -15,13 +15,13 @@ from .pixels import pack_rgb565
 # out of hairlines that do not survive that.
 _ROTATIONS = {90: Image.ROTATE_90, 180: Image.ROTATE_180, 270: Image.ROTATE_270}
 
-LABEL_SESSION = "SESJA 5 H"
-LABEL_WEEK = "TYDZIEŃ"
-LABEL_CREDITS = "KREDYTY"
+LABEL_SESSION = "SESSION 5 H"
+LABEL_WEEK = "WEEK"
+LABEL_CREDITS = "CREDITS"
 
 
 class BandState:
-    """Wszystko, co pas konta ma pokazac. Skladane w app.py."""
+    """Everything the account band has to show. Assembled in app.py."""
 
     __slots__ = ("title", "plan", "session", "weekly", "credits",
                  "session_view", "weekly_view", "reset_session", "reset_week",
@@ -43,83 +43,86 @@ class BandState:
         self.ago = ago
         self.note = note
         self.show_clock = show_clock
-        # Powod blokady jednym slowem albo None. Zapala pasek akcentu na lewej krawedzi
-        # pasa i przelacza nazwe konta na ACCENT_100 — czerwieni nie ma w projekcie.
+        # The block reason in a single word, or None. Lights the accent bar on the left
+        # edge of the band and switches the account name to ACCENT_100 — no red here.
         self.alert = alert
 
 
 class AlertRow:
-    """Jedna blokada w postaci gotowej do narysowania. Kazdy uklad karty bierze
-    z tego samego zestawu pol — rozni sie tym, ktore pokazuje i jak duzo."""
+    """A single block in a form ready to draw. Every card layout takes from the same
+    set of fields — they differ in which ones they show and in how much."""
 
     __slots__ = ("short", "project", "tool", "machine", "waited", "detail", "mode")
 
     def __init__(self, short="", project="", tool="", machine="", waited="",
                  detail="", mode=""):
-        self.short = short          # powod jednym slowem: zgoda / pytanie / plan
+        self.short = short          # the reason in one word: allow / question / plan
         self.project = project
         self.tool = tool
         self.machine = machine
         self.waited = waited
         self.detail = detail
-        self.mode = mode            # tryb uprawnien (+ typ subagenta)
+        self.mode = mode            # permission mode (+ subagent type)
 
 
 class AlertState:
-    """Karta przejmujaca ekran. Skladana przez `alert_state()`.
+    """The card that takes over the screen. Assembled by `alert_state()`.
 
-    Uklad wybiera sie LICZBA blokad, nie flaga: prog jest przy trzech, bo trzy nazwy
-    projektow w 34 px nie istnieja. Stan niesie wiec wszystkie wiersze, a renderer
-    rozstrzyga, ile z nich i jak duzo o kazdym zmiesci sie na 480 x 320.
+    The layout is chosen by the NUMBER of blocks, not by a flag: the threshold is at
+    three, because three project names at 34 px do not exist. So the state carries all
+    the rows, and the renderer settles how many of them, and how much about each, fits
+    on 480 x 320.
     """
 
     __slots__ = ("title", "rows", "count", "at", "rest", "footer", "flood")
 
     def __init__(self, title="", rows=(), count=0, at="", rest=(), footer=None,
                  flood=False):
-        self.flood = flood          # klatka PELNA: pasmo zalane akcentem plus rail
-        self.title = title          # baner: CZEKA NA ZGODĘ / CZEKAJĄ · 3 / ...
+        self.flood = flood          # the FULL frame: banner flooded with accent, plus rail
+        self.title = title          # banner: NEEDS PERMISSION / WAITING · 3 / ...
         self.rows = list(rows)
-        self.count = count          # WSZYSTKIE blokady, takze niewypisane
-        self.at = at                # godzina najstarszego czekania NA EKRANIE
-        self.rest = list(rest)      # nazwy projektow, ktore nie zmiescily sie w wierszach
-        self.footer = footer        # np. informacja o niezgodnym kontrakcie
+        self.count = count          # ALL blocks, including the unlisted ones
+        self.at = at                # the hour of the oldest wait ON SCREEN
+        self.rest = list(rest)      # names of the projects that did not fit into the rows
+        self.footer = footer        # e.g. a note about a contract mismatch
 
 
 class ScreenState:
-    # __slots__ jako LITERAL, nie `__slots__ += (...)`. To drugie wykonuje sie bez bledu,
-    # przepisuje atrybut klasy i wywala AttributeError dopiero przy pierwszym przypisaniu.
+    # __slots__ as a LITERAL, not `__slots__ += (...)`. The latter runs without an error,
+    # rewrites the class attribute and blows up with AttributeError only on the first
+    # assignment.
     __slots__ = ("clock", "link", "bands", "message", "alert")
 
     def __init__(self, clock="", link="down", bands=(), message=None, alert=None):
         self.clock = clock
         self.link = link            # "live" | "reconnecting" | "down"
         self.bands = list(bands)
-        self.message = message      # pelnoekranowy komunikat zamiast pasow
-        self.alert = alert          # AlertState — bije i pasy, i komunikat
+        self.message = message      # a full-screen message instead of the bands
+        self.alert = alert          # AlertState — beats both the bands and the message
 
 
-# Ile wierszy pokazuje uklad listowy. Wiecej niz trzy nie miesci sie w 282 px
-# w stopniu, ktory da sie przeczytac z drugiego konca biurka.
+# How many rows the list layout shows. More than three does not fit into 282 px at a
+# size that can be read from the far end of the desk.
 ALERT_ROWS_MAX = 3
 
 
 def alert_title(blocked):
-    """Napis w pasmie. Przy jednej blokadzie zdanie o niej, przy wielu licznik.
+    """The banner caption. With one block, a sentence about it; with several, a counter.
 
-    "3 czekają" (doslownie z makiety) nie jest polszczyzna przy pieciu — "5 czekają"
-    to blad, a "5 czeka" to inna forma niz przy trzech. Gole "czekają" BEZ zwiazanego
-    liczebnika jest poprawne dla kazdej licznosci, wiec liczba stoi za kropka jako
-    osobny licznik, a nie jako podmiot.
+    "3 waiting" (the mockup's literal form) does not survive every count in the language
+    this was written for: the bare verb WITHOUT a bound numeral is correct for any count,
+    while a numeral forces a form that changes with it. So the number stands after a dot
+    as a separate counter and not as a subject — a shape that reads the same at three and
+    at five, which is why it stays.
     """
     if len(blocked) == 1:
         return blocked[0].title
-    return "CZEKAJĄ · %d" % len(blocked)
+    return "WAITING · %d" % len(blocked)
 
 
 def alert_state(blocked, now_ms=0.0, footer=None, flood=False):
-    """[status.Blocked] -> AlertState. O kolejnosci rozstrzyga `status.parse_frame`,
-    tutaj juz nie ma decyzji do podjecia poza tym, ile sie zmiesci."""
+    """[status.Blocked] -> AlertState. The order is settled by `status.parse_frame`;
+    there is no decision left to take here beyond how much fits."""
     from . import fmt
 
     if not blocked:
@@ -134,9 +137,9 @@ def alert_state(blocked, now_ms=0.0, footer=None, flood=False):
         detail=b.detail or "",
         mode=b.mode_label,
     ) for b in shown]
-    # Godzina w pasmie to poczatek NAJSTARSZEGO czekania na ekranie, nie `since`
-    # naglowka: wiersze ida od najmlodszej, wiec pierwszy wpis jest z zalozenia
-    # najnowszy — a pasmo ma mowic, jak dlugo to wszystko juz stoi.
+    # The hour in the banner is the start of the OLDEST wait on screen, not the `since`
+    # of the heading: rows run youngest first, so the first entry is by design the
+    # newest — and the banner has to say how long all of this has been standing.
     stamps = [b.since for b in shown if b.since is not None]
     return AlertState(
         title=alert_title(blocked),
@@ -151,15 +154,15 @@ def alert_state(blocked, now_ms=0.0, footer=None, flood=False):
 
 def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None,
                alert=False):
-    """model.AccountStatus -> BandState. JEDYNE miejsce tego przejscia, wspolne
-    dla klienta i dla tools/render-png.py — inaczej narzedzie diagnostyczne
-    pokazywaloby cos innego niz panel."""
+    """model.AccountStatus -> BandState. The ONLY place this transition happens, shared
+    by the client and by tools/render-png.py — otherwise the diagnostic tool would
+    show something other than the panel."""
     from . import fmt
 
     if account is None:
-        # Pas bez ramki mowi wprost, ze nie ma danych. Sama ikonka zegara bez
-        # tekstu wygladalaby jak blad rysowania, a nie jak informacja.
-        why = note or "brak danych z serwera"
+        # A band with no frame says outright that there is no data. A bare clock
+        # glyph with no text would look like a drawing bug, not like information.
+        why = note or "no data from server"
         return BandState(title=name or "—", note=note, show_clock=show_clock,
                          reset_session=(why, None), reset_week=(why, None),
                          ago="—", alert=alert)
@@ -168,16 +171,16 @@ def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None,
     weekly = V.pick_weekly(account.series)
     credits = V.credits(account.rung("credits"))
 
-    # Wiek liczymy z POTWIERDZENIA, nie z zapisu probki: dedup nie zapisuje
-    # probki przy niezmienionej wartosci, wiec `capturedAt` bywa o godziny
-    # starsze niz ostatni pomiar (frontend/src/lib/freshness.ts:37-38).
+    # The age is taken from the CONFIRMATION, not from the sample's write: dedup
+    # does not write a sample when the value has not changed, so `capturedAt` is at
+    # times hours older than the last measurement (frontend/src/lib/freshness.ts:37-38).
     #
-    # Ze STARSZEGO z dwoch okien, nie z pierwszego lepszego. Ta etykieta jest
-    # JEDYNYM nosnikiem swiezosci (patrz view.py) i stoi tylko przy wierszu
-    # sesji — a backend potwierdza kazda serie OSOBNO, wiec tydzien bywa o dni
-    # starszy niz sesja. Biorac stempel sesji, panel pisalby "przed chwila" tuz
-    # obok pewnie wygladajacego paska tygodnia sprzed trzech dni. Wiek ma prawo
-    # przesadzac w strone starosci, nigdy w strone swiezosci.
+    # From the OLDER of the two windows, not from whichever comes first. This label
+    # is the ONLY carrier of freshness (see view.py) and it stands next to the
+    # session row only — while the backend confirms every series SEPARATELY, so the
+    # week is at times days older than the session. Taking the session's stamp, the
+    # panel would write "3 s ago" right next to a confident-looking week bar from
+    # three days back. The age may overstate staleness, never freshness.
     moments = []
     for candidate in (session, weekly):
         if candidate is not None:
@@ -249,14 +252,14 @@ class Renderer:
     def __init__(self, width=480, height=320):
         self.layout = L.Layout(width, height)
 
-    # -- wejscie publiczne -------------------------------------------------
+    # -- public entry ------------------------------------------------------
 
     def frame(self, state):
         img, d = draw.new_canvas((self.layout.width, self.layout.height))
         if state.alert is not None:
-            # Alert bije takze `message`. Odwrotna kolejnosc zdegradowalaby go do
-            # wiersza na dole karty bledu — a to jest jedyna rzecz na tym ekranie,
-            # ktora wymaga, zebys wstal od biurka.
+            # The alert beats `message` as well. The reverse order would demote it to
+            # a line at the bottom of an error card — and it is the one thing on this
+            # screen that calls for getting up from the desk.
             self._alert(d, state.alert)
         elif state.message:
             self._message(d, state.message)
@@ -269,11 +272,11 @@ class Renderer:
             draw.fill_rect(d, self.layout.divider, theme.DIVIDER)
         return Frame(img)
 
-    # -- czesci ------------------------------------------------------------
+    # -- parts -------------------------------------------------------------
 
     def _message(self, d, message):
-        """Pelnoekranowa karta stanu. Panel jest urzadzeniem — blad ma byc widoczny
-        NA NIM, nie tylko w logu, ktorego nikt nie otwiera."""
+        """A full-screen status card. The panel is a device — an error has to be visible
+        ON IT, not only in a log nobody opens."""
         title, *rest = message if isinstance(message, (list, tuple)) else [message]
         f_title = draw.font(24)
         f_body = draw.font(15)
@@ -288,7 +291,8 @@ class Renderer:
             y += 22
 
     def _alert(self, d, a):
-        """Karta przejmujaca ekran. Uklad wybiera LICZBA blokad — patrz AlertState."""
+        """The card that takes over the screen. The layout is chosen by the NUMBER of
+        blocks — see AlertState."""
         if a.rest:
             self._alert_many(d, a)
         elif len(a.rows) >= 3:
@@ -299,17 +303,17 @@ class Renderer:
             self._alert_solo(d, a)
 
     def _alert_banner(self, d, a, x0, x1):
-        """Pasmo karty, wspolne dla wszystkich ukladow.
+        """The card's banner, shared by every layout.
 
-        Zalanie akcentem (`flood`) jest cala animacja, jaka panel ma: przerysowuje sie
-        linia po linii, wiec klatek posrednich nie ma sensu liczyc — sa dwie, pusta
-        i pelna. Pasmo z railem to ~13% klatki, czyli miesci sie w ticku; pelnoekranowy
-        blysk bylby pelna klatka, a ta idzie na Turingu 1,87 s i wychodzi z niej powolne
-        zamalowanie zamiast blysku.
+        The accent flood (`flood`) is the whole animation this panel has: it redraws line
+        by line, so there is no point counting intermediate frames — there are two, empty
+        and full. The banner with the rail is ~13% of the frame, so it fits inside a
+        tick; a full-screen flash would be a full frame, and that one takes 1.87 s on the
+        Turing and comes out as a slow repaint instead of a flash.
 
-        Rail stoi w OBU klatkach — zalanie tylko go przemalowuje. Pasek, ktory pojawia
-        sie z niczego i znika, jest mocniejszym ruchem niz zmiana koloru, a karta ma
-        dzieki temu stala lewa krawedz przez cale swoje zycie, nie tylko przez
+        The rail stands in BOTH frames — the flood only repaints it. A bar that appears
+        out of nothing and disappears is a stronger movement than a change of colour, and
+        it gives the card a fixed left edge for its whole life, not only for
         `alert_flash_sec`.
         """
         f_head = draw.font(L.F_BANNER)
@@ -318,7 +322,8 @@ class Renderer:
                        theme.ACCENT if a.flood else theme.ACCENT_800)
         draw.fill_rect(d, (0, L.BANNER_H, L.RAIL_W, self.layout.height),
                        theme.ACCENT if a.flood else theme.NEUTRAL_900)
-        # W zalanym pasmie napis schodzi na tlo karty: 5,51:1 zamiast 2,69:1.
+        # In a flooded banner the caption drops to the card's background: 5.51:1
+        # instead of 2.69:1.
         head_colour = theme.BG if a.flood else theme.ACCENT_100
         at_colour = theme.BG if a.flood else theme.ACCENT_200
 
@@ -333,13 +338,13 @@ class Renderer:
                           f_head, head_colour, tracking=L.BANNER_TRACK, anchor="ls")
 
     def _alert_solo(self, d, a):
-        """1a — jedna blokada. Nazwa projektu jest bohaterem karty."""
+        """1a — one block. The project name is the card's hero."""
         L_ = self.layout.alert_solo
         row = a.rows[0]
 
         room = L_.x1 - L_.x0
-        # Ten sam mechanizm co F_SES_NUM -> F_SES_NUM_TIGHT w pasie: dluga nazwa schodzi
-        # o stopien zamiast byc obcieta w polowie.
+        # The same mechanism as F_SES_NUM -> F_SES_NUM_TIGHT in the band: a long name
+        # drops one size instead of being cut in half.
         f_project = draw.font(L_.F_PROJECT)
         if draw.text_width(row.project, f_project) > room:
             f_project = draw.font(L_.F_PROJECT_TIGHT)
@@ -348,26 +353,26 @@ class Renderer:
 
         self._alert_meta(d, (L_.x0, L_.meta_base), row, draw.font(L_.F_META), room,
                          dim_dot=True)
-        d.text((L_.x0, L_.waited_base), "czeka %s" % row.waited,
+        d.text((L_.x0, L_.waited_base), "waiting %s" % row.waited,
                font=draw.font(L_.F_WAITED), fill=theme.ACCENT_200, anchor="ls")
 
         if row.detail:
             self._alert_detail(d, L_, row.detail)
         mode = row.mode
         if a.footer:
-            # Niezgodny kontrakt schodzi do listwy diagnostycznej — jest diagnostyka,
-            # a karta i tak bije wszystko inne.
+            # A contract mismatch drops into the diagnostic strip — it IS diagnostics,
+            # and the card beats everything else anyway.
             mode = "%s · %s" % (mode, a.footer) if mode else a.footer
         if mode:
             self._alert_mode(d, L_, mode)
 
-        # Pasmo NA KONCU: rail schodzi po calej wysokosci, takze przez listwe trybu.
-        # Rysowany wczesniej, zostalby przez nia zamalowany — w makiecie rail jest
-        # `position: absolute`, wiec maluje sie nad blokami w przeplywie.
+        # The banner LAST: the rail runs the full height, through the mode strip too.
+        # Drawn earlier, it would be painted over by that strip — in the mockup the
+        # rail is `position: absolute`, so it paints above the blocks in the flow.
         self._alert_banner(d, a, L_.x0, L_.x1)
 
     def _alert_pair(self, d, a):
-        """1b — dwie blokady w dwoch rownych polowach."""
+        """1b — two blocks in two equal halves."""
         L_ = self.layout.alert_pair
         for (top, _bottom), row in zip(L_.halves, a.rows):
             self._alert_half(d, L_, top, row)
@@ -375,9 +380,9 @@ class Renderer:
         self._alert_banner(d, a, L_.x0, L_.x1)
 
     def _alert_half(self, d, L_, top, row):
-        """Jedna polowa: powod i czas w jednym wierszu, pod nimi nazwa, opis i szczegol
-        skrocony do JEDNEJ linii — przy dwoch blokadach nie ma miejsca na wiecej, a dwie
-        linie w jednej polowie i jedna w drugiej czytalyby sie jako pierwszenstwo."""
+        """One half: reason and time on one line, below them the name, the meta line and
+        the detail cut to ONE line — with two blocks there is no room for more, and two
+        lines in one half against one in the other would read as precedence."""
         f_short = draw.font(L_.F_SHORT)
         f_waited = draw.font(L_.F_WAITED)
         room = L_.x1 - L_.x0
@@ -399,8 +404,8 @@ class Renderer:
                draw.ellipsize(row.project, f_project, room), font=f_project,
                fill=theme.TEXT, anchor="ls")
 
-        # 58%, nie 62% jak w 1a: polowka jest ciasniejsza, wiec wiersz wtorny cichnie
-        # o stopien, zeby nazwa projektu nie musiala z nim konkurowac.
+        # 58%, not 62% as in 1a: the half is tighter, so the secondary line quietens
+        # by one step, so that the project name does not have to compete with it.
         self._alert_meta(d, (L_.x0, top + L_.META_BASE), row, draw.font(L_.F_META),
                          room, colour=theme.TEXT_58)
         if row.detail:
@@ -410,7 +415,7 @@ class Renderer:
                    fill=theme.TEXT_70, anchor="ls")
 
     def _alert_list(self, d, a):
-        """1c — trzy blokady w liscie, szczegol najnowszej w stopce."""
+        """1c — three blocks in a list, the newest one's detail in the footer."""
         L_ = self.layout.alert_list
         detail = a.rows[0].detail
         rects = L_.rows(footer=bool(detail))
@@ -424,7 +429,7 @@ class Renderer:
         self._alert_banner(d, a, L_.x0, L_.x1)
 
     def _alert_many(self, d, a):
-        """1d — trzy najnowsze, reszta zliczona w stopce."""
+        """1d — the three newest, the rest counted in the footer."""
         L_ = self.layout.alert_many
         rects = L_.rows(footer=True)
         for (top, bottom), row in zip(rects, a.rows):
@@ -436,17 +441,17 @@ class Renderer:
         self._alert_banner(d, a, L_.x0, L_.x1)
 
     def _alert_rest(self, d, L_, a):
-        """Stopka licznika: ile jeszcze czeka i jak sie nazywaja.
+        """The counter footer: how many more are waiting and what they are called.
 
-        "+2 WIĘCEJ" jest nieodmienne, wiec dziala dla kazdej licznosci — inaczej niz
-        "2 inne" / "5 innych".
+        "+2 MORE" does not inflect, so it works for every count — unlike a noun phrase
+        that would have to agree with the number.
         """
         x0, y0, x1, y1 = L_.footer
         draw.fill_rect(d, L_.footer, theme.SUNKEN)
         f_label = draw.font(L_.F_FOOT_LABEL)
         f_names = draw.font(L_.F_FOOT)
         base = y0 + L_.FOOT_BASE
-        label = "+%d WIĘCEJ" % len(a.rest)
+        label = "+%d MORE" % len(a.rest)
         x = L_.x0 + draw.text_tracked(d, (L_.x0, base), label, f_label,
                                       theme.ACCENT_200, tracking=1, anchor="ls")
         x += L_.FOOT_GAP
@@ -454,10 +459,11 @@ class Renderer:
                font=f_names, fill=theme.TEXT_62_SUNKEN, anchor="ls")
 
     def _alert_row(self, d, L_, top, row, machine_only=False):
-        """Jeden wiersz listy: powod w stalej kolumnie, nazwa z opisem, czas do prawej.
+        """One list row: the reason in a fixed column, the name with its meta line, the
+        time to the right.
 
-        Kolumna powodu jest STALA, a nie dopasowana do napisu: przy trzech wierszach oko
-        czyta pionowa krawedz nazw, a nie kazdy wiersz osobno.
+        The reason column is FIXED, not fitted to the caption: at three rows the eye
+        reads the vertical edge of the names, not each row separately.
         """
         f_reason = draw.font(L_.F_REASON)
         f_time = draw.font(L_.F_TIME)
@@ -476,8 +482,8 @@ class Renderer:
                draw.ellipsize(row.project, f_project, room), font=f_project,
                fill=theme.TEXT, anchor="ls")
         if machine_only:
-            # Przy czterech blokadach narzedzie wypada: nazwa maszyny mowi, GDZIE isc,
-            # a narzedzie dopiero po dojsciu — na 480 px pierwsze bije drugie.
+            # At four blocks the tool drops out: the machine name says WHERE to go, and
+            # the tool only once there — at 480 px the first beats the second.
             d.text((L_.name_x, top + L_.META_BASE),
                    draw.ellipsize(row.machine, draw.font(L_.F_META), room),
                    font=draw.font(L_.F_META), fill=theme.TEXT_50, anchor="ls")
@@ -487,7 +493,7 @@ class Renderer:
                              named=False)
 
     def _alert_footer(self, d, L_, label, text):
-        """Stopka: jedna linia o najnowszej blokadzie albo licznik reszty."""
+        """Footer: one line about the newest block, or a counter for the rest."""
         x0, y0, x1, y1 = L_.footer
         draw.fill_rect(d, L_.footer, theme.SUNKEN)
         f_label = draw.font(L_.F_FOOT_LABEL)
@@ -500,21 +506,21 @@ class Renderer:
 
     def _alert_meta(self, d, xy, row, f, room, colour=theme.TEXT_62, named=True,
                     dim_dot=False):
-        """Narzedzie i maszyna, na LINII BAZOWEJ podanej przez wolajacego.
+        """The tool and the machine, on the BASELINE given by the caller.
 
-        `named` przelacza "maszyna laptop" na samo "laptop": przy jednej i dwoch
-        blokadach jest miejsce na slowo, ktore mowi, co ta nazwa znaczy, a w liscie
-        nie ma — i tam kontekst niesie sama kolumna.
+        `named` switches "machine laptop" to a bare "laptop": with one and with two
+        blocks there is room for the word that says what that name means, and in the
+        list there is not — there the column itself carries the context.
 
-        `dim_dot` to uklad 1a i tylko on. Makieta sklada tam ten wiersz z TRZECH pudelek
-        z `gap: 7px`, a kropce daje wlasny, ciemniejszy odcien — czyta sie to jako dwie
-        informacje, a nie jako jedno zdanie. Uklady 1b i 1c maja w tym samym miejscu
-        jeden przebieg tekstu ze zwyklymi spacjami, wiec kropka jest tam w kolorze
-        wiersza. Rysowanie wszedzie wersji z 1a gubilo kropke w liscie: `TEXT_28` na tle
-        karty to ~1,5:1.
+        `dim_dot` is layout 1a and only it. The mockup composes that line there out of
+        THREE boxes with `gap: 7px` and gives the dot its own, darker shade — it reads
+        as two pieces of information, not as one sentence. Layouts 1b and 1c have one
+        run of text with ordinary spaces in the same place, so the dot is in the row's
+        colour there. Drawing 1a's version everywhere lost the dot in the list:
+        `TEXT_28` on the card's background is ~1.5:1.
         """
         x, y = xy
-        name = ("maszyna %s" % row.machine) if named else row.machine
+        name = ("machine %s" % row.machine) if named else row.machine
         if not dim_dot:
             czlony = [c for c in (row.tool, name) if c]
             if czlony:
@@ -535,7 +541,7 @@ class Renderer:
                    fill=colour, anchor="ls")
 
     def _alert_detail(self, d, L_, detail):
-        """Kafel `Szczegół` — to, o co Claude pyta, a nie tylko to, ze pyta."""
+        """The `Detail` tile — what Claude is asking about, not merely that it asks."""
         f_label = draw.font(L_.F_DETAIL_LABEL)
         f_text = draw.font(L_.F_DETAIL)
         inner = L_.x1 - L_.x0 - 2 * L_.DETAIL_PAD_X
@@ -543,9 +549,9 @@ class Renderer:
         box = L_.detail_box(len(lines))
         draw.rounded(d, box, L_.DETAIL_RADIUS, fill=theme.SURFACE)
         x = box[0] + L_.DETAIL_PAD_X
-        # Odcienie mieszane z tlem KAFLA, nie karty: w makiecie polprzezroczystosc
-        # laduje na tym, co pod spodem, a tu pod spodem jest `SURFACE`.
-        draw.text_tracked(d, (x, box[1] + L_.DETAIL_LABEL_BASE), "SZCZEGÓŁ", f_label,
+        # Shades mixed with the TILE's background, not the card's: in the mockup
+        # translucency lands on whatever is underneath, and here that is `SURFACE`.
+        draw.text_tracked(d, (x, box[1] + L_.DETAIL_LABEL_BASE), "DETAIL", f_label,
                           theme.TEXT_45_SURFACE, tracking=1, anchor="ls")
         y = box[1] + L_.DETAIL_TEXT_BASE
         for line in lines:
@@ -553,39 +559,40 @@ class Renderer:
             y += L_.DETAIL_LINE
 
     def _alert_mode(self, d, L_, mode):
-        """Listwa diagnostyczna: dlaczego to w ogole jest pytanie."""
+        """The diagnostic strip: why this is a question at all."""
         f_label = draw.font(L_.F_MODE_LABEL)
         f_mode = draw.font(L_.F_MODE)
         draw.fill_rect(d, L_.mode, theme.SUNKEN)
         x = L.ALERT_PAD_X
-        # Etykieta i wartosc stoja na WSPOLNEJ linii bazowej, nie kazda wysrodkowana
-        # osobno: przy dwoch stopniach pisma srodek pudelka fontu wypada gdzie indziej
-        # niz srodek liter i wersaliki wygladaja, jakby sie osunely.
+        # The label and the value stand on a COMMON baseline, not each centred on its
+        # own: with two type sizes the centre of the font box falls elsewhere than the
+        # centre of the letters, and the caps look as if they had slipped down.
         y = L_.MODE_BASE
-        # `+ 1` to odstep miedzyliterowy ZA ostatnia litera: CSS go zostawia, a
-        # `draw.text_tracked` odejmuje go od zwracanej szerokosci. Bez tego etykieta
-        # ma pudelko o piksel za waskie i wartosc podchodzi jej pod sam ogon.
-        x += draw.text_tracked(d, (x, y), "TRYB", f_label, theme.TEXT_45_SUNKEN,
+        # `+ 1` is the letter spacing AFTER the last letter: CSS leaves it in, while
+        # `draw.text_tracked` subtracts it from the width it returns. Without it the
+        # label has a box one pixel too narrow and the value creeps up against its tail.
+        x += draw.text_tracked(d, (x, y), "MODE", f_label, theme.TEXT_45_SUNKEN,
                                tracking=1, anchor="ls") + 1 + 8
         d.text((x, y), draw.ellipsize(mode, f_mode, L_.x1 - x), font=f_mode,
                fill=theme.TEXT_70_SUNKEN, anchor="ls")
 
     def _empty_band(self, d, b):
         f = draw.font(13)
-        d.text((b.x0, b.top + b.height // 2), "drugie konto nieskonfigurowane",
+        d.text((b.x0, b.top + b.height // 2), "second account not configured",
                font=f, fill=theme.TEXT_40, anchor="lm")
 
     def _band(self, d, b, band, state):
         if band.alert:
-            # Pasek siedzi w polu marginesu (PAD_X 14), wiec uklad pasa nie drga ani
-            # o piksel — i ma PELNA wysokosc pasa, niezaleznie od tego, ile wierszy
-            # pas ma w srodku.
+            # The bar sits in the margin field (PAD_X 14), so the band's layout does not
+            # shift by a single pixel — and it has the band's FULL height, whatever the
+            # number of rows the band has inside.
             draw.fill_rect(d, (0, b.top, L.MARK_W, b.bottom), theme.ACCENT)
         self._header(d, b, band, state)
         self._window(d, b, band, kind="session")
         self._window(d, b, band, kind="week")
-        # Rysujemy wszystko poza "wylaczone i bez kwot" — tam nie ma czego pokazac.
-        # Kredyty odciete przez organizacje MAJA kwoty (ostatni pomiar) i wiersz zostaje.
+        # We draw everything except "off and with no amounts" — there is nothing to show
+        # there. Credits cut off by the organization DO have amounts (the last
+        # measurement) and the row stays.
         if band.credits is not None and not (band.credits.state == "off"
                                              and band.credits.used is None):
             self._credits(d, b, band.credits)
@@ -612,8 +619,8 @@ class Renderer:
             right -= w + L.REASON_GAP
 
         if band.alert:
-            # Powod stoi W LINII Z PLANEM, nie przy nazwie: nazwa bywa skracana, a ten
-            # napis nie moze zniknac razem z jej koncowka.
+            # The reason stands ON THE PLAN'S LINE, not by the name: the name gets
+            # shortened at times, and this caption must not vanish with its tail.
             f_reason = draw.font(L.F_REASON)
             word = band.alert.upper()
             w = draw.tracked_width(word, f_reason, 1)
@@ -627,10 +634,11 @@ class Renderer:
                fill=theme.ACCENT_100 if band.alert else theme.TEXT)
 
     def _link_mark(self, d, centre, link):
-        """Kropka pelna = na zywo, pierscien = wznawiam, przekreslona = brak.
+        """A filled dot = live, a ring = reconnecting, a crossed ring = down.
 
-        Roznica RYSUNKIEM, nie kolorem: gdy strumien padnie, wiek odczytu rosnie
-        obu kontom naraz i wyglada to identycznie jak "przestales pracowac".
+        The difference is in the DRAWING, not in the colour: when the stream dies, the
+        reading age grows on both accounts at once and that looks exactly like "the
+        work stopped".
         """
         if link == "live":
             draw.dot(d, centre, 3, theme.ACCENT)
@@ -649,24 +657,24 @@ class Renderer:
         centre = b.ses_centre if session else b.wk_centre
         lead, at = band.reset_session if session else band.reset_week
 
-        # --- kolumna procentu ---
+        # --- the percent column ---
         self._number(d, b, v, centre,
                      big=L.F_SES_NUM if session else L.F_WK_NUM,
                      tight=L.F_SES_NUM_TIGHT if session else L.F_WK_NUM,
                      small=L.F_SES_PCT if session else L.F_WK_PCT)
 
-        # --- etykieta ---
+        # --- the label ---
         f_label = draw.font(L.F_LABEL)
         label = LABEL_SESSION if session else LABEL_WEEK
         colour = theme.ACCENT_200 if session else theme.TEXT_60
         draw.text_tracked(d, (label_box[0], label_box[1]), label, f_label,
                           colour, tracking=1)
 
-        # --- pasek ---
+        # --- the bar ---
         draw.bar(d, bar_box, v,
                  theme.ACCENT if session else theme.ACCENT_500)
 
-        # --- podpis pod paskiem ---
+        # --- the caption under the bar ---
         f_reset = draw.font(L.F_RESET)
         x = line_box[0]
         gy = line_box[1] + L.LINE_H // 2
@@ -686,10 +694,10 @@ class Renderer:
             draw.dot(d, (line_box[2] - w - 8, gy), 2, theme.ACCENT)
 
     def _number(self, d, b, v, centre, big, tight, small):
-        """Liczba i znak %, wyrownane do PRAWEJ krawedzi waskiej kolumny.
+        """The number and the % sign, aligned to the RIGHT edge of the narrow column.
 
-        Przy `nie wiem` znak % MUSI zniknac — "nie wiem %" to realna pulapka
-        naiwnego portu, bo procent jest tam czescia szablonu, nie danych.
+        With `unknown` the % sign MUST vanish — "unknown %" is a real trap for a naive
+        port, because there the percent is part of the template, not of the data.
         """
         if v.number is None:
             f = draw.font(L.F_WORDS)
@@ -720,14 +728,14 @@ class Renderer:
         draw.text_tracked(d, (lx, cy - 5), LABEL_CREDITS, f_label, label_colour,
                           tracking=1)
         if c.is_current:
-            # Strzalka: tydzien stoi na 100%, wiec to kredyty sa teraz szczeblem,
-            # ktory Cie ogranicza.
+            # The arrow: the week stands at 100%, so credits are now the rung that
+            # does the limiting.
             draw.arrow_down_right(d, (lx - 11, cy - 4, lx - 4, cy + 2), theme.ACCENT_300)
 
         x = b.block_x0
         if c.state == "unknown":
-            d.text((x, cy), "brak danych", font=f_limit, fill=theme.TEXT_45, anchor="lm")
-            x += draw.text_width("brak danych", f_limit) + 8
+            d.text((x, cy), "no data", font=f_limit, fill=theme.TEXT_45, anchor="lm")
+            x += draw.text_width("no data", f_limit) + 8
             draw.dashed_rounded(d, (x, cy - 2, x1, cy + 2), 2, theme.TEXT_25)
             return
 
