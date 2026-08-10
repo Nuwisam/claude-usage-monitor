@@ -7,7 +7,7 @@ import pytest
 from panel import app as app_mod, config as C, fmt, render, status, surface, theme
 
 
-class Zegar:
+class Clock:
     """Monotonic under the test's control."""
 
     def __init__(self, t=1000.0):
@@ -16,41 +16,41 @@ class Zegar:
     def __call__(self):
         return self.t
 
-    def skok(self, sekundy):
-        self.t += sekundy
+    def advance(self, seconds):
+        self.t += seconds
 
 
 def cfg(**kw):
     # The flash is off by default: the card tests are to check the card, not what comes
     # before it. The flash tests switch it on explicitly.
-    d = {"stream_token": "t", "account_1": {"uuid": "konto-a"},
-         "account_2": {"uuid": "konto-b"}, "alert_flash_sec": 0}
+    d = {"stream_token": "t", "account_1": {"uuid": "account-a"},
+         "account_2": {"uuid": "account-b"}, "alert_flash_sec": 0}
     d.update(kw)
     return C.Config(d)
 
 
-def po_migotaniu(a, z):
+def after_flash(a, z):
     """Renders until the banner stops blinking. The window arms itself on the FIRST render
     after the key appears, so moving the clock alone is not enough."""
-    ekran = a.screen()
-    z.skok(a.cfg.alert_flash_sec + 1)
+    screen = a.screen()
+    z.advance(a.cfg.alert_flash_sec + 1)
     return a.screen()
 
 
 NOW = "2026-08-05T21:07:00Z"
 
 
-def app(zegar, **kw):
-    a = app_mod.App(cfg(**kw), monotonic=zegar)
+def app(clock, **kw):
+    a = app_mod.App(cfg(**kw), monotonic=clock)
     a.clock.anchor(NOW)
     return a
 
 
-def ramka(*entries):
+def stream_frame(*entries):
     return {"contractVersion": 3, "serverNow": NOW, "alerts": list(entries)}
 
 
-def wpis(**kw):
+def entry(**kw):
     base = {"key": "s__main__k", "reason": "permission", "project": "proj",
             "machine": "laptop", "tool": "Bash", "since": NOW}
     base.update(kw)
@@ -59,88 +59,88 @@ def wpis(**kw):
 
 # --- card entry and exit ----------------------------------------------------
 
-def test_karta_wchodzi_po_debounce():
-    z = Zegar()
+def test_card_enters_after_debounce():
+    z = Clock()
     a = app(z)
-    a.on_event("alert", ramka(wpis()))
-    assert a.screen().alert is None, "debounce ma stlumic blysk przy zgodzie od razu"
-    z.skok(a.cfg.blocked_debounce_sec)
+    a.on_event("alert", stream_frame(entry()))
+    assert a.screen().alert is None, "debounce should suppress the flash on an immediate approval"
+    z.advance(a.cfg.blocked_debounce_sec)
     assert a.screen().alert is not None
 
 
-def test_karta_niesie_projekt_narzedzie_i_maszyne():
-    z = Zegar()
+def test_card_carries_project_tool_and_machine():
+    z = Clock()
     a = app(z)
-    a.on_event("alert", ramka(wpis()))
-    z.skok(5)
+    a.on_event("alert", stream_frame(entry()))
+    z.advance(5)
     card = a.screen().alert
     row = card.rows[0]
     assert (row.project, row.tool, row.machine) == ("proj", "Bash", "laptop")
     assert card.title == "NEEDS PERMISSION"
 
 
-def test_pusty_zbior_gasi_karte_dopiero_po_lingerze():
-    z = Zegar()
+def test_empty_set_extinguishes_card_only_after_linger():
+    z = Clock()
     a = app(z)
-    a.on_event("alert", ramka(wpis()))
-    z.skok(5)
+    a.on_event("alert", stream_frame(entry()))
+    z.advance(5)
     assert a.screen().alert is not None
-    a.on_event("alert", ramka())
+    a.on_event("alert", stream_frame())
     # The linger starts on the first render AFTER the set empties, not at the moment the
     # frame arrives: what counts is the moment the scene would have switched.
-    assert a.screen().alert is not None, "linger ogranicza liczbe przejsc sceny"
-    z.skok(a.cfg.blocked_linger_sec + 1)
+    assert a.screen().alert is not None, "linger limits the number of scene transitions"
+    z.advance(a.cfg.blocked_linger_sec + 1)
     assert a.screen().alert is None
 
 
-def test_karta_w_lingerze_jest_zamrozona():
+def test_card_in_linger_is_frozen():
     """Without the freeze, 'waiting N min' would tick on a prompt that has already been
     answered, and every jump of that caption is a full frame on the AX206."""
-    z = Zegar()
+    z = Clock()
     a = app(z)
     # Chosen so that the first render sees 119 s and five seconds later 124 s.
-    a.on_event("alert", ramka(wpis(since="2026-08-05T21:05:06Z")))
-    z.skok(5)
-    przed = a.screen().alert.rows[0].waited
-    assert przed == "1 min"
-    a.on_event("alert", ramka())
+    a.on_event("alert", stream_frame(entry(since="2026-08-05T21:05:06Z")))
+    z.advance(5)
+    before = a.screen().alert.rows[0].waited
+    assert before == "1 min"
+    a.on_event("alert", stream_frame())
     a.screen()                      # arming the linger
-    z.skok(5)                       # crosses the minute boundary — without the freeze "2 min"
-    assert a.screen().alert.rows[0].waited == przed
+    z.advance(5)                    # crosses the minute boundary — without the freeze "2 min"
+    assert a.screen().alert.rows[0].waited == before
 
 
-def test_wypalenie_okna_zwija_karte_do_znacznika():
-    z = Zegar()
+def test_window_burnout_collapses_card_to_marker():
+    z = Clock()
     a = app(z, alert_takeover_sec=30)
-    a.on_event("alert", ramka(wpis(since="2026-08-05T21:06:50Z")))   # 10 s ago
-    z.skok(5)
+    a.on_event("alert", stream_frame(entry(since="2026-08-05T21:06:50Z")))   # 10 s ago
+    z.advance(5)
     assert a.screen().alert is not None
     # The window counts from the SERVER's `since`, so we move the server clock, not just
     # the monotonic one: otherwise the test would check something other than the real run.
     a.clock.anchor("2026-08-05T21:08:00Z")
     a.first_data_at = z.t
     a.screen()                      # window burnt out: the card enters the linger
-    z.skok(a.cfg.blocked_linger_sec + 1)
-    ekran = a.screen()
-    assert ekran.alert is None, "po alert_takeover_sec karta ma oddac ekran"
-    assert ekran.bands[0].alert, "ale wpis zyje dalej i musi byc widoczny jako znacznik"
+    z.advance(a.cfg.blocked_linger_sec + 1)
+    screen = a.screen()
+    assert screen.alert is None, "after alert_takeover_sec the card must hand back the screen"
+    assert screen.bands[0].alert, "but the entry lives on and must be visible as a marker"
 
 
-def test_nowa_blokada_dostaje_nowe_okno():
-    z = Zegar()
+def test_new_block_gets_a_new_window():
+    z = Clock()
     a = app(z, alert_takeover_sec=30)
-    a.on_event("alert", ramka(wpis(key="stary", since="2026-08-05T21:00:00Z")))
-    z.skok(5)
-    assert a.screen().alert is None, "stara blokada ma juz wypalone okno"
-    a.on_event("alert", ramka(wpis(key="stary", since="2026-08-05T21:00:00Z"),
-                              wpis(key="nowy", since=NOW)))
-    z.skok(5)
-    karta = a.screen().alert
-    assert karta is not None
-    assert len(karta.rows) == 2, "swieza blokada wciaga wypalona na te sama karte"
+    a.on_event("alert", stream_frame(entry(key="old", since="2026-08-05T21:00:00Z")))
+    z.advance(5)
+    assert a.screen().alert is None, "the old block already has a burnt-out window"
+    a.on_event("alert", stream_frame(entry(key="old", since="2026-08-05T21:00:00Z"),
+                                     entry(key="new", since=NOW)))
+    z.advance(5)
+    card = a.screen().alert
+    assert card is not None
+    assert len(card.rows) == 2, "a fresh block pulls the burnt one onto the same card"
 
 
-def test_swieza_blokada_wciaga_wypalona_na_ta_sama_karte():
+def test_fresh_block_pulls_burnt_one_onto_same_card():
     """Regression on three dead layouts out of four.
 
     The window belongs to the SET: as long as anything is fresh, the card lists everything
@@ -148,254 +148,254 @@ def test_swieza_blokada_wciaga_wypalona_na_ta_sama_karte():
     five-minute window — with sequential work that never happens, so `AlertPair`,
     `AlertList` and `AlertMany` had no way of reaching the screen.
     """
-    z = Zegar()
+    z = Clock()
     a = app(z, alert_takeover_sec=30)
-    a.on_event("alert", ramka(wpis(key="wypalona", project="stara",
-                                   since="2026-08-05T21:00:00Z"),
-                              wpis(key="swieza", project="nowa", since=NOW)))
-    z.skok(5)
-    karta = a.screen().alert
-    assert len(karta.rows) == 2 and karta.count == 2
-    assert "2" in karta.title, "pasmo liczy obie, nie tylko swieza"
-    assert karta.rows[0].project == "nowa", "najmlodsza w pierwszym wierszu"
+    a.on_event("alert", stream_frame(entry(key="burnt", project="old",
+                                            since="2026-08-05T21:00:00Z"),
+                                     entry(key="fresh", project="new", since=NOW)))
+    z.advance(5)
+    card = a.screen().alert
+    assert len(card.rows) == 2 and card.count == 2
+    assert "2" in card.title, "the banner counts both, not just the fresh one"
+    assert card.rows[0].project == "new", "the newest one is in the first row"
 
 
-def test_wypalony_zbior_gasnie_w_calosci():
+def test_burnt_out_set_extinguishes_entirely():
     """When the LAST fresh block burns out, the card hands the screen back along with the rest.
 
     Honestly: this is a guard AGAINST AN OVERREACHING FIX, not proof of one. It passes the
     same way on the old code and that is as it should be — it watches that a window belonging
     to the set has not started holding the card forever. The test that settles the change
-    itself is `test_swieza_blokada_wciaga_wypalona_na_ta_sama_karte`.
+    itself is `test_fresh_block_pulls_burnt_one_onto_same_card`.
 
     Both blocks have to come in fresh: a set that is old from the start builds no card at all,
     so there would be nothing to put out.
     """
-    z = Zegar()
+    z = Clock()
     a = app(z, alert_takeover_sec=30)
-    a.on_event("alert", ramka(
-        wpis(key="a", since="2026-08-05T21:06:50Z", accountUuid="konto-a"),
-        wpis(key="b", since="2026-08-05T21:06:40Z", accountUuid="konto-b")))
-    z.skok(5)
+    a.on_event("alert", stream_frame(
+        entry(key="a", since="2026-08-05T21:06:50Z", accountUuid="account-a"),
+        entry(key="b", since="2026-08-05T21:06:40Z", accountUuid="account-b")))
+    z.advance(5)
     a.first_data_at = z.t
     assert len(a.screen().alert.rows) == 2
     # The SERVER clock, because the window counts from `since`, not from the monotonic one.
     a.clock.anchor("2026-08-05T21:09:00Z")
     a.screen()                      # window burnt out for both: the card enters the linger
-    z.skok(a.cfg.blocked_linger_sec + 1)
-    ekran = a.screen()
-    assert ekran.alert is None, "wypalony zbior gasnie w calosci"
-    assert ekran.bands[0].alert and ekran.bands[1].alert, "oba wpisy zyja jako znaczniki"
+    z.advance(a.cfg.blocked_linger_sec + 1)
+    screen = a.screen()
+    assert screen.alert is None, "burnt-out set is extinguished entirely"
+    assert screen.bands[0].alert and screen.bands[1].alert, "both entries live on as markers"
 
 
-def test_zero_wylacza_karte_takze_bez_since():
+def test_zero_disables_card_even_without_since():
     """`alert_takeover_sec: 0` means "a marker right away, no card" — including for an entry
     with no stamp, which used to skip the age comparison and get a card after all."""
-    z = Zegar()
+    z = Clock()
     a = app(z, alert_takeover_sec=0)
-    a.on_event("alert", ramka(wpis(since=None)))
-    z.skok(5)
+    a.on_event("alert", stream_frame(entry(since=None)))
+    z.advance(5)
     a.first_data_at = z.t
-    ekran = a.screen()
-    assert ekran.alert is None
-    assert ekran.bands[0].alert, "wpis zyje dalej jako znacznik"
+    screen = a.screen()
+    assert screen.alert is None
+    assert screen.bands[0].alert, "the entry lives on as a marker"
 
 
 # --- flash ------------------------------------------------------------------
 
-def fazy(a, z, sekundy):
+def phases(a, z, seconds):
     """The `flood` values in consecutive seconds."""
     out = []
-    for _ in range(sekundy):
+    for _ in range(seconds):
         out.append(a.screen().alert.flood)
-        z.skok(1)
+        z.advance(1)
     return out
 
 
-def test_klatka_pelna_wchodzi_i_gasnie():
-    z = Zegar(1000.0)
+def test_full_frame_enters_then_fades():
+    z = Clock(1000.0)
     a = app(z, alert_flash_sec=6)
-    a.on_event("alert", ramka(wpis()))
-    z.skok(5)
-    obraz = fazy(a, z, 10)
-    assert True in obraz[:6] and False in obraz[:6], "w oknie ma migac"
-    assert not any(obraz[7:]), "po oknie baner stoi"
+    a.on_event("alert", stream_frame(entry()))
+    z.advance(5)
+    readings = phases(a, z, 10)
+    assert True in readings[:6] and False in readings[:6], "should flicker inside the window"
+    assert not any(readings[7:]), "after the window the banner holds steady"
 
 
-def test_migotanie_nie_wraca_przy_tykaniu_karty():
-    z = Zegar()
+def test_flashing_does_not_return_while_card_ticks():
+    z = Clock()
     a = app(z, alert_flash_sec=6)
-    a.on_event("alert", ramka(wpis()))
-    z.skok(5)
-    po_migotaniu(a, z)
+    a.on_event("alert", stream_frame(entry()))
+    z.advance(5)
+    after_flash(a, z)
     for _ in range(5):
-        z.skok(60)
+        z.advance(60)
         assert not a.screen().alert.flood
 
 
-def test_druga_blokada_znow_zapala_migotanie():
-    z = Zegar()
+def test_second_block_reignites_flashing():
+    z = Clock()
     a = app(z, alert_flash_sec=6)
-    a.on_event("alert", ramka(wpis(key="a")))
-    z.skok(5)
-    po_migotaniu(a, z)
-    a.on_event("alert", ramka(wpis(key="a"), wpis(key="b")))
-    z.skok(5)
-    assert any(fazy(a, z, 4))
+    a.on_event("alert", stream_frame(entry(key="a")))
+    z.advance(5)
+    after_flash(a, z)
+    a.on_event("alert", stream_frame(entry(key="a"), entry(key="b")))
+    z.advance(5)
+    assert any(phases(a, z, 4))
 
 
-def test_migotanie_da_sie_wylaczyc():
-    z = Zegar()
+def test_flashing_can_be_disabled():
+    z = Clock()
     a = app(z, alert_flash_sec=0)
-    a.on_event("alert", ramka(wpis()))
-    z.skok(5)
-    assert not any(fazy(a, z, 4))
+    a.on_event("alert", stream_frame(entry()))
+    z.advance(5)
+    assert not any(phases(a, z, 4))
 
 
-def test_infinity_miga_przez_cale_zycie_karty():
-    z = Zegar(1000.0)
+def test_infinity_flashes_for_the_cards_whole_life():
+    z = Clock(1000.0)
     a = app(z, alert_flash_sec="infinity")
-    a.on_event("alert", ramka(wpis()))
-    z.skok(5)
-    obraz = fazy(a, z, 60)
-    assert any(obraz) and not all(obraz), "ma migac, a nie stac zalane"
-    assert any(obraz[-6:]), "po minucie nadal miga"
+    a.on_event("alert", stream_frame(entry()))
+    z.advance(5)
+    readings = phases(a, z, 60)
+    assert any(readings) and not all(readings), "should flicker, not stay lit"
+    assert any(readings[-6:]), "still flickers after a minute"
 
 
-@pytest.mark.parametrize("raw,oczekiwane", [
+@pytest.mark.parametrize("raw,expected", [
     (20, 20.0), ("infinity", float("inf")), ("INF", float("inf")),
-    (0, 0.0), (-5, 0.0), ("bzdura", 0.0), (None, 0.0), (float("nan"), 0.0),
+    (0, 0.0), (-5, 0.0), ("garbage", 0.0), (None, 0.0), (float("nan"), 0.0),
 ])
-def test_seconds(raw, oczekiwane):
+def test_seconds(raw, expected):
     """The values come from a hand-edited panel.json and go into a COMPARISON —
     a bare string tips the tick over with a TypeError. Junk is to mean the default."""
-    assert app_mod.seconds(raw) == oczekiwane
+    assert app_mod.seconds(raw) == expected
 
 
-def test_takeover_infinity_nie_zwija_karty():
-    z = Zegar()
+def test_takeover_infinity_does_not_collapse_card():
+    z = Clock()
     a = app(z, alert_takeover_sec="infinity")
-    a.on_event("alert", ramka(wpis(since="2020-01-01T00:00:00Z")))
-    z.skok(5)
-    assert a.screen().alert is not None, "karta ma stac, dopoki nie odpowiesz"
+    a.on_event("alert", stream_frame(entry(since="2020-01-01T00:00:00Z")))
+    z.advance(5)
+    assert a.screen().alert is not None, "the card must stand until you respond"
 
 
-def test_takeover_zero_daje_od_razu_znacznik():
-    z = Zegar()
+def test_takeover_zero_gives_marker_immediately():
+    z = Clock()
     a = app(z, alert_takeover_sec=0)
     a.first_data_at = z.t
-    a.on_event("alert", ramka(wpis()))
-    z.skok(5)
-    ekran = a.screen()
-    assert ekran.alert is None and ekran.bands[0].alert
+    a.on_event("alert", stream_frame(entry()))
+    z.advance(5)
+    screen = a.screen()
+    assert screen.alert is None and screen.bands[0].alert
 
 
-def test_smieci_w_progach_nie_wywracaja_ticku():
+def test_garbage_in_thresholds_does_not_crash_the_tick():
     """Regression: `age >= "infinity"` is a TypeError, that is a dead tick under pythonw,
     with no console to show it."""
-    z = Zegar()
-    a = app(z, alert_takeover_sec="bzdura", alert_flash_sec="bzdura")
+    z = Clock()
+    a = app(z, alert_takeover_sec="garbage", alert_flash_sec="garbage")
     a.first_data_at = z.t
-    a.on_event("alert", ramka(wpis()))
-    z.skok(5)
+    a.on_event("alert", stream_frame(entry()))
+    z.advance(5)
     assert a.screen() is not None
 
 
-def test_migniecie_banera_miesci_sie_w_ticku():
+def test_banner_flash_fits_in_the_tick():
     """The heart of the fix: a full-screen flash is a full frame (1.87 s on the Turing),
     that is a slow repaint instead of a flash. The banner alone has to be cheap enough
     to make it inside a second."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
-    blokady = status.parse_frame(ramka(wpis()))
+    blocks_ = status.parse_frame(stream_frame(entry()))
     R = render.Renderer()
-    a = R.frame(render.ScreenState(alert=render.alert_state(blokady, now_ms))).rgb565("be")
+    a = R.frame(render.ScreenState(alert=render.alert_state(blocks_, now_ms))).rgb565("be")
     b = R.frame(render.ScreenState(
-        alert=render.alert_state(blokady, now_ms, flood=True))).rgb565("be")
+        alert=render.alert_state(blocks_, now_ms, flood=True))).rgb565("be")
     rects = surface.coalesce(surface.dirty_tiles(a, b, 480, 320), surface.TILE)
     nbytes = sum((x1 - x0) * (y1 - y0) * 2 for x0, y0, x1, y1 in rects)
-    assert nbytes / len(a) < 0.25, "migniecie brudzi %.1f%% klatki" % (nbytes / len(a) * 100)
-    assert nbytes * 6.1e-6 < 0.5, "%.0f ms na drucie — nie zdazy w ticku" % (nbytes * 6.1e-3)
+    assert nbytes / len(a) < 0.25, "the flash dirties %.1f%% of the frame" % (nbytes / len(a) * 100)
+    assert nbytes * 6.1e-6 < 0.5, "%.0f ms on the wire — won't make it inside a tick" % (nbytes * 6.1e-3)
 
 
 # --- precedence -------------------------------------------------------------
 
-def test_alert_bije_holding():
+def test_alert_beats_holding():
     """An alert is the message being waited for — there is no reason for it to wait out
     the splash threshold."""
-    z = Zegar()
+    z = Clock()
     a = app(z)
     assert a.holding()
-    a.on_event("alert", ramka(wpis()))
+    a.on_event("alert", stream_frame(entry()))
     assert not a.holding()
 
 
-def test_alert_bije_niezgodny_kontrakt():
-    z = Zegar()
+def test_alert_beats_mismatched_contract():
+    z = Clock()
     a = app(z)
     a.contract_mismatch = 4
-    a.on_event("alert", ramka(wpis()))
-    z.skok(5)
-    ekran = a.screen()
-    assert ekran.alert is not None
-    assert "contract" in ekran.alert.footer, "the contract notice drops into the footer"
+    a.on_event("alert", stream_frame(entry()))
+    z.advance(5)
+    screen = a.screen()
+    assert screen.alert is not None
+    assert "contract" in screen.alert.footer, "the contract notice drops into the footer"
 
 
-def test_po_karcie_nie_wracamy_do_holding():
+def test_after_card_we_do_not_return_to_holding():
     """Regression: the `ever_painted` latch alone was not enough, because `screen()` had its
     OWN, independent time gate — once the card went out it painted 'no data from server'."""
-    z = Zegar()
+    z = Clock()
     a = app(z)
-    a.on_event("alert", ramka(wpis()))
-    z.skok(5)
+    a.on_event("alert", stream_frame(entry()))
+    z.advance(5)
     assert a.tick() is not None
-    a.on_event("alert", ramka())
+    a.on_event("alert", stream_frame())
     a.screen()                      # arming the linger
-    z.skok(a.cfg.blocked_linger_sec + 1)
+    z.advance(a.cfg.blocked_linger_sec + 1)
     assert not a.holding()
-    ekran = a.screen()
-    assert ekran.message, "bez danych o zuzyciu mowimy to wprost, a nie malujemy pustych pasow"
+    screen = a.screen()
+    assert screen.message, "with no usage data we say so plainly, instead of painting empty bands"
 
 
-def test_alert_nie_udaje_swiezych_danych():
+def test_alert_does_not_pretend_to_be_fresh_data():
     """An `alert` frame may neither open the `first_data_at` gate nor set `link_state`
     to `live`: it is no proof that the usage data is fresh."""
-    z = Zegar()
+    z = Clock()
     a = app(z)
-    a.on_event("alert", ramka(wpis()))
+    a.on_event("alert", stream_frame(entry()))
     assert a.first_data_at is None
     assert a.link_state == "down"
 
 
-def test_wylacznik_konfiguracji():
-    z = Zegar()
+def test_config_switch_turns_off_alerts():
+    z = Clock()
     a = app(z, session_alerts=False)
-    a.on_event("alert", ramka(wpis()))
-    z.skok(60)
+    a.on_event("alert", stream_frame(entry()))
+    z.advance(60)
     assert a.alerts == []
     assert a.screen().alert is None
 
 
 # --- the marker next to the account -----------------------------------------
 
-def test_znacznik_laduje_na_pasie_wlasciwego_konta():
-    z = Zegar()
+def test_marker_lands_on_the_correct_accounts_band():
+    z = Clock()
     a = app(z)
     a.first_data_at = z.t
-    a.on_event("alert", ramka(wpis(accountUuid="konto-b")))
+    a.on_event("alert", stream_frame(entry(accountUuid="account-b")))
     bands = a.screen().bands
     assert not bands[0].alert and bands[1].alert
 
 
-def test_alert_bez_dopasowania_laduje_na_pasie_gornym():
-    z = Zegar()
+def test_unmatched_alert_lands_on_top_band():
+    z = Clock()
     a = app(z)
     a.first_data_at = z.t
-    a.on_event("alert", ramka(wpis(accountUuid="konto-ktorego-nie-znamy")))
+    a.on_event("alert", stream_frame(entry(accountUuid="account-we-dont-know")))
     bands = a.screen().bands
     assert bands[0].alert and not bands[1].alert
 
 
-def test_powod_nie_wypycha_tytulu_poza_pas():
+def test_reason_does_not_push_title_past_band():
     """The reason takes its room out of the TITLE's budget instead of being glued on past
     the band.
 
@@ -406,13 +406,13 @@ def test_powod_nie_wypycha_tytulu_poza_pas():
 
     lay = L.Layout(480, 320)
     b = lay.bands[0]
-    dluga = ("bardzo.dluga.nazwa.konta.ktorej.nikt.nie.przewidzial"
-             "@poddomena.przyklad.example.pl")
+    long_name = ("very.long.account.name.that.nobody.saw.coming"
+                 "@subdomain.example.example.pl")
     f = draw.font(L.F_NAME)
-    dlugosci = []
+    lengths = []
     for alert in (None, "question"):
         img, d = draw.new_canvas((480, 320))
-        state = render.BandState(title=dluga, plan="MAX 5×", show_clock=True,
+        state = render.BandState(title=long_name, plan="MAX 5×", show_clock=True,
                                  alert=alert)
         render.Renderer()._header(d, b, state,
                                   render.ScreenState(clock="21:07", link="live"))
@@ -420,25 +420,25 @@ def test_powod_nie_wypycha_tytulu_poza_pas():
         # The columns right of the band must stay background — nothing ran past the margin.
         for x in range(b.x1 + 1, 480):
             for y in range(b.header[1], b.header[3]):
-                assert px[x, y] == theme.BG, "cos wyjechalo poza pas w kolumnie %d" % x
+                assert px[x, y] == theme.BG, "something ran past the band in column %d" % x
         # The end of the TITLE, not the end of the header: the title is set left, and the
         # reason, the badge and the clock right, so there is a gap between them. We look for
         # the first gap wider than the spacing between letters.
-        tusz = [any(px[x, y] != theme.BG for y in range(b.header[1], b.header[3]))
-                for x in range(b.x0, b.x1)]
-        koniec, przerwa = 0, 0
-        for i, ma in enumerate(tusz):
-            if ma:
-                koniec, przerwa = i, 0
+        ink = [any(px[x, y] != theme.BG for y in range(b.header[1], b.header[3]))
+               for x in range(b.x0, b.x1)]
+        end, gap = 0, 0
+        for i, inked in enumerate(ink):
+            if inked:
+                end, gap = i, 0
             else:
-                przerwa += 1
-                if przerwa >= 6:
+                gap += 1
+                if gap >= 6:
                     break
-        dlugosci.append(koniec)
-    assert dlugosci[1] < dlugosci[0], "powod ma skracac tytul, nie nachodzic na niego"
+        lengths.append(end)
+    assert lengths[1] < lengths[0], "the reason should shorten the title, not overlap it"
 
 
-def test_znacznik_pasa_ma_pelna_wysokosc_i_siedzi_w_marginesie():
+def test_band_marker_has_full_height_and_sits_in_the_margin():
     """The 4 px bar stands in the margin field (PAD_X 14), so the band's layout does not
     shift by a pixel — and it has the band's full height whatever the number of rows inside."""
     from panel import draw, layout as L
@@ -446,26 +446,26 @@ def test_znacznik_pasa_ma_pelna_wysokosc_i_siedzi_w_marginesie():
     lay = L.Layout(480, 320)
     for b in lay.bands:
         img, d = draw.new_canvas((480, 320))
-        render.Renderer()._band(d, b, render.BandState(title="konto",
+        render.Renderer()._band(d, b, render.BandState(title="account",
                                                        alert="allow"),
                                 render.ScreenState())
         px = img.load()
         assert all(px[x, y] == theme.ACCENT
                    for x in range(L.MARK_W) for y in range(b.top, b.bottom))
-        assert px[L.MARK_W, b.top] != theme.ACCENT, "pasek jest szerszy niz 4 px"
-        assert L.MARK_W < L.PAD_X, "pasek musialby zabrac miejsce trescia pasa"
+        assert px[L.MARK_W, b.top] != theme.ACCENT, "the bar is wider than 4 px"
+        assert L.MARK_W < L.PAD_X, "the bar would have to take room from the band's content"
 
 
 # --- cost on the wire -------------------------------------------------------
 
-def scena_pasy(now_ms):
+def scene_bands(now_ms):
     from tests import fixtures
     bands = [render.band_state(acc, now_ms=now_ms, show_clock=(i == 0))
              for i, acc in enumerate(fixtures.SCENES["base"]())]
     return render.ScreenState(clock="21:07", link="live", bands=bands)
 
 
-def _frakcja(a, b):
+def _fraction(a, b):
     R = render.Renderer()
     pa, pb = R.frame(a).rgb565("be"), R.frame(b).rgb565("be")
     tiles = surface.dirty_tiles(pa, pb, 480, 320)
@@ -474,25 +474,25 @@ def _frakcja(a, b):
     return nbytes / len(pa), len(rects)
 
 
-def test_przejscie_do_karty_miesci_sie_pod_progiem_pelnej_klatki():
+def test_transition_to_card_fits_under_full_frame_threshold():
     """Pins the number `FULL_AT = 0.85` stands on.
 
     At the old threshold of 0.60 this transition landed 2 points ABOVE it and turned
     45 crops into a full frame — that is 1.16 s into 1.87 s, for no gain at all.
     """
     now_ms = fmt.ms(fmt.parse_utc(NOW))
-    pasy = scena_pasy(now_ms)
-    karta = scena_pasy(now_ms)
-    karta.alert = render.alert_state(
-        status.parse_frame(ramka(wpis(since="2026-08-05T21:00:00Z"))), now_ms)
-    frakcja, rects = _frakcja(pasy, karta)
-    assert 0.55 < frakcja < surface.FULL_AT, \
-        "przejscie do karty zmienia %.1f%% klatki — prog FULL_AT wymaga rewizji" % (
-            frakcja * 100)
+    bands = scene_bands(now_ms)
+    card = scene_bands(now_ms)
+    card.alert = render.alert_state(
+        status.parse_frame(stream_frame(entry(since="2026-08-05T21:00:00Z"))), now_ms)
+    fraction, rects = _fraction(bands, card)
+    assert 0.55 < fraction < surface.FULL_AT, \
+        "transition to the card changes %.1f%% of the frame — the FULL_AT threshold needs revisiting" % (
+            fraction * 100)
     assert rects <= surface.MAX_RECTS
 
 
-def test_sam_znacznik_jest_tani():
+def test_marker_alone_is_cheap():
     """The marker has the right to light up and go out often — it has to cost next to nothing.
 
     The threshold is looser than for the triangle (2%), because the bar runs through the
@@ -500,28 +500,28 @@ def test_sam_znacznik_jest_tani():
     tiles and two headers get dirty. 6% is ~0.11 s on the Turing, still a fraction of a tick.
     """
     now_ms = fmt.ms(fmt.parse_utc(NOW))
-    pasy = scena_pasy(now_ms)
-    ze_znacznikiem = scena_pasy(now_ms)
-    for band in ze_znacznikiem.bands:
+    bands = scene_bands(now_ms)
+    with_marker = scene_bands(now_ms)
+    for band in with_marker.bands:
         if band is not None:
             band.alert = "allow"
-    frakcja, rects = _frakcja(pasy, ze_znacznikiem)
-    assert frakcja < 0.08, "znacznik zmienia %.2f%% klatki" % (frakcja * 100)
+    fraction, rects = _fraction(bands, with_marker)
+    assert fraction < 0.08, "the marker changes %.2f%% of the frame" % (fraction * 100)
     assert rects <= 12
 
 
 # --- time format ------------------------------------------------------------
 
-@pytest.mark.parametrize("sekundy,oczekiwane", [
+@pytest.mark.parametrize("seconds,expected", [
     (0, "a moment"), (59, "a moment"), (60, "1 min"), (245, "4 min"),
     (3600, "1 h 00 min"), (3900, "1 h 05 min"), (86400, "1 d 0 h"),
     (183600, "2 d 3 h"),
 ])
-def test_waited(sekundy, oczekiwane):
-    assert fmt.waited(0.0, sekundy * 1000.0) == oczekiwane
+def test_waited(seconds, expected):
+    assert fmt.waited(0.0, seconds * 1000.0) == expected
 
 
-def test_waited_nie_schodzi_ponizej_zera():
+def test_waited_does_not_go_below_zero():
     """Machine clocks drift apart, so a `since` from the future is real."""
     assert fmt.waited(10_000.0, 0.0) == "a moment"
     assert fmt.waited(None, 0.0) == "—"
@@ -529,104 +529,104 @@ def test_waited_nie_schodzi_ponizej_zera():
 
 # --- card layouts -----------------------------------------------------------
 
-def blokady(n):
+def blocks(n):
     """n blocks with different reasons and stamps, in the parser's order."""
-    return status.parse_frame(ramka(*[
-        wpis(key="k%d" % i, reason=("plan", "question", "permission")[i % 3],
-             project="projekt-%d" % i, detail="szczegol %d" % i,
-             since="2026-08-05T21:0%d:00Z" % i)
+    return status.parse_frame(stream_frame(*[
+        entry(key="k%d" % i, reason=("plan", "question", "permission")[i % 3],
+              project="project-%d" % i, detail="detail %d" % i,
+              since="2026-08-05T21:0%d:00Z" % i)
         for i in range(n)]))
 
 
-@pytest.mark.parametrize("ile,metoda", [
+@pytest.mark.parametrize("count,method", [
     (1, "_alert_solo"), (2, "_alert_pair"), (3, "_alert_list"),
     (4, "_alert_many"), (5, "_alert_many"),
 ])
-def test_uklad_wybiera_liczba_blokad(ile, metoda, monkeypatch):
+def test_layout_picks_method_by_block_count(count, method, monkeypatch):
     """The threshold is at three: up to two the project name stays the hero, from three on
     it drops into a list, because three names in 34 px do not exist."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
-    stan = render.alert_state(blokady(ile), now_ms)
-    wolane = []
+    state = render.alert_state(blocks(count), now_ms)
+    called = []
     R = render.Renderer()
-    for nazwa in ("_alert_solo", "_alert_pair", "_alert_list", "_alert_many"):
-        monkeypatch.setattr(R, nazwa,
-                            lambda d, a, n=nazwa: wolane.append(n))
-    R.frame(render.ScreenState(alert=stan))
-    assert wolane == [metoda]
+    for name in ("_alert_solo", "_alert_pair", "_alert_list", "_alert_many"):
+        monkeypatch.setattr(R, name,
+                            lambda d, a, n=name: called.append(n))
+    R.frame(render.ScreenState(alert=state))
+    assert called == [method]
 
 
-def test_lista_pokazuje_trzy_a_liczy_wszystkie():
+def test_list_shows_three_but_counts_all():
     now_ms = fmt.ms(fmt.parse_utc(NOW))
-    stan = render.alert_state(blokady(5), now_ms)
-    assert len(stan.rows) == render.ALERT_ROWS_MAX
-    assert stan.count == 5
-    assert len(stan.rest) == 2, "reszta idzie do stopki z nazwy, nie znika"
-    assert "5" in stan.title
+    state = render.alert_state(blocks(5), now_ms)
+    assert len(state.rows) == render.ALERT_ROWS_MAX
+    assert state.count == 5
+    assert len(state.rest) == 2, "the remainder goes to the footer by name, it does not disappear"
+    assert "5" in state.title
 
 
-def test_pasmo_podaje_najstarsze_czekanie_a_nie_naglowek():
+def test_banner_gives_oldest_wait_not_the_header():
     """The first row is the NEWEST block, while the hour in the banner is the start of the
     OLDEST wait on the screen. Those are two different things and they have to diverge."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
-    stan = render.alert_state(status.parse_frame(ramka(
-        wpis(key="plan", reason="plan", since="2026-08-05T21:06:00Z"),
-        wpis(key="zgoda", reason="permission", since="2026-08-05T21:01:00Z"),
+    state = render.alert_state(status.parse_frame(stream_frame(
+        entry(key="plan", reason="plan", since="2026-08-05T21:06:00Z"),
+        entry(key="consent", reason="permission", since="2026-08-05T21:01:00Z"),
     )), now_ms)
-    assert stan.rows[0].short == "plan", "najmlodsza idzie pierwsza"
-    assert stan.at == fmt.hm(fmt.parse_utc("2026-08-05T21:01:00Z"))
+    assert state.rows[0].short == "plan", "the newest goes first"
+    assert state.at == fmt.hm(fmt.parse_utc("2026-08-05T21:01:00Z"))
 
 
-def test_swieza_blokada_jest_widoczna_mimo_trzech_starszych():
+def test_fresh_block_is_visible_despite_three_older_ones():
     """Regression: with the window belonging to the SET, the reason's rank pushed out of the
     rows the very block that had taken the screen over — only its name stayed in the footer."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
-    stan = render.alert_state(status.parse_frame(ramka(
-        wpis(key="s1", reason="plan", project="stary-1", since="2026-08-05T19:07:00Z"),
-        wpis(key="s2", reason="plan", project="stary-2", since="2026-08-05T19:10:00Z"),
-        wpis(key="s3", reason="question", project="stary-3", since="2026-08-05T19:13:00Z"),
-        wpis(key="f", reason="permission", project="SWIEZY", since="2026-08-05T21:06:50Z"),
+    state = render.alert_state(status.parse_frame(stream_frame(
+        entry(key="s1", reason="plan", project="old-1", since="2026-08-05T19:07:00Z"),
+        entry(key="s2", reason="plan", project="old-2", since="2026-08-05T19:10:00Z"),
+        entry(key="s3", reason="question", project="old-3", since="2026-08-05T19:13:00Z"),
+        entry(key="f", reason="permission", project="FRESH", since="2026-08-05T21:06:50Z"),
     )), now_ms)
-    assert stan.rows[0].project == "SWIEZY", "blokada, ktora przejela ekran, ma byc widoczna"
-    assert stan.rest == ["stary-1"], "do stopki schodzi najstarsza, nie najnowsza"
+    assert state.rows[0].project == "FRESH", "the block that took over the screen must be visible"
+    assert state.rest == ["old-1"], "the oldest one goes down to the footer, not the newest"
 
 
-def test_kafel_szczegolu_nie_wchodzi_na_listwe_trybu():
+def test_detail_tile_does_not_enter_the_mode_strip():
     from panel import layout as L
     lay = L.Layout(480, 320)
-    for linie in (1, 2):
-        assert lay.alert_solo.fits(linie), "kafel na %d linie wchodzi na listwe" % linie
+    for lines in (1, 2):
+        assert lay.alert_solo.fits(lines), "the tile for %d lines enters the strip" % lines
 
 
-@pytest.mark.parametrize("ze_stopka", [True, False])
-def test_wiersze_listy_wypelniaja_ekran_bez_szpar(ze_stopka):
+@pytest.mark.parametrize("with_footer", [True, False])
+def test_list_rows_fill_the_screen_without_gaps(with_footer):
     """The remainder of the division goes where the browser puts it. A gap of background
     at the footer would read as a screen cut short."""
     from panel import layout as L
     lay = L.Layout(480, 320)
-    for uklad in (lay.alert_list, lay.alert_many):
-        rects = uklad.rows(footer=ze_stopka)
+    for layout_variant in (lay.alert_list, lay.alert_many):
+        rects = layout_variant.rows(footer=with_footer)
         assert rects[0][0] == L.BANNER_H
         for (_, bottom), (top, _) in zip(rects, rects[1:]):
-            assert top == bottom + L.DIVIDER_H, "wiersze nie stykaja sie dzielnikiem"
-        koniec = uklad.footer[1] if ze_stopka else uklad.height
-        assert rects[-1][1] == koniec, "ostatni wiersz nie dochodzi do stopki"
+            assert top == bottom + L.DIVIDER_H, "rows do not meet at the divider"
+        end = layout_variant.footer[1] if with_footer else layout_variant.height
+        assert rects[-1][1] == end, "the last row does not reach the footer"
 
 
-def _dol_tuszu(px, x0, x1, y0, y1, tlo, prog=25):
+def _ink_bottom(px, x0, x1, y0, y1, bg, threshold=25):
     """The last row in which there is ink inside the given rectangle. For a caption with
     no descenders below the baseline that is exactly the baseline minus one."""
-    ostatni = None
+    last = None
     for y in range(y0, y1):
         for x in range(x0, x1):
             p = px[x, y]
-            if max(abs(p[i] - tlo[i]) for i in range(3)) > prog:
-                ostatni = y
+            if max(abs(p[i] - bg[i]) for i in range(3)) > threshold:
+                last = y
                 break
-    return ostatni
+    return last
 
 
-def test_tusz_pasma_i_listwy_stoi_tam_gdzie_makieta():
+def test_ink_of_banner_and_strip_sits_where_the_mockup_says():
     """The baselines are MEASURED on the rendered mockup, so the test guards a measurement,
     not a formula.
 
@@ -641,24 +641,24 @@ def test_tusz_pasma_i_listwy_stoi_tam_gdzie_makieta():
     now_ms = fmt.ms(fmt.parse_utc(NOW))
     # With `permissionMode`, otherwise the `MODE` strip is not drawn at all and we would be
     # measuring an empty band.
-    stan = render.alert_state(
-        status.parse_frame(ramka(wpis(permissionMode="default"))), now_ms)
-    px = render.Renderer().frame(render.ScreenState(alert=stan)).image.load()
+    state = render.alert_state(
+        status.parse_frame(stream_frame(entry(permissionMode="default"))), now_ms)
+    px = render.Renderer().frame(render.ScreenState(alert=state)).image.load()
 
-    assert L.BANNER_BASE == 24, "pomiar makiety: dol cyfr zegara na 24,33 px"
-    assert L.AlertSolo.MODE_BASE == 306, "pomiar makiety: dol napisu `Tryb` na 306,33 px"
+    assert L.BANNER_BASE == 24, "mockup measurement: bottom of the clock digits at 24.33 px"
+    assert L.AlertSolo.MODE_BASE == 306, "mockup measurement: bottom of the `MODE` caption at 306.33 px"
 
     # The clock in the banner: the digits do not go below the baseline, so the bottom of the
     # ink gives it.
-    assert _dol_tuszu(px, 380, 470, 0, L.BANNER_H, theme.ACCENT_800) == L.BANNER_BASE - 1
+    assert _ink_bottom(px, 380, 470, 0, L.BANNER_H, theme.ACCENT_800) == L.BANNER_BASE - 1
     # The `MODE` strip: neither "MODE" nor "default" has a descender.
-    assert _dol_tuszu(px, 18, 300, 320 - L.AlertSolo.MODE_H, 320,
-                      theme.SUNKEN) == L.AlertSolo.MODE_BASE - 1
+    assert _ink_bottom(px, 18, 300, 320 - L.AlertSolo.MODE_H, 320,
+                       theme.SUNKEN) == L.AlertSolo.MODE_BASE - 1
 
 
-@pytest.mark.parametrize("ile", [1, 2, 3, 5])
-@pytest.mark.parametrize("zalane,kolor", [(False, "NEUTRAL_900"), (True, "ACCENT")])
-def test_rail_stoi_w_obu_klatkach_kazdego_ukladu(ile, zalane, kolor):
+@pytest.mark.parametrize("count", [1, 2, 3, 5])
+@pytest.mark.parametrize("flooded,color", [(False, "NEUTRAL_900"), (True, "ACCENT")])
+def test_rail_stands_in_both_frames_of_every_layout(count, flooded, color):
     """The rail is not a property of the full frame: it always stands below the banner, and
     flooding only repaints it. A bar appearing out of nothing would be a stronger movement
     than a change of color, and outside the `alert_flash_sec` window the card would be left
@@ -670,39 +670,39 @@ def test_rail_stoi_w_obu_klatkach_kazdego_ukladu(ile, zalane, kolor):
     """
     from panel import layout as L
 
-    oczekiwany = getattr(theme, kolor)
+    expected = getattr(theme, color)
     now_ms = fmt.ms(fmt.parse_utc(NOW))
-    stan = render.alert_state(blokady(ile), now_ms, flood=zalane)
-    px = render.Renderer().frame(render.ScreenState(alert=stan)).image.load()
+    state = render.alert_state(blocks(count), now_ms, flood=flooded)
+    px = render.Renderer().frame(render.ScreenState(alert=state)).image.load()
 
     for y in range(L.BANNER_H, 320):
         for x in range(L.RAIL_W):
-            assert px[x, y] == oczekiwany, \
-                "rail dziurawy w (%d, %d) przy %d blokadach" % (x, y, ile)
-        assert px[L.RAIL_W, y] != oczekiwany, \
-            "rail szerszy niz %d px w wierszu %d" % (L.RAIL_W, y)
-    assert px[0, L.BANNER_H - 1] != oczekiwany or zalane, \
-        "rail wchodzi w pasmo"
+            assert px[x, y] == expected, \
+                "rail has a hole at (%d, %d) with %d blocks" % (x, y, count)
+        assert px[L.RAIL_W, y] != expected, \
+            "rail wider than %d px in row %d" % (L.RAIL_W, y)
+    assert px[0, L.BANNER_H - 1] != expected or flooded, \
+        "rail bleeds into the banner"
 
 
-@pytest.mark.parametrize("ile", [1, 2, 3, 5])
-def test_przejscie_do_karty_miesci_sie_pod_progiem_dla_kazdego_ukladu(ile):
+@pytest.mark.parametrize("count", [1, 2, 3, 5])
+def test_transition_to_card_fits_under_threshold_for_every_layout(count):
     """`FULL_AT = 0.85` has to hold for EVERY layout, not only the one with a single block:
     above the threshold the set of crops turns into a full frame, that is 1.87 s on the
     Turing instead of ~1.2 s."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
-    pasy = scena_pasy(now_ms)
-    karta = scena_pasy(now_ms)
-    karta.alert = render.alert_state(blokady(ile), now_ms)
-    frakcja, rects = _frakcja(pasy, karta)
-    assert frakcja < surface.FULL_AT, \
-        "uklad na %d blokad brudzi %.1f%% klatki — prog FULL_AT wymaga rewizji" % (
-            ile, frakcja * 100)
+    bands = scene_bands(now_ms)
+    card = scene_bands(now_ms)
+    card.alert = render.alert_state(blocks(count), now_ms)
+    fraction, rects = _fraction(bands, card)
+    assert fraction < surface.FULL_AT, \
+        "layout for %d blocks dirties %.1f%% of the frame — the FULL_AT threshold needs revisiting" % (
+            count, fraction * 100)
     assert rects <= surface.MAX_RECTS
 
 
-@pytest.mark.parametrize("ile", [1, 2, 3, 5])
-def test_klatka_pelna_miesci_sie_w_ticku(ile):
+@pytest.mark.parametrize("count", [1, 2, 3, 5])
+def test_full_frame_fits_in_the_tick(count):
     """The heart of the movement layer: swapping the empty frame for the full one is the
     banner plus the rail, not the whole screen. A full-screen flash would be a full frame,
     that is 1.87 s of slow repainting instead of a flash.
@@ -711,10 +711,10 @@ def test_klatka_pelna_miesci_sie_w_ticku(ile):
     happen to be waiting — the banner and the rail are shared, so the number has to come
     out the same."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
-    pusta = render.ScreenState(alert=render.alert_state(blokady(ile), now_ms))
-    pelna = render.ScreenState(
-        alert=render.alert_state(blokady(ile), now_ms, flood=True))
-    frakcja, _ = _frakcja(pusta, pelna)
-    assert frakcja < 0.25, "klatka pelna brudzi %.1f%% klatki" % (frakcja * 100)
-    assert frakcja * len(render.Renderer().frame(pusta).rgb565("be")) * 6.1e-6 < 0.5, \
-        "nie zdazy w ticku"
+    empty = render.ScreenState(alert=render.alert_state(blocks(count), now_ms))
+    full = render.ScreenState(
+        alert=render.alert_state(blocks(count), now_ms, flood=True))
+    fraction, _ = _fraction(empty, full)
+    assert fraction < 0.25, "the full frame dirties %.1f%% of the frame" % (fraction * 100)
+    assert fraction * len(render.Renderer().frame(empty).rgb565("be")) * 6.1e-6 < 0.5, \
+        "won't make it inside a tick"

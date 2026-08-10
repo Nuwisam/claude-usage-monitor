@@ -97,7 +97,7 @@ class AlertSolo:
     # Why: the panel typeface (Segoe UI) has different vertical metrics than the mockup
     # font, so the same box model puts the ink 1-3 px elsewhere. The gap between boxes is
     # invisible, the position of the ink is visible — so the ink is the contract. Checked
-    # by measurement in tests/test_alert.py::test_tusz_pasma_i_listwy_stoi_tam_gdzie_makieta.
+    # by measurement in tests/test_alert.py::test_ink_of_banner_and_strip_sits_where_the_mockup_says.
     PROJECT_BASE = 87
     META_BASE = 112
     WAITED_BASE = 158
@@ -155,7 +155,7 @@ class AlertSolo:
 
     def fits(self, lines):
         """Whether the detail tile stays clear of the mode strip. Held to it by
-        tests/test_alert.py::test_uklady_nie_nachodza_na_siebie."""
+        tests/test_alert.py::test_detail_tile_does_not_enter_the_mode_strip."""
         return self.detail_box(lines)[3] <= self.mode[1]
 
 
@@ -327,7 +327,7 @@ class Band:
     @property
     def fits(self):
         """Whether the credits stay clear of the week. Held to it by
-        tests/test_render.py::test_kredyty_nie_wchodza_na_tydzien."""
+        tests/test_render.py::test_credits_do_not_overlap_week."""
         return self.credits[1] >= self.wk_bottom
 
 

@@ -26,7 +26,7 @@ from . import fmt
 
 class SeriesView:
     # `full` has no drawing of its own — at 100% the full track says so by itself
-    # (draw.bar) — but it stays: test_setka_to_koniec pins it and it carries the
+    # (draw.bar) — but it stays: test_hundred_is_the_end pins it and it carries the
     # only threshold in this UI. There is no `outline` field here, because NOBODY
     # read it: not draw.bar, not render, not a single test. `stub`/`ghost`/
     # `ghost_pct` stay even though the running panel never lights them — the

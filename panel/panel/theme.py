@@ -5,7 +5,7 @@ an opaque background, so we mix up front: `mix()` yields a finished color and at
 time there is no alpha at all.
 
 Every background/foreground pair has to survive RGB565 (5/6/5) quantization —
-tests/test_render.py::test_kolory_przezywaja_kwantyzacje holds it to that.
+tests/test_render.py::test_colors_survive_quantization holds it to that.
 """
 
 BG = (0x1C, 0x1B, 0x19)

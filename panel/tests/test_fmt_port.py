@@ -24,18 +24,18 @@ def test_countdown(secs, want):
     assert fmt.countdown(secs * 1000.0, 0.0) == want
 
 
-def test_countdown_bez_celu():
+def test_countdown_without_a_target():
     # time.ts:54 — no boundary is NOT the same thing as a boundary in the past.
     assert fmt.countdown(None, 0.0) == "no reset"
 
 
-@pytest.mark.parametrize("smiec", [1769459260, [], object()])
-def test_parse_utc_nie_wywraca_sie_na_nie_stringu(smiec):
+@pytest.mark.parametrize("junk", [1769459260, [], object()])
+def test_parse_utc_does_not_blow_up_on_a_non_string(junk):
     """The only entry point for raw server timestamps into the client. A broken frame
     must not kill the panel, and `re.search` on a number raises TypeError, which would
     pass through the whole loop up to the excepthook — one badly serialized field would
     blank the screen for good."""
-    assert fmt.parse_utc(smiec) is None
+    assert fmt.parse_utc(junk) is None
 
 
 @pytest.mark.parametrize("secs,want", [
@@ -81,7 +81,7 @@ def test_money(args, want):
     assert fmt.money(*args) == want
 
 
-def test_money_nie_przechodzi_przez_float():
+def test_money_does_not_go_through_float():
     """The backend keeps amounts in minor units exactly so as not to lose a cent
     (schemas.py). Flattening to a float on the way would waste that effort —
     0.1+0.2 is not 0.3."""
@@ -96,16 +96,16 @@ def test_clamp_pct(value, want):
     assert fmt.clamp_pct(value) == want
 
 
-def test_parse_utc_bez_strefy_zaklada_utc():
+def test_parse_utc_without_a_zone_assumes_utc():
     # time.ts:9-10 — new Date("...") with no zone is LOCAL time in JS, so we append
     # the Z. The same trap on the Python side.
     assert fmt.parse_utc("2026-07-26T18:00:00").utcoffset().total_seconds() == 0
     assert fmt.parse_utc("2026-07-26T18:00:00Z") == fmt.parse_utc("2026-07-26T18:00:00")
     assert fmt.parse_utc(None) is None
-    assert fmt.parse_utc("to nie data") is None
+    assert fmt.parse_utc("not a date") is None
 
 
-def test_godziny_sa_lokalne():
+def test_hours_are_local():
     """time.ts:31 uses getHours(), that is the browser's zone. The panel does the same:
     'reset at 20:00' has to agree with the watch on a wrist, not with UTC."""
     d = fmt.parse_utc("2026-07-26T18:00:00Z")
@@ -121,7 +121,7 @@ def _at(days):
     return fmt.at_stamp(_NOW + timedelta(days=days), fmt.ms(_NOW))
 
 
-def test_at_stamp_ma_szczeble_jak_www():
+def test_at_stamp_has_the_same_rungs_as_the_web():
     """Port of atStamp() (time.ts:94-106). Tz-agnostically: we check the SHAPE of the
     string, because the hour itself depends on the machine's zone.
 
@@ -135,27 +135,27 @@ def test_at_stamp_ma_szczeble_jak_www():
         assert second in fmt.DAYS, "the day abbreviation exactly as in the web"
     # 7 days out is the same abbreviation again, so from there on it is dates; a numeric
     # date takes no preposition, so there is none there.
-    daleko = _at(30)
-    assert "." in daleko.split()[0] and " at " in daleko
-    assert not daleko.startswith("on ")
+    far = _at(30)
+    assert "." in far.split()[0] and " at " in far
+    assert not far.startswith("on ")
 
 
-def test_at_stamp_ma_on_przed_dniem_tygodnia():
+def test_at_stamp_has_on_before_the_weekday():
     # The weekday branch carries the preposition; the date branch does not.
     assert _at(2).startswith("on Tue. at ")
     assert _at(3).startswith("on Wed. at ")
     assert not _at(30).startswith("on ")
 
 
-def test_at_stamp_inny_rok_ma_rok():
+def test_at_stamp_different_year_has_a_year():
     assert _at(-400).split()[0].count(".") == 2
 
 
-def test_at_stamp_bez_daty():
+def test_at_stamp_without_a_date():
     assert fmt.at_stamp(None, fmt.ms(_NOW)) == "—"
 
 
-def test_server_clock_idzie_monotonicznie():
+def test_server_clock_runs_monotonically():
     """Anchor on time.monotonic(), not on the system clock: the panel runs for months
     and an NTP jump must not shift the countdowns."""
     t = [100.0]
@@ -168,6 +168,6 @@ def test_server_clock_idzie_monotonicznie():
     assert clock.anchored
 
 
-def test_server_clock_bez_kotwicy_nie_wybucha():
+def test_server_clock_without_an_anchor_does_not_blow_up():
     clock = fmt.ServerClock(lambda: 0.0)
     assert clock.now_ms() > 0

@@ -49,7 +49,7 @@ def test_format_port_path(ports, want):
     assert ax206.format_port_path(ports) == want
 
 
-def test_port_path_nie_zawiera_magistrali():
+def test_port_path_does_not_include_the_bus():
     """The bus number is a synthetic index of the controller — the same nature as
     the `Hub_#` that wrecked the previous selector. It does not go into the key."""
     t = targets(((3, 4), 7))[0]
@@ -60,12 +60,12 @@ def test_port_path_nie_zawiera_magistrali():
 # --- selection --------------------------------------------------------------
 
 
-def test_wybor_po_port_path():
+def test_selection_by_port_path():
     ts = targets(((3, 4), 1), ((3, 2), 1))
     assert device.select(ts, {"port_path": "3.2"}).index == 1
 
 
-def test_brak_wskazanego_port_path_to_blad_nie_podmiana():
+def test_missing_requested_port_path_is_an_error_not_a_substitution():
     ts = targets(((3, 4), 1), ((3, 2), 1))
     with pytest.raises(DeviceNotFound) as e:
         device.select(ts, {"port_path": "5.1"})
@@ -73,7 +73,7 @@ def test_brak_wskazanego_port_path_to_blad_nie_podmiana():
     assert "3.4" in str(e.value) and "3.2" in str(e.value)
 
 
-def test_ten_sam_port_path_na_dwoch_magistralach_nie_wybiera_zadnego():
+def test_same_port_path_on_two_buses_selects_neither():
     """Possible with two USB controllers. One of those screens may belong to
     another program — so neither of them gets picked."""
     ts = targets(((3, 4), 1), ((3, 4), 2))
@@ -82,12 +82,12 @@ def test_ten_sam_port_path_na_dwoch_magistralach_nie_wybiera_zadnego():
     assert "index" in str(e.value)
 
 
-def test_wybor_po_indeksie():
+def test_selection_by_index():
     ts = targets(((3, 4), 1), ((3, 2), 1))
     assert device.select(ts, {"index": 1}).port_path == "3.2"
 
 
-def test_index_jako_napis_daje_czytelny_blad():
+def test_index_as_a_string_gives_a_readable_error():
     # panel.json is sometimes edited by hand; "1" instead of 1 has to give DeviceNotFound,
     # not a TypeError out of formatting the message.
     ts = targets(((3, 4), 1))
@@ -95,12 +95,12 @@ def test_index_jako_napis_daje_czytelny_blad():
         device.select(ts, {"index": "1"})
 
 
-def test_brak_selektora_przy_jednym_urzadzeniu():
+def test_no_selector_with_one_device():
     ts = targets(((3, 4), 1))
     assert device.select(ts, None).index == 0
 
 
-def test_brak_selektora_przy_dwoch_urzadzeniach_to_blad():
+def test_no_selector_with_two_devices_is_an_error():
     ts = targets(((3, 4), 1), ((3, 2), 1))
     with pytest.raises(DeviceNotFound) as e:
         device.select(ts, None)
@@ -109,12 +109,12 @@ def test_brak_selektora_przy_dwoch_urzadzeniach_to_blad():
     assert "port_path" in str(e.value) and "panels" in str(e.value)
 
 
-def test_pusta_lista():
+def test_empty_list():
     with pytest.raises(DeviceNotFound):
         device.select([], {"port_path": "3.4"})
 
 
-def test_index_liczy_sie_w_obrebie_sterownika():
+def test_index_counts_within_its_own_driver():
     """Two drivers have their own numbering, so {"index": 0} means what it always
     means — the first screen of THAT driver, not the first one on the desk."""
     ts = targets(((3, 4), 1)) + targets(((8, 4), 1), backend="turing-a")
@@ -124,13 +124,13 @@ def test_index_liczy_sie_w_obrebie_sterownika():
 # --- references -------------------------------------------------------------
 
 
-def test_release_oddaje_wszystkie_poza_zatrzymanym():
+def test_release_returns_everything_except_the_one_kept():
     ts = targets(((3, 4), 1), ((3, 2), 1), ((3, 1), 1))
     device.release(ts, keep=ts[1])
     assert [t.handle.releases for t in ts] == [1, 0, 1]
 
 
-def test_release_bez_uchwytu_nie_wybucha():
+def test_release_without_a_handle_does_not_blow_up():
     """Not every driver holds a reference to hand back — a serial port has none.
     The shared code must not break on that."""
     device.release([Target(backend="x", index=0, port_path="1")])
@@ -139,24 +139,24 @@ def test_release_bez_uchwytu_nie_wybucha():
 # --- configuration ----------------------------------------------------------
 
 
-def test_stary_location_jest_bledem_z_instrukcja():
+def test_old_location_is_an_error_with_instructions():
     """A silent migration is out: it would take guessing which screen the author had
     in mind. One readable sentence in the log, not a traceback under pythonw."""
     cfg = C.Config({"stream_token": "t", "account_1": {"uuid": "u"},
                     "device": {"location": "Port_#0004.Hub_#0005"}})
     problems = cfg.validate()
     hits = [p for p in problems if "location" in p]
-    assert hits, "brak zdania o location"
+    assert hits, "no sentence about location"
     assert any("port_path" in p and "--list" in p for p in hits)
 
 
-def test_port_path_przechodzi_walidacje():
+def test_port_path_passes_validation():
     cfg = C.Config({"stream_token": "t", "account_1": {"uuid": "u"},
                     "device": {"port_path": "3.4"}})
     assert [p for p in cfg.validate() if "device" in p or "location" in p] == []
 
 
-def test_device_nie_bedacy_obiektem():
+def test_device_that_is_not_an_object():
     cfg = C.Config({"stream_token": "t", "account_1": {"uuid": "u"},
                     "device": "3.4"})
     assert any("port_path" in p for p in cfg.validate())
