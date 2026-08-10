@@ -63,11 +63,11 @@ function Get-PanelProcess {
 if ($Uninstall) {
     if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-        Write-Host "usunieto zadanie '$TaskName'"
+        Write-Host "removed task '$TaskName'"
     } else {
-        Write-Host "zadania '$TaskName' nie bylo"
+        Write-Host "task '$TaskName' did not exist"
     }
-    Write-Host "venv i panel.json zostaja w $AppDir"
+    Write-Host "venv and panel.json remain in $AppDir"
     return
 }
 
@@ -76,16 +76,16 @@ New-Item -ItemType Directory -Force $AppDir | Out-Null
 
 # --- 1. venv --------------------------------------------------------------
 if (-not (Test-Path $Pythonw)) {
-    Write-Host "tworze venv w $VenvDir"
+    Write-Host "creating venv in $VenvDir"
     $base = (Get-Command python).Source
     & $base -m venv $VenvDir
-    if ($LASTEXITCODE -ne 0) { throw "nie udalo sie utworzyc venv" }
+    if ($LASTEXITCODE -ne 0) { throw "failed to create venv" }
 }
-Write-Host "instaluje zaleznosci"
+Write-Host "installing dependencies"
 & (Join-Path $VenvDir "Scripts\python.exe") -m pip install --quiet --upgrade pip
-if ($LASTEXITCODE -ne 0) { throw "pip: aktualizacja pip nie przeszla" }
+if ($LASTEXITCODE -ne 0) { throw "pip: pip upgrade failed" }
 & (Join-Path $VenvDir "Scripts\python.exe") -m pip install --quiet -r (Join-Path $PanelDir "requirements.txt")
-if ($LASTEXITCODE -ne 0) { throw "pip install -r requirements.txt nie przeszedl" }
+if ($LASTEXITCODE -ne 0) { throw "pip install -r requirements.txt failed" }
 
 # --- 2. redirection -------------------------------------------------------
 # The same convention as with the probe: the source stays in the repo, here sit a
@@ -107,7 +107,7 @@ sys.path.insert(0, SRC)
 runpy.run_path(os.path.join(SRC, "run.pyw"), run_name="__main__")
 "@
 Set-Content -Path $Launcher -Value $launcherBody -Encoding utf8
-Write-Host "przekierowanie: $Launcher"
+Write-Host "redirection: $Launcher"
 
 # --- 3. task --------------------------------------------------------------
 # Stop BEFORE registering, not after: -Force on a running task leaves the old
@@ -115,7 +115,7 @@ Write-Host "przekierowanie: $Launcher"
 # what was just installed -- and silently, because the image on the panel looks the same.
 $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($existing -and $existing.State -eq "Running") {
-    Write-Host "zatrzymuje poprzednia instancje"
+    Write-Host "stopping the previous instance"
     Stop-ScheduledTask -TaskName $TaskName
     # Wait for the PROCESS TO DIE, not for the task state. The scheduler reports
     # "Ready" as soon as it sends the signal, while pythonw lives on a moment longer and
@@ -127,7 +127,7 @@ if ($existing -and $existing.State -eq "Running") {
         Start-Sleep -Milliseconds 500
     }
     if (Get-PanelProcess) {
-        Write-Host "  UWAGA: proces panelu nadal zyje po 20 s - nowa instancja moze nie wejsc"
+        Write-Host "  WARNING: the panel process is still alive after 20 s - the new instance may not take over"
     }
 }
 
@@ -161,8 +161,8 @@ if (Test-Path $LogPath) { $before = @(Get-Content $LogPath).Count }
 
 Start-ScheduledTask -TaskName $TaskName
 Write-Host ""
-Write-Host "zadanie '$TaskName' zarejestrowane i uruchomione"
-Write-Host -NoNewline "czekam na potwierdzenie z logu "
+Write-Host "task '$TaskName' registered and started"
+Write-Host -NoNewline "waiting for confirmation from the log "
 
 # How many screens must report in. The script does NOT read panel.json -- during
 # installation that file often does not exist yet (there is a separate branch for it
@@ -194,9 +194,9 @@ Write-Host ""
 if ($opened.Count + $unacked.Count -gt 0) {
     $reported = $opened.Count + $unacked.Count
     if ($reported -lt $Panels) {
-        Write-Host "UWAGA - zglosilo sie $reported z $Panels ekranow:"
+        Write-Host "WARNING - $reported of $Panels screens reported in:"
     } else {
-        Write-Host "OK - panel rysuje ($reported z $Panels):"
+        Write-Host "OK - panel is drawing ($reported of $Panels):"
     }
     foreach ($line in $opened) { Write-Host "  $line" }
     foreach ($line in $unacked) {
@@ -204,26 +204,26 @@ if ($opened.Count + $unacked.Count -gt 0) {
         # went out. A screen unplugged, rotated or skewed will write down
         # exactly the same, so there is nothing here to count as "drawing".
         Write-Host "  $line"
-        Write-Host "    ^ bez potwierdzenia - sprawdz wzrokiem, czy cos widac"
+        Write-Host "    ^ unacknowledged - check with your eyes whether anything is visible"
     }
 } elseif ($busy) {
-    Write-Host "PANEL ZAJETY przez inny proces:"
+    Write-Host "PANEL BUSY - another process has it:"
     Write-Host "  $busy"
     Write-Host ""
-    Write-Host "  Uchwyt do modulu jest wylaczny - albo panel, albo inny program."
-    Write-Host "  Zatrzymaj tamten program (lub wskaz mu drugi modul). Klient probuje"
-    Write-Host "  dalej co 30 s i podejmie rysowanie SAM, gdy panel sie zwolni;"
-    Write-Host "  nie trzeba go restartowac ani instalowac ponownie."
+    Write-Host "  The handle to the module is exclusive - either the panel or the other program."
+    Write-Host "  Stop that program (or point it at the second module). The client keeps"
+    Write-Host "  retrying every 30 s and will resume drawing ON ITS OWN once the panel frees up;"
+    Write-Host "  no need to restart it or install it again."
 } elseif ($dup) {
-    Write-Host "PANEL JUZ DZIALAL - nowa instancja wyszla po blokadzie:"
+    Write-Host "PANEL WAS ALREADY RUNNING - the new instance backed off at the lock:"
     Write-Host "  $dup"
-    Write-Host "  To nie jest blad. Rysuje ta, ktora byla wczesniej."
+    Write-Host "  This is not an error. The one that was already running keeps drawing."
 } elseif ($bad) {
-    Write-Host "BLAD KONFIGURACJI - panel nie wystartuje:"
+    Write-Host "CONFIGURATION ERROR - the panel will not start:"
     Write-Host "  $bad"
-    Write-Host "  Popraw $AppDir\panel.json i uruchom: Start-ScheduledTask -TaskName '$TaskName'"
+    Write-Host "  Fix $AppDir\panel.json and run: Start-ScheduledTask -TaskName '$TaskName'"
 } else {
-    Write-Host "BRAK POTWIERDZENIA w 30 s. Zajrzyj do logu - ponizej jego ogon:"
+    Write-Host "NO CONFIRMATION within 30 s. Check the log - its tail is below:"
     if (Test-Path $LogPath) { Get-Content $LogPath -Tail 8 | ForEach-Object { Write-Host "  $_" } }
 }
 
@@ -232,4 +232,4 @@ Write-Host "  log:     $LogPath"
 Write-Host "  config:  $AppDir\panel.json"
 Write-Host "  stop:    Stop-ScheduledTask -TaskName '$TaskName'"
 Write-Host "  start:   Start-ScheduledTask -TaskName '$TaskName'"
-Write-Host "  test:    python -m panel --probe   (najpierw zatrzymaj zadanie)"
+Write-Host "  test:    python -m panel --probe   (stop the task first)"

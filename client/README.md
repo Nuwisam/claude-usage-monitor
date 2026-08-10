@@ -296,8 +296,8 @@ installation, after one cycle, therefore looks empty — don't diagnose before t
 4. The machine is visible in the panel; `scriptVersion` in `/api/machines` says which code it's
    running.
 
-Disabling or uninstalling: [`docs/RUNBOOK.md`](../docs/RUNBOOK.md#wyłączenie-zbierania),
-section "Wyłączenie zbierania".
+Disabling or uninstalling: [`docs/RUNBOOK.md`](../docs/RUNBOOK.md#turning-off-collection),
+section "Turning off collection".
 
 ### 7. Blocked-session signaller
 
