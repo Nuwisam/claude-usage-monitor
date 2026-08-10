@@ -149,6 +149,10 @@ def cmd_probe(args):
             draw.bar(d, (170, y, 466, y + 12), v, theme.ACCENT)
             y += 26
 
+        # i18n-keep: the test card exists to show whether the panel clips ascenders and
+        # descenders at each size. A pangram carrying every Polish diacritic is the
+        # densest available sample of tall and deep glyphs; English text would make the
+        # card pass while the clipping it was built to expose stayed invisible.
         d.text((14, y + 6), "Zażółć gęślą jaźń ĄĆĘŁŃÓŚŹŻ", font=draw.font(10),
                fill=theme.TEXT)
         d.text((14, y + 24), "Zażółć gęślą jaźń ĄĆĘŁŃÓŚŹŻ", font=draw.font(12),

@@ -10,6 +10,23 @@ they are loaded from changed.
 
 Every case matches measured harness behavior, not an idea of it. The measurement methodology
 lives in the script's own docstring.
+
+i18n-keep: four things in this file stay Polish and none of them is untranslated work.
+This module is the only surviving record of a cp1250 bug, and the record is made of the
+bytes themselves:
+
+  * the mojibake `'umieraÄ‡'` and the note that `Ł` is `C5 81` — what the failure LOOKED
+    like. Retype either and the evidence is gone;
+  * three docstrings that stay Polish whole, because they are the sentences explaining
+    those bytes;
+  * four `Z:\\projects\\...` literals in the `cwd` fixtures. A Windows drive path is what
+    the hook really receives, and the cp1250 crash happened on exactly such a path;
+  * the Polish file path and shell command fed as tool input. The accented characters are
+    the input under test — replace them with ASCII and the test still passes while
+    exercising nothing.
+
+Verify by bytes, never by console: a terminal rendering these as garbage is its codepage,
+not corruption. Four separate reviewers reported that false alarm.
 """
 import importlib.util
 import io

@@ -56,6 +56,10 @@ def test_three_digit_value_fits_in_column():
     assert width(f_tight) <= L.NUM_W
 
 
+# i18n-keep: the Polish letters below are the measurement, not text. 'Ń' reaches higher
+# than any unaccented capital and the pangram carries every tail the panel can clip, so
+# translating either makes this test pass while measuring nothing. The docstring stays
+# Polish with them: it is the sentence that explains what is being measured.
 def test_descenders_are_not_clipped():
     """Mierzymy z faktycznego obrysu, nie z nominalnego rozmiaru: 'Ń' siega
     wyzej niz wielkie litery bez znaku diakrytycznego."""
@@ -237,6 +241,8 @@ def test_withdrawn_credits_still_get_drawn():
     ("Dump scope: session only, session and week, or all the limit windows", 1),
     ("A 6-step plan: layout.Alert, render._alert, AlertState, geometry and "
      "quantization tests, plus one more sentence for good measure", 2),
+    # i18n-keep: a pangram repeated 20 times is the densest overflow this wrapper can be
+    # given; the accents also prove the width measurement is not ASCII-only.
     ("Zażółć gęślą jaźń " * 20, 2),
     ("", 0),
 ])
@@ -252,6 +258,7 @@ def test_wrap_lines_does_not_exceed_limits(text, lines):
 
 def test_wrap_lines_truncates_last_line_with_ellipsis():
     f = draw.font(12)
+    # i18n-keep: same pangram, same reason as the parametrized case above.
     out = draw.wrap_lines("Zażółć gęślą jaźń " * 20, f, 420, 2)
     assert out[-1].endswith("…"), "the overflow must be visible, not silently cut off"
 

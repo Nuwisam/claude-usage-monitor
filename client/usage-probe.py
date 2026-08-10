@@ -41,6 +41,18 @@ We merge: the structure from the cache + fresh percentages from stdout laid on t
 The result has EXACTLY the same shape as the former HTTP response, so the backend parser
 needs no changes.
 
+i18n-keep: every diagnostic SLUG this file writes stays Polish — `brak-cache`,
+`cache-przeterminowany`, `cache-innego-konta`, `nie-komenda-lokalna`, `stary-zrzut`,
+`brak-procentow`, `zrzut-starszy-od-cache`, `reset-w-toku`, `okno-wygaslo`,
+`brak-claude-w-path`, `brak-pliku-wyjscia`, `spawn-*`, `brak-credentials`, `odczyt-*`,
+`rejestr-brzeg-sesji`, `rejestr-niepelny`, `rejestr-bez-biezacej-sesji`, and the JSON key
+`"wpisy"`. They are not prose and nobody reads them as words: they are keys, tallied by a
+generic Counter() in analyze-samples.py over usage-samples.jsonl, which is already
+megabytes of history. Translating one does not rename a value, it SPLITS its count in
+two — and the log outlives the code, so the split is permanent and silent.
+`cache-z-przyszlosci` proves the point: it no longer exists anywhere in this file and is
+still being counted from the log.
+
 THE SIGNALLER (section "alert" below) detects the moment Claude Code has stopped and is
 waiting for a HUMAN: a permission prompt, AskUserQuestion, ExitPlanMode. Each block is one
 file in the state directory; the set of those files is the WHOLE truth, and the POST is
