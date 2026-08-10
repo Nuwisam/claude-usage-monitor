@@ -1,244 +1,255 @@
-# Kontrakt API
+# API Contract
 
-Wszystkie przykłady są **wygenerowane z działającego systemu**, nie wymyślone. Tożsamości
-i kwoty są podstawione; kształt odpowiedzi, procenty i zależności między polami — nie.
+All examples are **generated from the running system**, not invented. Identities and amounts
+are substituted; the shape of the response, the percentages and the relationships between
+fields are not.
 
-Base URL API to `<origin><APP_BASE_PATH>/api`, czyli przy domyślnej instalacji lokalnej
-`http://127.0.0.1:8080/claude-usage/api`. W przykładach niżej: `https://usage.example.org/claude-usage/api`.
+The API base URL is `<origin><APP_BASE_PATH>/api`, which under a default local install is
+`http://127.0.0.1:8080/claude-usage/api`. In the examples below: `https://usage.example.org/claude-usage/api`.
 
-**Schemat OpenAPI jest wyłączony** (`/openapi.json`, `/docs`, `/redoc`). Reverse proxy
-przepuszcza cały korzeń kontenera, a brama autoryzacji siedzi na zależnościach endpointów,
-nie na tych trasach — wystawiony schemat oddawałby komplet ścieżek i nazw pól każdemu bez
-sesji. Ten plik jest jedynym opisem kontraktu.
+**The OpenAPI schema is disabled** (`/openapi.json`, `/docs`, `/redoc`). The reverse proxy
+passes through the whole container root, and the authorization gate sits on the endpoint
+dependencies, not on those routes — an exposed schema would hand the full set of paths and
+field names to anyone with no session. This file is the only description of the contract.
 
-**`contractVersion` = 3.** Co doszło w v3:
+**`contractVersion` = 3.** What v3 added:
 
-- **`confirmedAt`** — kiedy ostatnio POTWIERDZONO tę wartość. **Świeżość liczy się z tego
-  pola, nie z `capturedAt`.** Dedup celowo nie zapisuje próbki, gdy wartość się nie zmieniła,
-  więc `capturedAt` bywa o minuty starsze niż ostatni realny pomiar — a wtedy stabilny odczyt
-  wygląda w UI jak zerwana łączność. To dwie przeciwne informacje dla kogoś, kto właśnie
-  decyduje, czy odpalić duże zadanie.
-- **`valueSince`** — odkąd wartość jest niezmienna. Stąd podpis „bez zmian od 12:05".
-- `capturedAt` zostaje i znaczy dalej to samo: czas ostatniej zapisanej PRÓBKI.
-- **`deltaFrom`** — od której PRÓBKI liczy się `deltaPct1h`. Baseline jest przycięty do
-  **bieżącego okna**, więc rozpiętość bywa krótsza niż godzina i UI musi to napisać
-  („+3 pp od 14:03", nie „+3 pp w ciągu godziny"). Wcześniej po resecie sesji punkt
-  odniesienia pochodził z poprzedniego okna i przez godzinę wisiało „−46 pp w ciągu godziny".
-  `null` zawsze i dokładnie wtedy, gdy `deltaPct1h` jest `null`. Nazwa `deltaPct1h` zostaje —
-  jej zmiana łamałaby zgodność, a dodanie pola nie łamie (patrz § 11).
-- **`unavailableReason`** (seria) i **`reason`** (szczebel kaskady) — powód, dla którego
-  miernika **nie da się odczytać**, dosłownie od Anthropic. Gdy organizacja wyczerpie swój
-  globalny sufit wydatków, endpoint nie przestaje odpowiadać — **zeruje miernik**: `percent`
-  spada z 91 na 0, `used` z 273,15 EUR na 0,00, `limit` i `cap` znikają. Bez tego pola stan
-  twardej blokady jest **nieodróżnialny** od konta, które kredytów nigdy nie miało, a UI
-  narysowałoby pewne, zmierzone 0% — czyli „masz całe 300 EUR" w chwili, gdy nie masz nic.
-  Znika wtedy **tylko `utilization`** (liczba bieżąca); `rawUtilization`, kwoty w `extra`
-  i wszystkie znaczniki czasu opisują **ostatni prawdziwy pomiar sprzed blokady**.
-  Zbiór wartości **jest otwarty** (zaobserwowane: `org_level_disabled_until`,
-  `org_spend_cap_reached`), więc rozgałęziaj się na `!== null`, nigdy na treści.
-  `state` szczebla **nie** dostał czwartej wartości — wycofane kredyty to nadal `off`.
+- **`confirmedAt`** — when this value was last CONFIRMED. **Freshness is computed from this
+  field, not from `capturedAt`.** Dedup deliberately writes no sample when the value has not
+  changed, so `capturedAt` can be minutes older than the last real measurement — and then a
+  stable reading looks in the UI like a broken connection. Those are two opposite pieces of
+  information for someone who is right now deciding whether to kick off a big task.
+- **`valueSince`** — since when the value has been unchanged. This is where the "unchanged
+  since 12:05" caption comes from.
+- `capturedAt` stays, and still means the same thing: the time of the last SAMPLE written.
+- **`deltaFrom`** — the SAMPLE from which `deltaPct1h` is counted. The baseline is trimmed to
+  the **current window**, so the span is sometimes shorter than an hour and the UI has to say
+  so ("+3 pp since 14:03", not "+3 pp over the last hour"). Before this, after a session reset
+  the reference point came from the previous window and "−46 pp over the last hour" hung on
+  screen for an hour. `null` always and exactly when `deltaPct1h` is `null`. The name
+  `deltaPct1h` stays — renaming it would break compatibility, and adding a field does not
+  (see § 11).
+- **`unavailableReason`** (series) and **`reason`** (cascade rung) — the reason a meter
+  **cannot be read**, verbatim from Anthropic. When an organization exhausts its global spend
+  ceiling, the endpoint does not stop responding — it **zeroes the meter**: `percent` drops
+  from 91 to 0, `used` from EUR 273.15 to 0.00, `limit` and `cap` disappear. Without this
+  field a hard block is **indistinguishable** from an account that never had credits, and the
+  UI would draw a confident, measured 0% — meaning "you have the full 300 EUR" at the exact
+  moment you have nothing. Only **`utilization`** disappears then (the current figure);
+  `rawUtilization`, the amounts in `extra` and every timestamp describe the **last true
+  measurement before the block**. The set of values **is open** (observed:
+  `org_level_disabled_until`, `org_spend_cap_reached`), so branch on `!== null`, never on the
+  content. The rung's `state` did **not** get a fourth value — withdrawn credits are still
+  `off`.
 
-Co doszło w v2 względem v1 i dlaczego:
+What v2 added over v1, and why:
 
-| Zmiana | Powód |
+| Change | Reason |
 |---|---|
-| **Czas na drucie z offsetem** (`…Z`) — **jedyna zmiana łamiąca zgodność** | v1 wysyłało naiwny UTC bez strefy, a `new Date("2026-07-26T19:07:37")` w JS to czas **lokalny**. Countdown był cicho przesunięty o strefę |
-| `kind`, `group`, `bucketKey` w seriach | Bez nich UI musiało zgadywać, która seria jest oknem 5 h — po `sortOrder` albo po prefiksie klucza, czyli dokładnie tak, jak zabrania zasada 5 z `AGENTS.md` |
-| `cascade[]` przy koncie | „Na którym szczeblu limitu jesteś" to wiedza dziedzinowa i wymaga sięgnięcia do nietypowanych `spend`/`extra_usage`. Liczy ją backend, ma testy |
-| `gaps[].kind = no_samples` faktycznie emitowane | Pole istniało w v1, ale **żadna linia kodu go nie ustawiała** — awaria serii wyglądała identycznie jak bezczynność |
-| `resets[]` niezależne od koszyka | W v1 wypełniane tylko przy `bucket=raw`, więc domyślny widok 24 h wracał bez ani jednej granicy resetu |
+| **Time on the wire with an offset** (`…Z`) — **the only breaking change** | v1 sent naive UTC with no zone, and `new Date("2026-07-26T19:07:37")` in JS is LOCAL time. The countdown was silently shifted by the zone |
+| `kind`, `group`, `bucketKey` on series | Without them the UI had to guess which series was the 5-hour window — by `sortOrder` or by a key prefix, exactly what rule 5 of `AGENTS.md` forbids |
+| `cascade[]` on the account | "Which rung of the limit you're on" is domain knowledge and requires reaching into untyped `spend`/`extra_usage`. The backend computes it, and it is tested |
+| `gaps[].kind = no_samples` actually emitted | The field existed in v1, but **no line of code ever set it** — a broken series looked identical to idleness |
+| `resets[]` independent of the bucket | In v1 it was only filled for `bucket=raw`, so the default 24-hour view came back without a single reset boundary |
 
 ---
 
-## 1. Co ten system pokazuje
+## 1. What this system shows
 
-Ile **aktualnie zostało limitu Claude** dla kilku kont naraz. Dziś dwa: jedno **Max**,
-jedno **Team**. Historia zbiera się przy okazji, ale nie jest celem.
+How much **Claude limit is currently left**, for several accounts at once. Today two: one
+**Max**, one **Team**. History accumulates along the way, but it is not the goal.
 
-Dane pochodzą z sondy uruchamianej na maszynach użytkownika przy pracy z Claude Code.
-**Nie płyną, gdy nie pracujesz** — i to nie usterka, tylko właściwość źródła, którą UI
-musi uczciwie komunikować (patrz § 4).
+Data comes from a probe running on the user's machines while working with Claude Code.
+**It does not flow when you are not working** — and that is not a bug, just a property of the
+source that the UI has to communicate honestly (see § 4).
 
 ---
 
-## 2. Uwierzytelnienie
+## 2. Authentication
 
-Backend sam jest bramą — nie ma przed nim nginx-a z `auth_request`, więc **nikt nie zwróci
-przeglądarce 302**. Kto jest wołającym, rozstrzyga `AUTH_MODE`:
+The backend is its own gate — there is no nginx with `auth_request` in front of it, so
+**nobody returns a 302 to the browser**. Who the caller is gets decided by `AUTH_MODE`:
 
-| `AUTH_MODE` | Skąd tożsamość |
+| `AUTH_MODE` | Identity comes from |
 |---|---|
-| `none` | znikąd — każde żądanie przechodzi. Tylko gdy port nie jest osiągalny z sieci |
-| `header` | z nagłówka `AUTH_EMAIL_HEADER`, który ustawia proxy (i musi go **usuwać** z żądań przychodzących) |
-| `verify` | z odpowiedzi JSON usługi tożsamości pod `AUTH_VERIFY_URL`; nazwy pól to konfiguracja |
+| `none` | nowhere — every request goes through. Only when the port is not reachable from the network |
+| `header` | the `AUTH_EMAIL_HEADER` header, set by the proxy (which must **strip** it from incoming requests) |
+| `verify` | the JSON response of an identity service at `AUTH_VERIFY_URL`; field names are configuration |
 
-Niezależnie od trybu (poza `none`) na wierzchu stoi allowlista `ALLOWED_EMAILS`:
-uwierzytelnienie mówi KTO, allowlista mówi KOMU wolno.
+Regardless of mode (other than `none`), an `ALLOWED_EMAILS` allowlist sits on top:
+authentication says WHO, the allowlist says WHO IS ALLOWED.
 
-| Sytuacja | Odpowiedź |
+| Situation | Response |
 |---|---|
-| Brak sesji | `401 {"detail": {"reason": "not-authenticated"}}`, z `redirect_url` gdy jest dokąd odesłać |
-| Uwierzytelniony, ale spoza allowlisty | `403 {"detail": {"reason": "email-not-allowed"}}` |
-| Usługa tożsamości nieosiągalna | `503 {"detail": {"reason": "sso-unreachable"}}` |
-| `verify` bez `AUTH_VERIFY_URL`, albo nieoczekiwany status | `503 {"detail": {"reason": "sso-unavailable"}}` |
+| No session | `401 {"detail": {"reason": "not-authenticated"}}`, with `redirect_url` when there is somewhere to send it |
+| Authenticated but off the allowlist | `403 {"detail": {"reason": "email-not-allowed"}}` |
+| Identity service unreachable | `503 {"detail": {"reason": "sso-unreachable"}}` |
+| `verify` with no `AUTH_VERIFY_URL`, or an unexpected status | `503 {"detail": {"reason": "sso-unavailable"}}` |
 
-**Przy 401 z `redirect_url` UI przekierowuje; przy 401 bez niego pokazuje błąd w miejscu.**
-To jest część kontraktu, nie szczegół implementacji. Adresu logowania UI **nie zgaduje** —
-backend wie, czy stoi za czymkolwiek logującym, a UI nie; wysłanie użytkownika w domyśle pod
-typową ścieżkę kończy się 404 i wygląda jak awaria aplikacji.
+**On a 401 with `redirect_url` the UI redirects; on a 401 without one it shows an error in
+place.** This is part of the contract, not an implementation detail. The UI **does not guess**
+the login address — the backend knows whether it sits behind anything that logs in, the UI
+does not; sending the user to a guessed, typical path ends in a 404 and looks like an
+application failure.
 
-`redirect_url` pojawia się, gdy poda go usługa tożsamości (pole z `AUTH_REDIRECT_FIELD`) albo
-gdy ustawiono `AUTH_LOGIN_URL`. `{rd}` w tym adresie zostaje zastąpione zakodowanym adresem
-powrotu, składanym z `PUBLIC_ORIGIN` + `APP_BASE_PATH`:
+`redirect_url` appears when the identity service supplies it (the field named by
+`AUTH_REDIRECT_FIELD`) or when `AUTH_LOGIN_URL` is set. `{rd}` in that address gets replaced
+with an encoded return address, assembled from `PUBLIC_ORIGIN` + `APP_BASE_PATH`:
 
 ```json
 {"detail": {"reason": "not-authenticated",
   "redirect_url": "https://usage.example.org/oauth2/start?rd=https%3A%2F%2Fusage.example.org%2Fclaude-usage%2F"}}
 ```
 
-403 i 503 **nie** kierują na logowanie: zalogowany użytkownik odesłany na logowanie wraca
-i dostaje tę samą odmowę, czyli pętlę.
+403 and 503 **do not** redirect to login: a logged-in user sent to log in comes back and gets
+the same refusal — a loop.
 
-Wszystkie odpowiedzi mają `Cache-Control: no-store`. Nieaktualny procent limitu jest gorszy
-niż brak odpowiedzi.
+Every response carries `Cache-Control: no-store`. A stale limit percentage is worse than no
+response.
 
 ---
 
-## 3. Endpointy
+## 3. Endpoints
 
-| Metoda i ścieżka | Zwraca |
+| Method and path | Returns |
 |---|---|
-| `GET /status` | **Główny endpoint.** Stan bieżący wszystkich kont i serii. Odpytywać co **15 s**, a przy podłączonym strumieniu (§ 3.1) co **3 min** |
-| `GET /stream?account=<uuid>` | **SSE.** Karta konta wypychana natychmiast po pomiarze. Zob. § 3.1 |
-| `GET /history?account=&seriesId=&from=&to=&bucket=auto` | Przebieg w czasie + dziury + granice resetów |
-| `GET /accounts` | Lista kont. **`PATCH /accounts/{uuid}` NIE ISTNIEJE** — kolumny `label`, `color`, `isEnabled` są w bazie, ale nie ma ścieżki zapisu. Nie buduj na nim edycji |
-| `GET /machines` | Które maszyny raportowały które konta, z wersją **sondy** (`scriptVersion`) |
-| `GET /series` | Rejestr serii (zob. § 6 — lista jest otwarta) |
-| `GET /events` | Log operacyjny: przełączenia konta, drift schematu, błędy klienta |
-| `GET /batches` · `GET /batches/{id}/raw` | Log przyjęć + surowa odpowiedź Anthropic |
-| `GET /stats` | Liczniki, współczynnik dedupu, skuteczność ingestu 24 h |
-| `POST /session-alert` | **Bez SSO, Bearer per maszyna.** Sesje Claude Code, które stanęły i czekają na człowieka. Zob. § 3.2 |
+| `GET /me` | The current logged-in user: `{email, verifiedAt}` — from the SSO session |
+| `GET /status` | **The main endpoint.** Current state of all accounts and series. Poll every **15 s**, and every **3 min** once the stream (§ 3.1) is connected |
+| `GET /stream?account=<uuid>` | **SSE.** An account card pushed immediately after a measurement. See § 3.1 |
+| `GET /history?account=&seriesId=&from=&to=&bucket=auto` | Progression over time + gaps + reset boundaries |
+| `GET /accounts` | List of accounts. **`PATCH /accounts/{uuid}` DOES NOT EXIST** — the `label`, `color`, `isEnabled` columns are in the database, but there is no write path. Do not build editing on top of it |
+| `GET /machines` | Which machines reported which accounts, with the **probe** version (`scriptVersion`) |
+| `GET /series` | Series registry (see § 6 — the list is open) |
+| `GET /events` | Operational log: account switches, schema drift, client errors |
+| `GET /batches` · `GET /batches/{id}/raw` | Ingest log + Anthropic's raw response |
+| `GET /stats` | Counters, dedup ratio, 24 h ingest success rate |
+| `POST /ingest` | **This is what the probe writes to.** Per-machine Bearer, plus the `X-Ingest-Key` edge filter — the same pattern as § 3.2. Accepts one measurement plus a `backlog[]`; returns `{ok, samplesWritten, backlogAccepted, serverNow, batchId, seriesRegistered}` |
+| `POST /session-alert` | **No SSO, per-machine Bearer.** Claude Code sessions that have stopped and are waiting on a human. See § 3.2 |
 
-**W `/batches` nie ma kodów HTTP i nie będzie** — od v3 sonda nie wysyła żadnego żądania do
-Anthropic, więc nie ma odpowiedzi, którą miałyby opisywać. W ich miejscu jest proweniencja
-pomiaru: `measurementSource` (`cli_merged` = świeże procenty ze stdout `/usage`,
-`cli_usage_cache` = sam cache Claude Code, do 5 min stary), `cacheAgeS`, `freshAgeS`.
-Przewaga `cli_usage_cache` to cicha awaria — dane płyną dalej, tylko rozdzielczość spadła
-z minuty do pięciu, i **to jedyne miejsce, w którym widać to wprost**.
+**`/batches` has no HTTP codes, and never will** — since v3 the probe sends no request to
+Anthropic, so there is no response for them to describe. In their place is the provenance of
+the measurement: `measurementSource` (`cli_merged` = fresh percentages from `/usage`'s stdout,
+`cli_usage_cache` = the Claude Code cache alone, up to 5 min stale), `cacheAgeS`, `freshAgeS`.
+A run of `cli_usage_cache` is a silent failure — data keeps flowing, only the resolution drops
+from one minute to five, and **this is the only place where that is visible directly**.
 
-**Czas działa w obie strony.** `from` i `to` w `/history` przyjmują ISO-8601 ze strefą
-(`…Z`, `…+02:00`) albo bez niej — bez strefy zakłada się UTC, ze strefą wartość jest
-**przeliczana**, a nie obcinana. Wysyłaj po prostu `Date.toISOString()`.
+**Time works both ways.** `from` and `to` in `/history` accept ISO-8601 with a zone (`…Z`,
+`…+02:00`) or without one — with no zone UTC is assumed, with a zone the value is
+**converted**, not truncated. Just send `Date.toISOString()`.
 
-To nie jest uprzejmość dla klienta, tylko domknięcie granicy: gdy kontrakt v2 dopiął
-strefę do czasu wychodzącego, przeglądarka zaczęła ją odsyłać — i widok Historia zwracał
-**500** przy każdym otwarciu, bo reszta backendu liczy na naiwnym UTC. Pilnuje tego
-`backend/tests/test_history_endpoint.py`.
+This is not a courtesy to the client, just closing a boundary: once contract v2 attached a
+zone to outgoing time, the browser started sending it back — and the History view returned
+**500** on every open, because the rest of the backend counts on naive UTC.
+`backend/tests/test_history_endpoint.py` guards this.
 
 ---
 
-## 3.1 Strumień zdarzeń (SSE)
+## 3.1 Event stream (SSE)
 
 ```
 GET /api/stream?account=<uuid>&account=<uuid>[&snapshot=0]
 Accept: text/event-stream
 ```
 
-Serwer wypycha ramkę, gdy przez `/api/ingest` przyjdzie pomiar dla **zapisanego** konta.
+The server pushes a frame when a measurement for a **registered** account arrives through
+`/api/ingest`.
 
-**Subskrypcja jest wyłącznie po `account_uuid`.** Adresu e-mail w tym kontrakcie nie ma —
-ani jako parametru, ani jako klucza dopasowania. Jeden adres wskazuje realnie kilka kont
-(konto Pro i miejsce w Teamie pod tym samym adresem), a `email` jest nadpisywany przy każdym
-pomiarze; adresowanie po nim znaczyłoby, że zbiór kont pod subskrypcją zmienia się bez
-wiedzy subskrybenta — po cichu. Co najmniej jeden `account` jest **wymagany**: brak
-parametru to `400 {"reason": "no-subscription"}`, nigdy niejawne „wszystko".
+**The subscription is exclusively by `account_uuid`.** There is no email address anywhere in
+this contract — not as a parameter, not as a match key. One address really can point at
+several accounts (a Pro account and a seat in a Team under the same address), and `email` gets
+overwritten on every measurement; addressing by it would mean the set of accounts under a
+subscription changes without the subscriber knowing — silently. At least one `account` is
+**required**: a missing parameter is `400 {"reason": "no-subscription"}`, never an implicit
+"everything".
 
-**Autoryzacja: Bearer albo zwykła brama.** Obecność nagłówka `Authorization` wybiera
-ścieżkę tokenową (`STREAM_TOKENS`); bez niego stosuje się `AUTH_MODE` jak wszędzie indziej,
-więc `EventSource` z przeglądarki nie wymaga niczego dodatkowego. `STREAM_TOKENS` to
-**osobny sekret** od `INGEST_TOKENS` — token sondy jest poświadczeniem wyłącznie do zapisu
-i nie otwiera odczytu.
+**Authorization: Bearer, or the ordinary gate.** The presence of an `Authorization` header
+selects the token path (`STREAM_TOKENS`); without one, `AUTH_MODE` applies as everywhere else,
+so a browser's `EventSource` needs nothing extra. `STREAM_TOKENS` is a **separate secret** from
+`INGEST_TOKENS` — the probe's token is a write-only credential and does not open reading.
 
-Konsekwencja dla klientów bezgłowych: skoro ścieżkę wybiera sama OBECNOŚĆ nagłówka, klient,
-który zawsze go wysyła (jak panel AX206), przy pustym `STREAM_TOKENS` dostanie 401 nawet
-przy `AUTH_MODE=none`.
+A consequence for headless clients: since the path is chosen by the mere PRESENCE of the
+header, a client that always sends it (like the AX206 panel) will get a 401 with an empty
+`STREAM_TOKENS`, even under `AUTH_MODE=none`.
 
-| event | kiedy | treść |
+| event | when | content |
 |---|---|---|
-| `hello` | raz, na starcie | `{contractVersion, serverNow, subscribed[], unknown[], pingSec, maxLifetimeSec}` |
-| `account` | snapshot na starcie + po każdym przyjętym pomiarze | `{contractVersion, serverNow, account, warnings[]}` |
-| `ping` | co `pingSec` (15 s) | `{serverNow}` |
-| `lag` | odbiorca nie nadążył | `{reason:"queue-overflow", dropped}` |
-| `alert` | snapshot na starcie + po każdym `POST /session-alert` | `{contractVersion, serverNow, alerts[]}` — zob. § 3.2 |
-| `bye` | po `maxLifetimeSec` (900 s) | `{reason:"lifetime"}`, potem czyste zamknięcie |
+| `hello` | once, at start | `{contractVersion, serverNow, subscribed[], unknown[], pingSec, maxLifetimeSec}` |
+| `account` | a snapshot at start + after every accepted measurement | `{contractVersion, serverNow, account, warnings[]}` |
+| `ping` | every `pingSec` (15 s) | `{serverNow}` |
+| `lag` | the receiver did not keep up | `{reason:"queue-overflow", dropped}` |
+| `alert` | a snapshot at start + after every `POST /session-alert` | `{contractVersion, serverNow, alerts[]}` — see § 3.2 |
+| `bye` | after `maxLifetimeSec` (900 s) | `{reason:"lifetime"}`, then a clean close |
 
-**`account` niesie dokładnie ten sam obiekt, co element `accounts[]` w `/status`** — ten sam
-model, te same pola, ta sama funkcja składająca po stronie serwera. Nie ma wariantu „lite"
-i nie będzie: drugi kształt tych samych danych to drugi kontrakt do utrzymania.
+**`account` carries exactly the same object as an element of `accounts[]` in `/status`** — the
+same model, the same fields, the same server-side assembly function. There is no "lite"
+variant and there will not be: a second shape for the same data is a second contract to
+maintain.
 
-Cztery rzeczy, które trzeba wiedzieć, zanim się to podepnie:
+Four things worth knowing before you hook this up:
 
-1. **`unknown[]` nie jest błędem.** To UUID-y, których nie ma w bazie — literówka albo konto,
-   które dopiero powstanie. Połączenie zostaje otwarte i subskrypcja obejmuje je dalej, więc
-   konto założone w trakcie strumienia dojdzie samo. Zgłaszamy je, bo pomyłka w konfiguracji
-   musi wyglądać inaczej niż bezczynność.
-2. **Nie ma replayu** ani `Last-Event-ID`. Po ponownym połączeniu dostajesz świeży snapshot,
-   co jest ściśle lepsze od odtwarzania historii. Każda ramka jest **pełnym** stanem konta,
-   nie przyrostem — dlatego zgubienie ramek jest nieszkodliwe i dlatego `lag` wystarczy jako
-   jedyny sygnał przerwy.
-3. **`bye` po 900 s jest normalne.** To jedyny moment, w którym długie połączenie ponownie
-   weryfikuje sesję SSO. `EventSource` wznawia sam; klient headless musi wznowić sam.
-4. **Poll zostaje.** Strumień nie przelicza świeżości przy ciszy klienta (bo cisza nie
-   generuje zdarzeń) i nie pokaże konta, o którego UUID nikt nie prosił. `/status`
-   co **3 min** domyka oba.
+1. **`unknown[]` is not an error.** These are UUIDs that are not in the database — a typo, or
+   an account that has not been created yet. The connection stays open and the subscription
+   still covers it, so an account created while the stream is running arrives on its own.
+   We report it because a configuration mistake has to look different from idleness.
+2. **There is no replay** and no `Last-Event-ID`. On reconnecting you get a fresh snapshot,
+   which is strictly better than replaying history. Every frame is the **full** account state,
+   not a delta — which is why losing frames is harmless and why `lag` is enough as the sole
+   signal of an interruption.
+3. **`bye` after 900 s is normal.** It is the only moment a long connection re-verifies the
+   SSO session. `EventSource` resumes on its own; a headless client must resume itself.
+4. **Polling stays.** The stream does not recompute freshness while the client is silent
+   (because silence generates no events), and it will not show an account whose UUID nobody
+   asked for. `/status` every **3 min** closes both gaps.
 
-   Dlaczego 3 min, a nie minuta: sonda ma throttle 60 s, więc minutowy poll nie mógłby
-   pokazać niczego, czego nie przyniósł już strumień. To, po co poll naprawdę jest, zmienia
-   się **z upływem czasu**, nie z nowymi danymi.
+   Why 3 min and not one: the probe has a 60 s throttle, so a one-minute poll could not show
+   anything the stream had not already delivered. What the poll is really for changes **with
+   the passage of time**, not with new data.
 
-   Odkąd świeżość niesie etykieta wieku, przejście `live → stale` **nie zmienia w UI
-   niczego** — wiek liczy się z `confirmedAt` względem lokalnie tykającego „teraz", więc
-   rośnie poprawnie także wtedy, gdy poll nie przyniósł ani jednego bajtu. Realnym
-   zadaniem polla jest jedyne przejście, które nadal **zmienia rysunek**:
-   `stale → inferred_reset` po przeturlaniu się okna. Najgorszy przypadek: seria pokazuje
-   starą liczbę o 3 minuty dłużej, niż powinna pokazywać `~0` — a stara liczba jest wyższa
-   od zera, więc błąd idzie w bezpieczną stronę.
+   Ever since freshness is carried by the age label, the `live → stale` transition **changes
+   nothing in the UI** — the age is computed from `confirmedAt` against a locally ticking
+   "now", so it grows correctly even when the poll brought back not a single byte. The poll's
+   real job is the one transition that still **changes the drawing**:
+   `stale → inferred_reset` once the window has rolled over. The worst case: a series shows
+   the old figure for 3 minutes longer than it should be showing `~0` — and the old figure is
+   higher than zero, so the error errs on the safe side.
 
-`snapshot=0` pomija karty startowe — używa tego przeglądarka, która przed otwarciem
-strumienia i tak pobrała `/status`.
+`snapshot=0` skips the startup cards — used by the browser, which already fetched `/status`
+before opening the stream.
 
-**Filtr to routing, nie autoryzacja.** Zalogowany użytkownik widzi wszystkie konta
-w `/status`; strumień niczego przed nikim nie zamyka.
+**The filter is routing, not authorization.** A logged-in user sees every account in
+`/status`; the stream shuts nothing off from anyone.
 
 ---
 
-## 3.2 Zablokowane sesje Claude Code
+## 3.2 Blocked Claude Code sessions
 
-Sesja, która stanęła na pytaniu do człowieka — prośbie o zgodę na narzędzie,
-`AskUserQuestion` albo `ExitPlanMode`. Sygnalizuje to `client/usage-probe.py` (ta sama sonda,
-sekcja „alert" — mierzone 1,7 ms wobec 41,9 ms za osobny proces), a panel na biurku pokazuje
-kartę i znacznik przy koncie. Wyłącznik: `"session_status": false` w `config.json`.
+A session that has stopped on a question to a human — a tool permission request,
+`AskUserQuestion`, or `ExitPlanMode` (`reason`: `permission` | `question` | `plan`).
+`client/usage-probe.py` signals it (the same probe, the "alert" section — measured at 1.7 ms
+against 41.9 ms for a separate process), and the desk panel shows a card and a marker next to
+the account. Off switch: `"session_status": false` in `config.json`.
 
-**Sesja może chodzić na maszynie zdalnej, a panel stoi lokalnie** — dlatego zdarzenia idą
-przez backend jako proxy. Ale **nie ma ich w bazie**: żyją wyłącznie w pamięci procesu.
-Blokada gaśnie, gdy ktoś kliknie „tak", więc tabela oznaczałaby migrację i cykl życia
-wierszy dla stanu, po którym nie ma zostać żaden ślad.
+**A session can run on a remote machine while the panel sits locally** — which is why events
+go through the backend as a proxy. But **they are not in the database**: they live only in
+process memory. A block goes out the moment someone clicks "yes", so a table would mean a
+migration and a row lifecycle for a state that is meant to leave no trace at all.
 
-**Restart backendu czyści mapę i alerty NIE wracają same** — wcześniej stało tu, że wracają,
-i to była nieprawda. Sonda wysyła zbiór, gdy rozjedzie się on z jej własnym znacznikiem
-ostatniej wysyłki; restart serwera tego znacznika nie zmienia, więc z punktu widzenia sondy
-wszystko jest już ogłoszone. Trwająca blokada wróci na panel dopiero przy **zmianie zbioru**
-na tej maszynie (nowa blokada albo zniknięcie którejś z obecnych). Domknięcie tego wymaga,
-żeby serwer podał sondzie swój stan — np. w odpowiedzi na POST pomiaru, który leci co minutę —
-i jest osobnym tematem, nie właściwością obecnego kontraktu.
+**A backend restart clears the map, and alerts do NOT come back on their own** — this used to
+say they do, and that was not true. The probe sends its set when it diverges from its own
+marker of the last thing sent; a server restart does not touch that marker, so from the
+probe's point of view everything is already announced. An ongoing block will come back to the
+panel only when the set **changes** on that machine (a new block, or one of the current ones
+going away). Closing this gap requires the server to tell the probe its own state — e.g. in
+the response to the once-a-minute measurement POST — and is a separate topic, not a property
+of the current contract.
 
 ```
 POST /api/session-alert
-Authorization: Bearer <token TEJ maszyny, z INGEST_TOKENS>
+Authorization: Bearer <THIS machine's token, from INGEST_TOKENS>
 X-Ingest-Key: <INGEST_EDGE_KEY>
 
 {"entries": [
-  {"key": "<sesja>__<agent|main>__<klucz>", "reason": "permission",
+  {"key": "<session>__<agent|main>__<key>", "reason": "permission",
    "project": "claude-usage-monitor", "tool": "Bash", "detail": "git status",
    "since": "2026-08-05T21:00:00Z", "account_uuid": "…", "session_id": "…",
    "agent_id": null, "agent_type": null, "permission_mode": "default"}],
@@ -247,283 +258,294 @@ X-Ingest-Key: <INGEST_EDGE_KEY>
 200 {"ok": true, "machine": "desktop", "accepted": 1, "subscribers": 1}
 ```
 
-Sonda wysyła **snake_case**, tak jak wygląda wpis na dysku — z jednym wyjątkiem: pola
-**lokalne** (`transcript_path`, `prompt_id`, `registry_seen`) `snapshot()` zdejmuje przed
-wysyłką. Służą wyłącznie do zgaszenia blokady po stronie klienta: dwa pierwsze do domykania
-z transkryptu, `registry_seen` do reguły śmierci z rejestru sesji harnessu. `transcript_path`
-niesie przy okazji nazwę katalogu domowego człowieka. Modele przyjmują obie formy
-(`populate_by_name`), więc camelCase też przejdzie. Na wyjściu, w ramce `alert`, pola są już
-camelCase jak w całej reszcie kontraktu.
+The probe sends **snake_case**, the same shape as the entry on disk — with one exception: the
+**local** fields (`transcript_path`, `prompt_id`, `registry_seen`) get stripped by
+`snapshot()` before sending. They exist purely to clear a block on the client side: the first
+two for closing it out from the transcript, `registry_seen` for the death rule from the
+harness's session registry. `transcript_path` incidentally carries the human's home directory
+name. The models accept both forms (`populate_by_name`), so camelCase goes through too. On the
+way out, in the `alert` frame, the fields are already camelCase like the rest of the contract.
 
-Cztery rzeczy, które trzeba wiedzieć:
+Four things worth knowing:
 
-1. **Każdy POST ZASTĘPUJE zbiór swojej maszyny w całości.** Nie ma przyrostów, więc nie ma
-   stanu do uzgadniania i nie ma sposobu, żeby zgubione „wyjście" zostawiło sierotę.
-   Pusta lista gasi alerty tej maszyny. Dwa nakładające się żądania z jednej maszyny dają
-   ten sam wynik co samo późniejsze — dlatego endpoint nie serializuje zapisów i nie
-   otwiera transakcji.
-2. **`machine` nadaje serwer z tokenu, nigdy klient.** To etykieta, którą człowiek czyta
-   z panelu i po której decyduje, gdzie iść.
-3. **Ramka `alert` niesie PEŁNY bieżący zbiór ze wszystkich maszyn**, tak samo jak `account`
-   niesie pełną kartę. Idzie do **wszystkich** subskrybentów strumienia, nie do tych
-   zapisanych na jakieś konto: blokada nie należy do żadnego pojedynczego konta.
-   Ramka niesie `machine` per wpis, więc filtr da się dołożyć później bez zmiany formatu.
-4. **Snapshot przy połączeniu jest wymogiem, nie ozdobą.** `STREAM_MAX_LIFETIME_SEC` zmusza
-   panel do przełączenia połączenia co 15 minut, a zablokowana sesja nie emituje w tym
-   czasie **żadnego** zdarzenia (zmierzone: 98% blokad). Bez tego blokada trwająca 40 minut
-   znikałaby z ekranu po piętnastu.
+1. **Every POST REPLACES its machine's set in full.** There are no increments, so there is no
+   state to reconcile and no way for a lost "exit" to leave an orphan. An empty list clears
+   that machine's alerts. Two overlapping requests from one machine give the same result as
+   the later one alone — which is why the endpoint does not serialize writes and opens no
+   transaction.
+2. **`machine` is assigned by the server from the token, never by the client.** It is the
+   label a human reads off the panel and uses to decide where to go.
+3. **The `alert` frame carries the FULL current set from all machines**, just as `account`
+   carries a full card. It goes to **every** stream subscriber, not only to those subscribed
+   to some account: a block does not belong to any single account. The frame carries `machine`
+   per entry, so a filter can be added later without changing the format.
+4. **The snapshot on connect is a requirement, not decoration.** `STREAM_MAX_LIFETIME_SEC`
+   forces the panel to switch connections every 15 minutes, and a blocked session emits **no**
+   event at all in that time (measured: 98% of blocks). Without this, a block lasting 40
+   minutes would vanish from the screen after fifteen.
 
-Pojedynczy wpis nie do przyjęcia jest **pomijany**, a reszta zbioru przechodzi: zgaszenie
-alertu przez błąd formatowania byłoby tym samym rodzajem błędu co fałszywe zero w pomiarze.
-Wpis starszy niż 24 h wypada ze snapshotu — maszyna, która zniknęła w trakcie blokady,
-nigdy nie przyśle korekty.
+A single entry that cannot be accepted is **skipped**, and the rest of the set goes through:
+clearing an alert because of a formatting error would be the same kind of mistake as a false
+zero in a measurement. An entry older than 24 h drops out of the snapshot — a machine that
+disappeared mid-block will never send a correction.
 
-**`contractVersion` nie rośnie.** Dodanie ramki jest zmianą niełamiącą — dokładnie tak jak
-dodanie całego `/api/stream` i pola `deltaFrom` (§ 11). Przeglądarka jej nie widzi
-z konstrukcji: `useLiveStream.ts` rejestruje pięć nazwanych listenerów i **nie ma
+**`contractVersion` does not go up.** Adding a frame is a non-breaking change — exactly like
+adding the whole of `/api/stream` and the `deltaFrom` field (§ 11). The browser does not see
+it by construction: `useLiveStream.ts` registers five named listeners and **has no
 `onmessage`**.
 
-Ta ścieżka **musi** być objęta filtrem brzegowym `X-Ingest-Key` w Apache, tak samo jak
-`/ingest` — bez tego stoi otworem dla skanerów i broni się samym Bearerem.
+This path **must** be covered by the `X-Ingest-Key` edge filter in Apache, exactly like
+`/ingest` — without it, it stands open to scanners and defends itself with the Bearer alone.
 
 ---
 
-## 4. Cztery stany świeżości — kontrakt danych, nie cztery rysunki
+## 4. Four freshness states — a data contract, not four drawings
 
-Każda seria w `/status` ma pole `freshness`. **Backend rozróżnia cztery stany i to się nie
-zmienia** — to nadal kontrakt. Zmieniło się coś innego: **UI ich nie nazywa i nie rysuje
-osobno.** Aktualność niesie w całości **etykieta wieku odczytu**.
+Every series in `/status` has a `freshness` field. **The backend distinguishes four states and
+that has not changed** — it is still the contract. What changed is something else: **the UI
+does not name them and does not draw them separately.** Currency is carried entirely by the
+**reading-age label**.
 
-| `freshness` | Znaczenie | `utilization` | Jak pokazać |
+| `freshness` | Meaning | `utilization` | How to show it |
 |---|---|---|---|
-| `live` | **Potwierdzenie** świeższe niż 5 min (od v3 — nie próbka, patrz niżej) | liczba | pełny tor + liczba + wiek odczytu |
-| `stale` | Brak potwierdzenia od 5 min, ale okno wciąż trwa | liczba | **identycznie jak `live`** |
-| `unknown` | Klient raportuje, ale brak danych dla tej serii | **`null`** | **identycznie jak `live`**, wartość z `rawUtilization` |
-| `inferred_reset` | Okno się zresetowało i klient milczał — **wnioskujemy** ~0% | `0.0` | wyraźnie inaczej niż pomiar: `~0`, kontur bez masy |
+| `live` | **Confirmation** fresher than 5 min (since v3 — not a sample, see below) | a number | full track + number + reading age |
+| `stale` | No confirmation for 5 min, but the window is still running | a number | **identical to `live`** |
+| `unknown` | The client is reporting, but there is no data for this series | **`null`** | **identical to `live`**, the value from `rawUtilization` |
+| `inferred_reset` | The window reset and the client stayed silent — we **infer** ~0% | `0.0` | clearly different from a measurement: `~0`, an outline with no fill |
 
-Trzy pierwsze wiersze mają **jeden rysunek i jedno brzmienie**, bo wszystkie trzy niosą
-**ostatnią prawdziwą wartość**. Różni je tylko to, jak stary jest odczyt — a to mówi podpis:
+The first three rows have **one drawing and one wording**, because all three carry the
+**last true value**. What tells them apart is only how old the reading is — and that is what
+the caption says:
 
 ```
-potwierdzone o 11:58 · 5 min temu
-potwierdzone w ndz. o 11:58 · 3 d 2 h temu
+confirmed at 11:58 · 5 min ago
+confirmed on Sun. at 11:58 · 3 d 2 h ago
 ```
 
-**Dlaczego nie cztery rysunki.** Wcześniej `stale` dostawało przygaszone wypełnienie plus
-„wartość może być już wyższa", a `unknown` — kontur ze skosem i słowo „nie wiem" **zamiast
-liczby**. Oba były szumem nad informacją, którą wiek odczytu podaje wprost i dokładniej:
-`stale` znaczyło tylko „minęło 5 minut", a `unknown` **ukrywało znany, prawdziwy procent**.
-Panel AX206 zbudowano od początku na modelu z wiekiem
-(`panel/panel/view.py`) i to on jest tu wzorcem — WWW go dogoniło, nie odwrotnie.
+**Why not four drawings.** `stale` used to get a dimmed fill plus "the value may already be
+higher", and `unknown` an outline with hatching and the word "unknown" **instead of a
+number**. Both were noise over information the reading age states directly and more precisely:
+`stale` only meant "5 minutes have passed", and `unknown` **hid a known, true percentage**.
+The AX206 panel was built on the age-based model from the start (`panel/panel/view.py`), and
+that is the pattern here — the web caught up to it, not the other way around.
 
-### Najważniejsze zdanie w tym dokumencie
+### The most important sentence in this document
 
-**`unknown` nie może zostać wyrenderowane jako 0%.**
+**`unknown` must never be rendered as 0%.**
 
-To zdanie zostaje i po zmianie obowiązuje **mocniej**. Najgorszy tryb awarii tego narzędzia
-to pokazanie fałszywego, pewnie wyglądającego zera — bo na tej podstawie użytkownik odpali
-duże zadanie i trafi w ścianę. Właśnie po to backend zwraca w tym stanie `utilization: null`,
-a obok `rawUtilization` z **ostatnią zmierzoną** wartością.
+This sentence stays, and after the change it holds **more strongly**. This tool's worst
+failure mode is showing a false, confident-looking zero — because on that basis a user kicks
+off a big task and hits a wall. That is exactly why the backend returns `utilization: null` in
+this state, with `rawUtilization` beside it carrying the **last measured** value.
 
-Reguła dla UI brzmi więc: **`utilization ?? rawUtilization`**, nigdy `utilization ?? 0`.
-Pokazujemy ostatni **pomiar** z jego wiekiem, a nie zero i nie wymyśloną liczbę. Słowa
-„nie wiem" i kreskowany tor zostają **wyłącznie** dla serii, dla której pomiaru nie było
-**nigdy** (`utilization` i `rawUtilization` oba `null`) — tam pusty tor czytałoby się jako
-zero, a zera nie wolno.
+The rule for the UI is therefore: **`utilization ?? rawUtilization`**, never
+`utilization ?? 0`. We show the last **measurement** with its age, never zero and never an
+invented number. The word "unknown" and the dashed track stay **only** for a series that has
+**never** been measured (`utilization` and `rawUtilization` both `null`) — there an empty
+track would read as zero, and zero is not allowed.
 
-To samo zdanie stoi za `unavailableReason`, i to **w obie strony**. Fantomem jest
-`percent: 0` **z payloadu wycofania** — nie wartość zmierzona wcześniej. Dlatego przy wycofanym
-mierniku `utilization` jest `null` (bieżącej liczby nie ma), ale `rawUtilization` **zostaje**:
-to ostatni ZMIERZONY procent i jedyne, co o zużyciu wiadomo. Skasowanie go byłoby tym samym
-błędem co renderowanie zera, tylko z drugiej strony — użytkownik traci liczbę, którą naprawdę
-mamy.
+The same sentence stands behind `unavailableReason`, and **in both directions**. The phantom
+is `percent: 0` **from the withdrawal payload** — not a value measured earlier. That is why
+with a withdrawn meter `utilization` is `null` (there is no current figure), but
+`rawUtilization` **stays**: it is the last MEASURED percent and the only thing known about
+usage. Deleting it would be the same mistake as rendering zero, just from the other side — the
+user loses a figure we genuinely have.
 
-Cały wiersz opisuje wtedy **tamten pomiar**: `rawUtilization`, kwoty w `extra` (`used`/`limit`
-sprzed blokady, bo payload wycofania ma je wyzerowane) oraz `capturedAt`/`confirmedAt`/
-`valueSince` wskazujące moment, w którym tę liczbę potwierdzono po raz ostatni. UI pisze więc
-„licznik wycofany przez organizację · ostatni pomiar w śr. o 13:39 · 2 d temu", a nie
-„potwierdzone przed chwilą".
+The whole row then describes **that measurement**: `rawUtilization`, the amounts in `extra`
+(`used`/`limit` from before the block, since the withdrawal payload zeroes them) and
+`capturedAt`/`confirmedAt`/`valueSince` pointing at the moment this number was last confirmed.
+The row looks exactly like a normal one — the UI writes "confirmed on Wed. at 13:39 · 2 d ago",
+not "confirmed just now".
 
-Kreskowany tor i słowa „bez licznika" zostają wyłącznie wtedy, gdy pomiaru **nigdy nie było** —
-tam nadal nie ma czego narysować.
+The dashed track and the words "no meter" stay only when there has **never** been a
+measurement — there is still nothing to draw there.
 
-Odwrotny błąd jest równie groźny i pilnuje go osobny test: **wyczerpanie własnej puli to nie
-jest wycofanie miernika**. Wtedy `enabled` zostaje `true`, `unavailableReason` jest `null`,
-a licznik pokazuje 100% (zmierzone: 300,04 z 300,00 EUR) — i ta liczba musi zostać na ekranie,
-bo jest jedyną prawdziwą.
+The opposite mistake is just as dangerous and a separate test guards it: **exhausting your own
+pool is not withdrawing the meter**. There `enabled` stays `true`, `unavailableReason` is
+`null`, and the meter shows 100% (measured: 300.04 of 300.00 EUR) — and that number has to
+stay on screen, because it is the only true one.
 
-`inferred_reset` też jest wnioskowaniem, nie pomiarem, i **dalej musi wyglądać inaczej** —
-tylda przy liczbie i kontur bez wypełnienia. Świadomie nie stawiamy tam stempla ostatniego
-pomiaru: tamten należy do **poprzedniego** okna, a `~0` mówi o bieżącym. Zastrzeżenie do
-tooltipa: wnioskowanie jest prawdziwe, **chyba że** konto było w tym czasie używane
-z claude.ai, mobile albo Cowork — one czerpią z tego samego limitu, ale nie wysyłają próbek.
+`inferred_reset` is also an inference, not a measurement, and it **still has to look
+different** — a tilde next to the number and an outline with no fill. We deliberately do not
+put the last measurement's stamp there: that one belongs to the **previous** window, and `~0`
+speaks of the current one. A caveat for the tooltip: the inference is true **unless** the
+account was used in that time from claude.ai, mobile, or Cowork — those draw on the same limit
+but send no samples.
 
-### `warnings[]` nie niesie już nic
+### `warnings[]` no longer carries anything
 
-Backend generował jedno ostrzeżenie: „część serii na koncie X jest w stanie `unknown`".
-**Zniknęło razem z pojęciem `unknown` w UI** — powtarzało nazwą stanu to, co obok stało już
-liczbą minut. Pole zostaje w kontrakcie jako miejsce na fakty ponad kontami; **puste
-`warnings[]` jest poprawnym stanem**, nie brakiem implementacji.
+The backend used to generate one warning: "some series on account X are in the `unknown`
+state". **It disappeared along with the concept of `unknown` in the UI** — it repeated, by
+state name, what was already standing next to it as a number of minutes. The field stays in
+the contract as a place for facts that span accounts; **an empty `warnings[]` is a valid
+state**, not a missing implementation.
 
-### Świeżość próbki ≠ świeżość liczby
+### Sample freshness ≠ number freshness
 
-`capturedAt` to moment, w którym **my** zaobserwowaliśmy wartość. Etykieta brzmi
-„zaobserwowane 14:23", **nie** „stan na 14:23". Dlatego podpis mówi „potwierdzone",
-a liczy się z `confirmedAt`.
+`capturedAt` is the moment **we** observed the value. The label reads "observed 14:23",
+**not** "as of 14:23". That is why the caption says "confirmed", and is computed from
+`confirmedAt`.
 
-Ten moment liczy **serwer**: `min(czas_klienta + offset, czas_odebrania)`, gdzie
-`offset = czas_odebrania − measurement.sent_at`. Klient podaje więc *wiek* pomiaru, a nie
-datę — jego zegar ścienny nie ma wpływu na oś czasu. Praktyczny skutek dla UI: `spend:org`
-i `extra:usage` częściej pokazują wiek rzędu minut, bo pochodzą z cache'u Claude Code, a nie
-ze świeżego zrzutu `/usage`. **To jest prawda wychodząca na wierzch, nie regresja** — wcześniej
-dostawały czas zrzutu, którego dane nie zawierają.
+This moment is computed by the **server**: `min(client_time + offset, receipt_time)`, where
+`offset = receipt_time − measurement.sent_at`. So the client supplies the *age* of the
+measurement, not a date — its wall clock has no effect on the timeline. The practical effect
+for the UI: `spend:org` and `extra:usage` more often show an age on the order of minutes,
+because they come from the Claude Code cache and not from a fresh `/usage` dump. **This is a
+truth surfacing, not a regression** — they used to get the dump's time, which the data did not
+actually carry.
 
-**Świeżość liczy się z `confirmedAt`, nie z `capturedAt`** — to jest ta zmiana z v3.
-Pod v2 stabilna wartość wpadała w `stale` przez sam dedup, więc „nic się nie zmienia"
-wyglądało identycznie jak „straciliśmy łączność".
-
----
-
-## 5. Trzy twarde reguły prezentacji
-
-Wynikają z danych, nie z gustu.
-
-**1. Przy każdym koncie widoczny plan.** `orgType`, `seatTier`, `rateLimitTier`, `email`.
-Bez tego dwa razy „40%" wygląda tak samo, a znaczy **różne ilości bezwzględne** — inne na
-Max 20x, inne na miejscu Team Standard.
-
-**2. Nigdy nie sumować ani nie średniować procentów między kontami.** To liczba bez znaczenia.
-
-**3. Porównania w czasie domyślnie facetowane per konto**, nie nakładane na jedną oś.
-Overlay tylko świadomie i wtedy legenda niesie plan.
+**Freshness is computed from `confirmedAt`, not from `capturedAt`** — this is the v3 change.
+Under v2 a stable value fell into `stale` purely because of dedup, so "nothing is changing"
+looked identical to "we lost the connection".
 
 ---
 
-## 6. Reguły dotyczące danych
+## 5. Three hard rules of presentation
 
-**Zero zahardkodowanych nazw bucketów.** Odpowiedź Anthropic ma 17 kluczy najwyższego poziomu,
-z czego 5 nie było znanych z żadnego źródła (`amber_ladder`, `iguana_necktie`, `nimbus_quill`,
-`tangelo`, `omelette_promotional`). Renderuj to, co zwróci `/status` i `/series`, sortując po
-`sortOrder`. Nowy bucket ma pojawić się **bez zmiany kodu UI**.
+They follow from the data, not from taste.
 
-**`primary` i `duplicateOf`.** API raportuje ten sam limit dwukrotnie — raz jako bucket
-najwyższego poziomu, raz jako wpis w `limits[]`. Backend paruje je po danych i oznacza
-duplikaty. **Pokazuj tylko `primary: true`.** Wpis z `limits[]` wygrywa, bo niesie
-`isActive` i `severity`. Gdy wartości się rozjadą, pary nie powstaną i obie serie będą
-widoczne — to celowe, wolimy pokazać rozjazd niż go ukryć.
+**1. The plan is visible next to every account.** `orgType`, `seatTier`, `rateLimitTier`,
+`email`. Without this, "40%" twice looks the same and means **different absolute amounts** —
+different on a Max 20x, different on a Team Standard seat.
 
-**Druga para jest oznaczana po źródle, nie po wartości: `spend` i `extra_usage`.** To dwa
-widoki **tej samej puli** kredytów, nie dwa limity — więc `extra:usage` dostaje
-`primary: false` i `duplicateOf: "spend:org"`. Parowanie po danych nie złapałoby ich nigdy,
-bo `spend.percent` przychodzi zaokrąglony do całości (93), a `extra_usage.utilization` niesie
-pełną precyzję (92,656). `spend` wygrywa, bo ma kwoty w typie pieniężnym i `severity`;
-`extra:usage` nie ma ani `resetsAt`, ani `severity`, ani kwot, więc jako wiersz nie miał czym
-się różnić.
+**2. Never sum or average percentages across accounts.** It is a number with no meaning.
 
-**Zgaszony nie znaczy zbędny.** `extra:usage` zostaje w odpowiedzi i jest **jedynym** miejscem,
-w którym widzisz `spend_limit_reached`, `user_disabled` (Ty wyłączyłeś, nie organizacja),
-`credits_ever_enabled` (kredytów nigdy nie było ≠ wyłączone) oraz przyszłe podlimity
-`daily`/`weekly`. Trzyma też jedyną precyzyjną kopię procentu. Nasze UI wkłada to
-w wyjaśnienie „?" przy wierszu wydatków (`frontend/src/lib/credits.ts`) — nie w drugi pasek.
+**3. Comparisons over time are faceted per account by default**, not overlaid on one axis.
+Overlay only deliberately, and then the legend carries the plan.
 
-Na koncie, które kredytów **nigdy** nie miało, `extra_usage.utilization` jest `null` na zawsze,
-więc ta seria w ogóle nie wchodzi do `series[]` i partnera nie ma. Wtedy `spend:org` zostaje
-`primary: true` sam — z nieobecności serii nie wnioskuj niczego o stanie kredytów. Powód
-wycofania czytaj z `unavailableReason` **wiersza wydatków**, nie z `extra`: przy wycofanym
-mierniku `extra` opisuje ostatni prawdziwy pomiar, więc leży tam jeszcze `disabled_reason: null`
-z czasów, gdy brama była otwarta.
+---
 
-**`isActive` mówi, co realnie ogranicza *teraz*.** To najcenniejsze pole w całej odpowiedzi
-i zasługuje na eksponowanie. Zaobserwowane: wiążący limit **przeskakuje w czasie** — rano
-`weekly_all`, po intensywnej sesji `session`.
+## 6. Rules about the data
 
-**`severity`** to gotowa klasyfikacja od Anthropic (`normal`, …). Używaj jej zamiast
-wymyślać własne progi.
+**Zero hardcoded bucket names.** Anthropic's response has 17 top-level keys, of which 5 were
+not known from any source (`amber_ladder`, `iguana_necktie`, `nimbus_quill`, `tangelo`,
+`omelette_promotional`). Render whatever `/status` and `/series` return, sorted by
+`sortOrder`. A new bucket has to appear **with no change to the UI code**.
 
-**Countdowny licz od `serverNow`** z odpowiedzi, nie od zegara przeglądarki. `secondsToReset`
-jest policzone po stronie serwera.
+**`primary` and `duplicateOf`.** The API reports the same limit twice — once as a top-level
+bucket, once as an entry in `limits[]`. The backend pairs them from the data and marks the
+duplicates. **Show only `primary: true`.** The entry from `limits[]` wins, because it carries
+`isActive` and `severity`. When the values diverge, no pair forms and both series stay
+visible — that is deliberate, we would rather show the divergence than hide it.
 
-**`resetsAt: null` ma dwa różne powody i żaden nie znaczy „ta seria się nie resetuje".**
-Anthropic nie podaje granicy dla okna z **0% zużycia** (widać to w `limits[]`:
-`weekly_scoped percent 0 → resets_at null`) — okno 5 h przed pierwszym użyciem po prostu nie
-ma instancji. Osobno sonda **zeruje przedawnioną granicę z cache**, gdy okno przeturlało się
-między zapisem cache a odczytem (do ~5 min). Podpis musi je rozróżniać:
+**A second pair is marked by source, not by value: `spend` and `extra_usage`.** These are two
+views of **the same pool** of credits, not two limits — so `extra:usage` gets `primary: false`
+and `duplicateOf: "spend:org"`. Pairing by data would never catch them, because `spend.percent`
+arrives rounded to a whole number (93) while `extra_usage.utilization` carries full precision
+(92.656). `spend` wins, because it has amounts in a money type and `severity`; `extra:usage`
+has neither `resetsAt`, nor `severity`, nor amounts, so as a row it had nothing to distinguish
+itself with.
 
-| stan serii | podpis |
+**Turned off does not mean unneeded.** `extra:usage` stays in the response and is the **only**
+place you see `spend_limit_reached`, `user_disabled` (you turned it off, not the
+organization), `credits_ever_enabled` (never had credits ≠ turned off) and future
+`daily`/`weekly` sub-limits. It also holds the only precise copy of the percentage. Our UI
+folds this into the "?" explanation next to the spend row (`frontend/src/lib/credits.ts`) —
+not into a second bar.
+
+On an account that **never** had credits, `extra_usage.utilization` is `null` forever, so that
+series never enters `series[]` at all and has no partner. `spend:org` then stays
+`primary: true` on its own — do not infer anything about the state of credits from a series'
+absence. Read the withdrawal reason from the **spend row's** `unavailableReason`, not from
+`extra`: with a withdrawn meter `extra` describes the last true measurement, so it still holds
+`disabled_reason: null` from when the gate was open.
+
+**`isActive` says what is actually limiting you *right now*.** It is the single most valuable
+field in the whole response and deserves to be exposed prominently. Observed: the binding
+limit **jumps over time** — `weekly_all` in the morning, `session` after an intense session.
+
+**`severity`** is a ready-made classification from Anthropic (`normal`, …). Use it instead of
+inventing your own thresholds.
+
+**Compute countdowns from the `serverNow`** in the response, not from the browser's clock.
+`secondsToReset` is computed server-side.
+
+**`resetsAt: null` has two different reasons and neither means "this series does not
+reset".** Anthropic gives no boundary for a window at **0% usage** (visible in `limits[]`:
+`weekly_scoped percent 0 → resets_at null`) — a 5-hour window before its first use simply has
+no instance yet. Separately, the probe **zeroes a stale boundary from the cache** when the
+window rolled over between the cache being written and being read (up to ~5 min). The caption
+has to tell them apart:
+
+| series state | caption |
 |---|---|
-| `resetsAt` dziś | `reset za 2 h 05 min · o 20:00` |
-| `resetsAt` za kilka dni | `reset za 4 d 2 h · w pt. o 20:00` — **dzień jest obowiązkowy** |
-| `resetsAt` w przeszłości | `reset minął · o 20:00` — **nigdy** „reset za …" |
-| `resetsAt: null`, `utilization: 0` | `okno nie wystartowało` |
-| `resetsAt: null`, `utilization > 0` | `czas resetu nieznany` |
-| seria bez okna (`spend`, `extra_usage`) | `bez resetu` |
+| `resetsAt` today | `reset in 2 h 05 min · at 20:00` |
+| `resetsAt` a few days out | `reset in 4 d 2 h · on Fri. at 20:00` — **the day is mandatory** |
+| `resetsAt` in the past | `reset has passed · at 20:00` — **never** "reset in …" |
+| `resetsAt: null`, `utilization: 0` | `window has not started` |
+| `resetsAt: null`, `utilization > 0` | `reset time unknown` |
+| a series with no window (`spend`, `extra_usage`) | `no reset` |
 
-**Sama godzina przy odległej chwili kłamie.** Okno tygodniowe resetuje się do 7 dni w przód,
-a odczyt bywa sprzed kilku dni — `o 20:00` nie mówi wtedy, którego dnia. Dlatego **każdy
-stempel czytany względem „teraz"** idzie przez jedną funkcję (`lib/time.ts`, `stamp` /
-`atStamp`), która dokłada dzień dokładnie wtedy, gdy chwila nie jest z dzisiaj:
+**The bare hour lies when the moment is far off.** A weekly window resets up to 7 days ahead,
+and a reading is sometimes several days old — "at 20:00" then does not say which day. That is
+why **every stamp read relative to "now"** goes through one function (`lib/time.ts`, `stamp` /
+`atStamp`), which adds the day exactly when the moment is not from today:
 
-| odległość od „teraz" | stempel |
+| distance from "now" | stamp |
 |---|---|
-| dziś | `o 11:58` (z sekundami w hero, gdy < 1 h) |
-| ±1 dzień | `wczoraj o 23:50` / `jutro o 20:00` |
-| ±2…6 dni | `w śr. o 11:58`, ale **`we wt. o 11:58`** |
-| dalej | `26.07 o 11:58`, z rokiem gdy inny: `26.07.2025 o 11:58` |
+| today | `at 11:58` (with seconds in the hero, when < 1 h) |
+| ±1 day | `yesterday at 23:50` / `tomorrow at 20:00` |
+| ±2…6 days | `on Tue. at 11:58` |
+| further | `26.07 at 11:58`, with the year when different: `26.07.2025 at 11:58` |
 
-Przyimek jest **częścią stempla**, nie tekstu wokół — polszczyzna zmienia go razem z formatem
-(„o 11:58", ale „w śr. o 11:58"), więc miejsce wywołania nie ma prawa doklejać własnego „o".
-Różnicę dni liczy się po **lokalnych północach**, nie dzieleniem milisekund: doba przy zmianie
-czasu ma 23 albo 25 h.
+The preposition is **part of the stamp**, not text glued on around it — the format is what
+decides it ("at 11:58", but "on Wed. at 11:58"), so the call site has no right to tack on its
+own "at". The day difference is computed across **local midnights**, not by dividing
+milliseconds: a day at a clock change has 23 or 25 h.
 
-**Drut jest w UTC, ekran w strefie użytkownika.** Konwersję robi wyłącznie warstwa
-prezentacji (`lib/time.ts`) — żadna wartość nie jest przeliczana przed wysłaniem ani przed
-porównaniem. Tam, gdzie widać surowe godziny bez kontekstu „teraz" (zakres historii), strefa
-jest **podpisana** (`UTC+2`), bo dwie strefy na jednym ekranie bez etykiety to najkrótsza
-droga do błędnej interpretacji.
+**The wire is in UTC, the screen is in the user's zone.** The conversion is done exclusively
+by the presentation layer (`lib/time.ts`) — no value is converted before being sent or before
+being compared. Wherever raw hours are visible with no "now" context (the history range), the
+zone is **labelled** (`UTC+2`), because two zones on one screen with no label is the shortest
+path to a misreading.
 
-**Limity są kaskadą, nie jedną liczbą** — i od v2 liczy ją backend, w `cascade[]` przy koncie.
-Cztery szczeble w kolejności: `session` → `weekly` → `credits` → `hard_block`, każdy ze
-`state` (`on` / `off` / `unknown`) i jeden z `isCurrent: true`.
+**Limits are a cascade, not a single number** — and since v2 the backend computes it, in
+`cascade[]` on the account. Four rungs in order: `session` → `weekly` → `credits` →
+`hard_block`, each with a `state` (`on` / `off` / `unknown`) and exactly one with
+`isCurrent: true`.
 
-`isCurrent` startuje na szczeblu, którego seria ma `isActive`, i **zsuwa się w dół, gdy ten
-szczebel jest wyczerpany** — zaobserwowany przypadek Team: tygodniowy jest `isActive` i ma
-100%, ale praca realnie leci z kredytów. Pokazanie tygodniowego jako bieżącego byłoby myleniem
-„to mnie ogranicza" z „tu się skończyło".
+`isCurrent` starts on the rung whose series has `isActive`, and **slides down when that rung
+is exhausted** — an observed Team case: the weekly rung is `isActive` and at 100%, but work is
+really running on credits. Showing the weekly rung as current would confuse "this is limiting
+me" with "this is where it ran out".
 
-**`state: "off"` i `state: "unknown"` to dwie różne rzeczy.** „Kredyty wyłączone" jest
-informacją, „nie wiem, czy masz kredyty" jest jej brakiem. Zlanie ich pokazywałoby ścieżkę
-wyjścia z limitu, której może nie być. Gdy zsuwanie kończy się na szczeblu `unknown`, on
-dostaje `isCurrent` — a UI pisze tam „nie wiem", nie zgaduje.
+**`state: "off"` and `state: "unknown"` are two different things.** "Credits are off" is
+information, "I don't know whether you have credits" is the absence of it. Merging them would
+show a way out of the limit that may not exist. When the slide-down ends on the `unknown`
+rung, that one gets `isCurrent` — and the UI writes "unknown" there, it does not guess.
 
-**Kwoty w kaskadzie są w jednostkach mniejszych z wykładnikiem** — `usedMinor: 3820`,
-`exponent: 2`, `currency: "USD"` znaczy `38,20 USD`. Backend **nie formatuje**; to robi UI.
-Ta sama zasada w `spend.extra`: `{"amount_minor": 0, "currency": "USD", "exponent": 2}`.
+**Amounts in the cascade are in minor units with an exponent** — `usedMinor: 3820`,
+`exponent: 2`, `currency: "USD"` means `38.20 USD`. The backend **does not format**; the UI
+does. The same rule applies in `spend.extra`: `{"amount_minor": 0, "currency": "USD",
+"exponent": 2}`.
 
-To samo dotyczy **zakresów**: dwudziestogodzinna cisza klienta jest tu normą, więc podpis
-dziury regularnie przekracza północ i `21:57–17:49` czyta się jak podróż w czasie. Gdy końce
-są z różnych dni, obie strony dostają datę: `26.07 21:57 – 27.07 17:49`.
+The same goes for **ranges**: twenty hours of client silence is the norm here, so a gap's
+caption regularly crosses midnight and `21:57–17:49` reads like time travel. When the ends
+fall on different days, both sides get a date: `26.07 21:57 – 27.07 17:49`.
 
-**`gaps[]` w `/history` ma dwa rodzaje** i wymaga dwóch różnych cieniowań:
-- `client_silent` — nie było batchy. **Nie pracowałeś**, więc nie ma czego mierzyć.
-- `no_samples` — batche przychodziły, ale dla tej serii nie było ani jednej próbki. **Awaria**,
-  ta sama, którą w `/status` widać jako `unknown`.
+**`gaps[]` in `/history` has two kinds**, and needs two different shadings:
+- `client_silent` — there were no batches. **You were not working**, so there is nothing to
+  measure.
+- `no_samples` — batches came in, but for this series there was not one sample. **A failure**,
+  the same one that shows up in `/status` as `unknown`.
 
-Wykres malujący oba jednakowo kłamie dokładnie tam, gdzie to narzędzie kłamać nie może.
-Przy tym źródle **brak danych jest informacją**, nie usterką wykresu.
+A chart that paints both the same way lies in exactly the place this tool must not lie. With
+this data source, **missing data is information**, not a chart bug.
 
-**`resets_at` KOŁYSZE SIĘ — nie porównuj go na równość.** Zmierzone: 49 próbek w 3 h, jedno
-okno sesji, wartości od `00:59:59.014384` do `01:00:00.982268`. Anthropic dolicza tam
-mikrosekundy swojej odpowiedzi i drobny dryf sekundowy. Prawdziwy reset przesuwa granicę
-o **całe okno** (5 h albo 7 dni), więc rozróżnia się je tolerancją, nie równością. Backend
-robi to za UI (`same_reset_window`), ale gdybyś liczył cokolwiek z `resetsAt` po stronie
-przeglądarki — pamiętaj o tym.
+**`resets_at` SWAYS — never compare it for equality.** Measured: 49 samples in 3 h, one
+session window, values from `00:59:59.014384` to `01:00:00.982268`. Anthropic adds its own
+response's microseconds and a small second-level drift on top. A real reset shifts the
+boundary by a **whole window** (5 h or 7 days), so the two are told apart with a tolerance,
+not equality. The backend does this on the UI's behalf (`same_reset_window`), but if you
+compute anything from `resetsAt` in the browser — keep this in mind.
 
 ---
 
-## 7. Realna odpowiedź `GET /status`
+## 7. A real `GET /status` response
 
-Wygenerowana z działającego systemu, konto Max, 2026-07-26 21:57 UTC. Skrócona do dwóch serii
-(pełna ma sześć) — obie `primary`, bo duplikaty bucketów są tu pominięte dla czytelności.
+Generated from the running system, a Max account, 2026-07-26 21:57 UTC. Trimmed to two series
+(the full one has six) — both `primary`, since bucket duplicates are omitted here for
+readability.
 
 ```json
 {
@@ -562,7 +584,7 @@ Wygenerowana z działającego systemu, konto Max, 2026-07-26 21:57 UTC. Skrócon
       {
         "seriesId": 3,
         "seriesKey": "limit:session|session|-|-",
-        "label": "Sesja",
+        "label": "Session",
         "source": "limit",
         "sortOrder": 15,
         "kind": "session",
@@ -588,7 +610,7 @@ Wygenerowana z działającego systemu, konto Max, 2026-07-26 21:57 UTC. Skrócon
       {
         "seriesId": 4,
         "seriesKey": "limit:weekly_all|weekly|-|-",
-        "label": "Tydzień (wszystkie modele)",
+        "label": "Week (all models)",
         "source": "limit",
         "sortOrder": 25,
         "kind": "weekly_all",
@@ -616,23 +638,24 @@ Wygenerowana z działającego systemu, konto Max, 2026-07-26 21:57 UTC. Skrócon
 }
 ```
 
-Trzy rzeczy warte zauważenia w tej jednej odpowiedzi:
+Three things worth noticing in this one response:
 
-- **`isActive` faktycznie przeskakuje.** W przykładzie z v1 (19:07) wiązał `weekly_all`;
-  tutaj, po intensywnej sesji, wiąże `session` przy 91% i `severity: "critical"`.
-- **`cascade` mówi więcej niż górny procent** — `session` jest bieżącym szczeblem, kredyty są
-  `off`, więc twardy blok stoi zaraz za tygodniowym.
-- **`resetsAt` obu serii kończy się na `.056340` i `.056361`** — 21 µs różnicy, bo to
-  mikrosekundy odpowiedzi, nie granicy okna. Patrz ostrzeżenie w § 6.
+- **`isActive` really does jump.** In the v1 example (19:07) it bound `weekly_all`; here,
+  after an intense session, it binds `session` at 91% with `severity: "critical"`.
+- **`cascade` says more than the top percentage** — `session` is the current rung, credits are
+  `off`, so the hard block stands right behind the weekly one.
+- **`resetsAt` on both series ends in `.056340` and `.056361`** — a 21 µs difference, because
+  that is the response's microseconds, not the window boundary. See the warning in § 6.
 
-Serie `bucket:five_hour` i `bucket:seven_day` w tej samej odpowiedzi mają `primary: false`
-i `duplicateOf` wskazujące na powyższe — domyślnie ich nie pokazuj.
+The `bucket:five_hour` and `bucket:seven_day` series in the same response have
+`primary: false` and a `duplicateOf` pointing at the ones above — do not show them by default.
 
-Serii `extra:usage` w tej odpowiedzi **nie ma wcale** i to jest poprawne: konto Max nigdy nie
-miało kredytów, więc `extra_usage.utilization` jest `null` i seria nie przeszła filtru
-`everNonNull`. Na koncie Team stałaby tu z `primary: false` i `duplicateOf: "spend:org"`.
+The `extra:usage` series is **not present at all** in this response, and that is correct: a
+Max account never had credits, so `extra_usage.utilization` is `null` and the series never
+passed the `everNonNull` filter. On a Team account it would stand here with `primary: false`
+and `duplicateOf: "spend:org"`.
 
-Seria `spend:org` w `extra` niesie:
+The `spend:org` series carries in `extra`:
 
 ```json
 {"enabled": false, "cap": null, "limit": null, "balance": null,
@@ -641,9 +664,9 @@ Seria `spend:org` w `extra` niesie:
  "disclaimer": "Usage credits cover you when you hit your plan limits. …"}
 ```
 
-## 8. Realna odpowiedź `GET /history`
+## 8. A real `GET /history` response
 
-Zakres 24 h, seria sesji, konto Max. `points` skrócone do trzech.
+24-hour range, the session series, a Max account. `points` trimmed to three.
 
 ```json
 {
@@ -663,82 +686,86 @@ Zakres 24 h, seria sesji, konto Max. `points` skrócone do trzech.
 }
 ```
 
-`bucket=auto` dobiera agregację do szerokości zakresu: `raw` do 6 h, `5m` do 48 h, `1h` powyżej.
-Przy agregacji `min`/`max` są po to, żeby **piki przeżyły**; wdrożone UI rysuje samą `avg`,
-ale dane na pasmo min-max są dostępne.
+`bucket=auto` picks the aggregation to match the range's width: `raw` up to 6 h, `5m` up to
+48 h, `1h` beyond that. Under aggregation, `min`/`max` exist so that **peaks survive**; the
+deployed UI draws only `avg`, but the data for a min-max band is available.
 
-Zwróć uwagę na pierwszą dziurę: prawie **20 godzin ciszy klienta** w dobowym zakresie. To nie
-usterka — dane przyrastają tylko wtedy, gdy pracujesz, i wykres ma to pokazywać wprost.
+Note the first gap: almost **20 hours of client silence** in a 24-hour range. That is not a
+bug — data only accrues while you are working, and the chart is meant to show that plainly.
 
 ---
 
-## 9. Rozstrzygnięcia projektowe UI
+## 9. UI design decisions
 
-Lista pytań, które musiały zapaść, zanim powstał widok — i odpowiedzi, na których stoi
-obecny interfejs:
+A list of questions that had to be settled before the view existed — and the answers the
+current interface stands on:
 
-| Pytanie | Rozstrzygnięcie |
+| Question | Decision |
 |---|---|
-| Liczba ekranów | **Dwa: Live i Historia.** Konta/Maszyny i Diagnostyka zostają przy `curl` |
-| Hierarchia widoku Live | **Na pierwszym planie zawsze Sesja 5 h.** `isActive` NIE przestawia hierarchii — jest cienką kreską i słowem `wiąże` przy serii, która ogranicza |
-| Wizualizacja | Poziomy tor + liczba. Cztery stany świeżości mają **cztery różne rysunki toru**, nie tylko inny kolor |
-| Paleta | Nocturne (struktura) + **ciepła paleta Claude** (`--color-accent: #d97757` na `#1c1b19`) |
-| Biblioteka wykresów | Żadna — wykres to własne SVG, `viewBox 0 0 1000 200` |
-| Szerokości | Jeden układ w dwóch: pełne okno (konta jako kolumny) i wąska kolumna |
+| Number of screens | **Two: Live and History.** Accounts/Machines and Diagnostics stay with `curl` |
+| Hierarchy of the Live view | **Session 5 h is always in the foreground.** `isActive` does NOT reorder the hierarchy — it is a thin line and the word `binding` next to the series that is limiting you |
+| Visualization | Horizontal track + number. The four freshness states get **four different track drawings**, not just a different color |
+| Palette | Nocturne (structure) + **the warm Claude palette** (`--color-accent: #d97757` on `#1c1b19`) |
+| Chart library | None — the chart is its own SVG, `viewBox 0 0 1000 200` |
+| Widths | One layout in two: the full window (accounts as columns) and a narrow column |
 
-**Dlaczego stały hero, a nie ruchomy.** Gdyby pierwszy plan przeskakiwał za `isActive`, ten sam
-ekran znaczyłby co innego w zależności od pory tygodnia. Stały hero plus ruchomy znacznik daje
-jedno i drugie: „ile zostało w oknie, w którym pracuję" **oraz** „co mnie realnie ogranicza".
+**Why a fixed hero, not a moving one.** If the foreground jumped to follow `isActive`, the
+same screen would mean something different depending on the time of the week. A fixed hero
+plus a moving marker gives both: "how much is left in the window I'm working in" **and**
+"what's really limiting me".
 
 ---
 
-## 10. Bez UI, przez `curl`
+## 10. Without the UI, via `curl`
 
-UI pokrywa Live i Historię; reszta danych (zdarzenia, batche, maszyny, surowe payloady)
-jest dostępna wyłącznie tędy:
+The UI covers Live and History; the rest of the data (events, batches, machines, raw
+payloads) is available only this way:
 
 ```bash
-# w przegladarce z wazna sesja — najprostsza droga
+# in a browser with a valid session — the simplest path
 https://usage.example.org/claude-usage/api/status
 
-# z terminala; przy AUTH_MODE=verify potrzebne ciasteczko sesji, przy `header` naglowek
-# od proxy, przy `none` nic
+# from a terminal; AUTH_MODE=verify needs a session cookie, `header` needs
+# the header from the proxy, `none` needs nothing
 curl -s -b "$COOKIE" https://usage.example.org/claude-usage/api/status | jq \
   '.accounts[] | {email, orgType,
-    serie: [.series[] | select(.primary) | {label, utilization, freshness, isActive}]}'
+    series: [.series[] | select(.primary) | {label, utilization, freshness, isActive}]}'
 
-# co mnie teraz ogranicza
+# what is limiting me right now
 curl -s -b "$COOKIE" .../api/status | jq '.accounts[].series[] | select(.isActive)'
 
-# log operacyjny — przelaczenia konta, drift schematu
+# the operational log — account switches, schema drift
 curl -s -b "$COOKIE" .../api/events | jq '.[] | {ts, type, message}'
 ```
 
-Lokalnie, bez bramy i bez serwera:
-`python client/analyze-samples.py`
+Locally, with no gate and no server: `python client/analyze-samples.py`
 
 ---
 
-## 11. Wersjonowanie kontraktu
+## 11. Contract versioning
 
-`/status` zwraca `contractVersion` (obecnie **`3`**). Przy zmianie łamiącej zgodność liczba
-rośnie — UI sprawdza to i **głośno protestuje** w nagłówku, zamiast po cichu renderować śmieci
-(`frontend/src/components/Nav.tsx`, stała `CONTRACT_VERSION` w `api/types.ts`).
+`/status` returns `contractVersion` (currently **`3`**). On a breaking change the number goes
+up — the UI checks this and **protests loudly** in the header, instead of silently rendering
+garbage (`frontend/src/components/Nav.tsx`, the `CONTRACT_VERSION` constant in
+`api/types.ts`).
 
-**Ta sama liczba jedzie w kopercie każdej ramki SSE** i oznacza dokładnie to samo, bo ramka
-`account` niesie ten sam model. Konsumentów jest więc dwóch: `/status` i `/stream`. Dodanie
-strumienia **nie** podbiło wersji — `/status` nie zmienił się ani o pole.
+**The same number rides in the envelope of every SSE frame** and means exactly the same thing,
+because the `account` frame carries the same model. There are therefore two consumers:
+`/status` and `/stream`. Adding the stream did **not** bump the version — `/status` did not
+change by so much as a field.
 
-Dodanie pola jest zmianą **nie**łamiącą i nie wymaga podbicia. Wersja poszła z 1 na 2 wyłącznie
-przez zmianę serializacji czasu — reszta v2 to dodatki. Tak samo doszło `deltaFrom`: wersja
-została na 3, a UI bez tego pola dostaje `undefined` i wraca do brzmienia godzinowego.
+Adding a field is a **non**-breaking change and needs no bump. The version went from 1 to 2
+solely because of the change to time serialization — the rest of v2 is additions. `deltaFrom`
+arrived the same way: the version stayed at 3, and a UI without this field gets `undefined`
+and falls back to the hourly wording. The same goes for `label`: it is display text,
+`seriesKey` is identity — changing a label does not bump `contractVersion` either.
 
-Konto Team jest już zweryfikowane na żywo, w trzech stanach kredytów naraz: działające
-(93%, 277,95 z 300,00 EUR), wyczerpana własna pula (100%, 300,04 z 300,00 — `enabled` nadal
-`true`) i miernik wycofany przez organizację (`enabled: false`, `disabled_reason`, kwoty
-wyzerowane). Wszystkie trzy leżą jako fixture'y w `backend/tests/fixtures/` i to na nich
-stoją testy kaskady — wymyślony payload z progiem 9000 USD zniknął.
+The Team account has already been verified live, in three credit states at once: working
+(93%, 277.95 of 300.00 EUR), an exhausted own pool (100%, 300.04 of 300.00 — `enabled` still
+`true`), and a meter withdrawn by the organization (`enabled: false`, `disabled_reason`,
+amounts zeroed). All three sit as fixtures in `backend/tests/fixtures/` and the cascade tests
+stand on them — the invented payload with a 9000 USD threshold is gone.
 
-Jedna pułapka na koniec: `cap` w prawdziwej odpowiedzi jest **zagnieżdżony**
-(`{"credits": null, "money": {"amount_minor": 30000, …}}`), a nie płaski. Płaski odczyt
-przechodził testy na wymyślonym payloadzie i nie działał na produkcyjnym.
+One pitfall to close on: `cap` in the real response is **nested**
+(`{"credits": null, "money": {"amount_minor": 30000, …}}`), not flat. A flat read passed tests
+against the invented payload and did not work against the real one.
