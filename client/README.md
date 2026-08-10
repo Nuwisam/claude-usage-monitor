@@ -124,7 +124,7 @@ The second secret, `INGEST_EDGE_KEY`, is checked by Apache before the applicatio
 don't reach the Python process. It is **shared across all machines** — take the existing one
 from the host's `.env`, don't invent a new one. The format of both is in
 [`.env.example`](../.env.example), server deployment in
-[`README.md`](../README.md#wdrożenie-serwera).
+[`README.md`](../README.md#server-deployment).
 
 ### 2. Configuration
 
