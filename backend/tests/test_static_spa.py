@@ -1,9 +1,9 @@
-"""Serwowanie UI z backendu: fallback SPA nie moze zjadac API.
+"""Serving the UI from the backend: the SPA fallback must not swallow the API.
 
-Regresja, ktora to pokrywa (zlapana przy pierwszym wdrozeniu): catch-all
-`/{full_path:path}` lapie wszystko, czego nie dopasowaly routery — wiec literowka
-w adresie endpointu oddawala HTTP 200 z index.html zamiast 404 JSON. Klient probowalby
-sparsowac strone HTML jako JSON i zglosil blad w zupelnie innym miejscu.
+The regression this covers (caught at the first deployment): the catch-all
+`/{full_path:path}` catches everything the routers did not match — so a typo in an
+endpoint address returned HTTP 200 with index.html instead of a 404 JSON. A client would
+try to parse an HTML page as JSON and report the error in a completely different place.
 """
 import importlib
 
@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    """Aplikacja ze ZBUDOWANYM UI — katalog statyków tworzymy na niby."""
+    """The app with a BUILT UI — the static directory is a make-believe one."""
     static = tmp_path / "static"
     (static / "assets").mkdir(parents=True)
     (static / "index.html").write_text("<!doctype html><title>Claude Usage</title>", "utf-8")
@@ -22,8 +22,8 @@ def client(tmp_path, monkeypatch):
 
     import app.main as main
 
-    # Mount statykow i trasa fallbacku zapadaja przy IMPORCIE modulu, wiec katalog musi
-    # byc znany przed reloadem — stad zmienna srodowiskowa, a nie podmiana atrybutu.
+    # The static mount and the fallback route are settled at module IMPORT, so the directory
+    # must be known before the reload — hence an environment variable, not an attribute swap.
     monkeypatch.setenv("STATIC_DIR", str(static))
     importlib.reload(main)
     try:
@@ -31,7 +31,7 @@ def client(tmp_path, monkeypatch):
             yield c
     finally:
         monkeypatch.delenv("STATIC_DIR", raising=False)
-        importlib.reload(main)      # inne testy maja widziec aplikacje bez statykow
+        importlib.reload(main)      # other tests must see the app with no statics
 
 
 def test_korzen_oddaje_powloke_spa(client):
@@ -41,7 +41,7 @@ def test_korzen_oddaje_powloke_spa(client):
 
 
 def test_sciezka_routera_tez_oddaje_powloke(client):
-    """Deep link w /history musi dzialac po odswiezeniu strony, nie dawac 404."""
+    """A deep link at /history must work after a page refresh, not give a 404."""
     r = client.get("/history")
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
@@ -65,7 +65,7 @@ def test_health_dalej_dziala_pod_statykami(client):
 
 
 def test_head_jest_obslugiwany(client):
-    """Monitoring i `curl -I` uzywaja HEAD; @app.get sam go nie dodaje."""
+    """Monitoring and `curl -I` use HEAD; @app.get does not add it by itself."""
     assert client.head("/").status_code == 200
 
 
@@ -83,12 +83,12 @@ def test_plik_z_dist_jest_oddawany_wprost(client):
 
 @pytest.mark.parametrize("sciezka", ["/openapi.json", "/docs", "/redoc"])
 def test_schemat_i_przegladarki_api_sa_wylaczone(client, sciezka):
-    """Reverse proxy przepuszcza caly korzen kontenera, a brama siedzi na zaleznosci
-    endpointow — nie na tych trasach. Wystawiony schemat oddawalby komplet sciezek, nazw
-    pol i ksztaltow bledow kazdemu bez sesji.
+    """The reverse proxy passes through the container's whole root, while the gate sits on
+    the endpoints' dependency — not on these routes. An exposed schema would hand the full
+    set of paths, field names and error shapes to anyone without a session.
 
-    Asercja patrzy na TRESC, nie na kod odpowiedzi: catch-all SPA oddaje index.html
-    z kodem 200, wiec `status_code != 200` nie zaswiadczy tu o niczym.
+    The assertion looks at the CONTENT, not at the response code: the SPA catch-all returns
+    index.html with code 200, so `status_code != 200` would attest to nothing here.
     """
     r = client.get(sciezka)
     assert "openapi" not in r.text
@@ -97,7 +97,7 @@ def test_schemat_i_przegladarki_api_sa_wylaczone(client, sciezka):
 
 
 def test_wyjscie_ze_katalogu_statykow_nie_jest_mozliwe(client):
-    """Sciezka z ../ nie moze wyprowadzic poza dist — oddajemy powloke, nie plik hosta."""
+    """A path with ../ must not lead outside dist — the shell is returned, not a host file."""
     r = client.get("/../../etc/passwd")
     assert r.status_code in (200, 404)
     assert "passwd" not in r.text

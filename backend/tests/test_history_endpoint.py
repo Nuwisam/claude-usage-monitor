@@ -1,19 +1,20 @@
-"""Granica czasu na WEJSCIU do /api/history.
+"""The time boundary on the WAY IN to /api/history.
 
-Regresja na blad z produkcji: widok Historia oddawal 500 przy kazdym otwarciu.
+Regression on a bug seen live: the History view returned 500 on every open.
 
-Kontrakt v2 dopial strefe do czasu WYCHODZACEGO — i przez to przegladarka zaczela ja
-ODSYLAC, bo `Date.toISOString()` konczy sie na 'Z'. Pydantic robil z tego datetime ze
-strefa, a baza, `utcnow()` i probki sa naiwne w UTC. Odejmowanie w `_quiet_intervals`
-wywracalo sie na "can't subtract offset-naive and offset-aware datetimes".
+Contract v2 attached a zone to the OUTGOING time — and because of that the browser began
+SENDING IT BACK, since `Date.toISOString()` ends in 'Z'. Pydantic turned that into a
+zone-aware datetime, while the database, `utcnow()` and the samples are naive in UTC. The
+subtraction in `_quiet_intervals` fell over on "can't subtract offset-naive and
+offset-aware datetimes".
 
-Testy jednostkowe tego nie zlapaly, bo wolaja `_find_gaps` wprost, podajac naiwne
-datetime'y — czyli omijaja dokladnie ta warstwe, w ktorej blad powstaje. Dlatego te testy
-ida przez HTTP: parametr musi przejsc walidacje FastAPI, tak jak z przegladarki.
+Unit tests did not catch it, because they call `_find_gaps` directly, passing naive
+datetimes — that is, they bypass exactly the layer in which the bug arises. Which is why
+these tests go over HTTP: the parameter must pass FastAPI validation, as from a browser.
 
-Drugi, gorszy przypadek pokrywa `test_offset_inny_niz_utc...`: sterownik MySQL formatuje
-datetime `strftime`-em i tzinfo IGNORUJE, wiec parametr z '+02:00' nie wywalilby sie —
-po cichu przesunalby caly zakres o dwie godziny.
+The second, worse case is covered by `test_offset_inny_niz_utc...`: the MySQL driver
+formats datetimes with `strftime` and IGNORES tzinfo, so a parameter carrying '+02:00'
+would not blow up — it would quietly shift the whole range by two hours.
 """
 from datetime import timedelta
 
@@ -21,7 +22,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
-from tests.test_ingest_e2e import (  # noqa: F401 — fixture `db` przychodzi razem z nimi
+from tests.test_ingest_e2e import (  # noqa: F401 — the `db` fixture comes along with these
     ACCOUNT_MAX, db, ingest_one, payload, utcnow,
 )
 
@@ -30,8 +31,8 @@ from app.models import UsageSeries
 
 @pytest_asyncio.fixture
 async def api(db):
-    """Aplikacja z podmieniona sesja i pominietym SSO. httpx zamiast TestClient, zeby
-    dzielic petle zdarzen z fixturem `db` — sesja aiosqlite nalezy do tej petli."""
+    """The app with a swapped session and SSO skipped. httpx instead of TestClient, to
+    share the event loop with the `db` fixture — the aiosqlite session belongs to it."""
     import app.main as main
     from app.db import get_session
     from app.sso import CurrentUser, require_authorized_user
@@ -48,8 +49,8 @@ async def api(db):
 
 @pytest_asyncio.fixture
 async def dane(db):
-    """Kilka probek w oknie 5 h. Zakres pytania jest duzo szerszy niz dane, wiec
-    powstaje dziura `client_silent` — czyli wlasnie ta sciezka, ktora sie wywracala."""
+    """A few samples in the 5 h window. The query range is far wider than the data, so a
+    `client_silent` gap appears — precisely the path that used to fall over."""
     now = utcnow()
     for offset in (240, 120, 0):
         await ingest_one(db, machine_name="desktop",
@@ -66,7 +67,7 @@ def _iso(dt, suffix="Z"):
 
 
 async def test_zakres_ze_strefa_nie_wywraca_endpointu(api, dane):
-    """Dokladnie to, co wysyla przegladarka: `Date.toISOString()`, czyli sufiks 'Z'."""
+    """Exactly what the browser sends: `Date.toISOString()`, that is, the 'Z' suffix."""
     r = await api.get("/api/history", params={
         "account": dane["account"], "seriesId": dane["seriesId"],
         "from": _iso(dane["now"] - timedelta(hours=2)),
@@ -80,7 +81,7 @@ async def test_zakres_ze_strefa_nie_wywraca_endpointu(api, dane):
 
 
 async def test_zapis_ze_strefa_i_bez_strefy_daje_ten_sam_wynik(api, dane):
-    """Naiwny UTC juz dzialal i ma dzialac dalej — konwersja nie moze zmienic znaczenia."""
+    """Naive UTC already worked and must keep working — conversion must not change meaning."""
     args = {"account": dane["account"], "seriesId": dane["seriesId"]}
     frm, to = dane["now"] - timedelta(hours=2), dane["now"]
 
@@ -92,18 +93,18 @@ async def test_zapis_ze_strefa_i_bez_strefy_daje_ten_sam_wynik(api, dane):
 
 
 async def test_offset_inny_niz_utc_jest_przeliczany_a_nie_obcinany(api, dane):
-    """Ten sam MOMENT zapisany w innej strefie musi dac ta sama odpowiedz.
+    """The same INSTANT written in a different zone must give the same answer.
 
-    To jest ten cichy przypadek: gdyby offset zostal zignorowany zamiast przeliczony,
-    zakres przesunalby sie o dwie godziny, a odpowiedz dalej mialaby HTTP 200 i wygladala
-    poprawnie. Zaden objaw, zle dane — czyli tryb awarii, przed ktorym broni sie caly
-    ten projekt.
+    This is the silent case: if the offset were ignored instead of converted, the range
+    would shift by two hours, and the response would still be HTTP 200 and would look
+    correct. No symptom, wrong data — the very failure mode this whole project
+    defends against.
     """
     args = {"account": dane["account"], "seriesId": dane["seriesId"]}
     frm, to = dane["now"] - timedelta(hours=2), dane["now"]
 
     utc = await api.get("/api/history", params={**args, "from": _iso(frm), "to": _iso(to)})
-    # ta sama chwila, zapisana jako czas lokalny
+    # the same instant, written as local time
     plus2 = await api.get("/api/history", params={
         **args,
         "from": _iso(frm + timedelta(hours=2), "+02:00"),
@@ -114,9 +115,9 @@ async def test_offset_inny_niz_utc_jest_przeliczany_a_nie_obcinany(api, dane):
 
 
 async def test_brak_zakresu_dalej_dziala(api, dane):
-    """Domyslka bierze `utcnow()`, czyli czas NAIWNY — ta sciezka nie moze ucierpiec
-    przy okazji naprawy. `bucket=raw` jawnie, bo downsampling stoi na funkcjach
-    MariaDB (`unix_timestamp`, `group_concat ... ORDER BY`), ktorych SQLite nie ma."""
+    """The default takes `utcnow()`, i.e. a NAIVE time — this path must not suffer as a
+    side effect of the fix. `bucket=raw` explicitly, because downsampling rests on
+    MariaDB functions (`unix_timestamp`, `group_concat ... ORDER BY`) SQLite lacks."""
     r = await api.get("/api/history", params={
         "account": dane["account"], "seriesId": dane["seriesId"], "bucket": "raw",
     })

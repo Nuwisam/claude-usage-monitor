@@ -1,24 +1,24 @@
-"""Delta 1 h nie przechodzi przez granice resetu.
+"""The 1 h delta does not cross a reset boundary.
 
-Regresja: zaraz po resecie sesji hero pisalo „−46 pp w ciagu godziny", bo punktem
-odniesienia byla probka z POPRZEDNIEGO okna — i stalo tak przez cala godzine, akurat wtedy,
-gdy zuzycie realnie roslo od zera.
+Regression: right after a session reset the hero read "−46 pp in the last hour", because
+the reference point was a sample from the PREVIOUS window — and it stayed that way for a
+whole hour, precisely when usage was really climbing from zero.
 """
 from datetime import datetime, timedelta
 
-from tests.test_ingest_e2e import (  # noqa: F401 — fixture `db` przychodzi razem z nimi
+from tests.test_ingest_e2e import (  # noqa: F401 — the `db` fixture comes along with these
     db, ingest_one, payload, utcnow, with_util,
 )
 
 from app.services.status import _delta_1h, build_status
 
 NOW = datetime(2026, 7, 27, 12, 0, 0)
-B_NEXT = NOW + timedelta(hours=4)      # granica biezacego okna
-B_PREV = NOW - timedelta(hours=1)      # granica, ktora juz minela
+B_NEXT = NOW + timedelta(hours=4)      # the current window's boundary
+B_PREV = NOW - timedelta(hours=1)      # a boundary that has already passed
 
 
 def przebieg(*items):
-    """(minut temu, utilization, granica) -> wiersze, rosnaco po czasie."""
+    """(minutes ago, utilization, boundary) -> rows, ascending by time."""
     return [(NOW - timedelta(minutes=m), u, r) for m, u, r in items]
 
 
@@ -28,8 +28,8 @@ def test_bez_wartosci_biezacej_nie_ma_delty():
 
 
 def test_po_minieciu_granicy_delty_nie_ma():
-    """Wszystkie probki naleza do poprzedniego okna — ten sam warunek, po ktorym
-    freshness() orzeka inferred_reset. Bez tego wychodzilo wlasnie „−46 pp"."""
+    """All the samples belong to the previous window — the same condition on which
+    freshness() declares inferred_reset. Without this the result was exactly "−46 pp"."""
     rows = przebieg((50, 46.0, B_PREV), (20, 46.0, B_PREV))
     assert _delta_1h(rows, now=NOW, current=0.0, resets_at=B_PREV) == (None, None)
 
@@ -56,8 +56,8 @@ def test_cala_godzina_w_jednym_oknie():
 
 
 def test_reset_w_toku_gdy_granica_jest_wyzerowana():
-    """Sonda zeruje przedawniona granice, wiec `resets_at` nie odslania resetu ani
-    w probkach, ani w stanie serii — zostaje data probki i spadek."""
+    """The probe zeroes out a stale boundary, so `resets_at` exposes the reset neither in
+    the samples nor in the series state — what remains is the sample date and the drop."""
     rows = przebieg((50, 46.0, B_PREV), (4, 0.0, None), (1, 3.0, None))
     d, t0 = _delta_1h(rows, now=NOW, current=3.0, resets_at=None)
     assert (d, t0) == (3.0, NOW - timedelta(minutes=4))
@@ -75,11 +75,11 @@ def test_zaokraglenie_do_czterech_miejsc():
 
 # --------------------------------------------------------------------------- e2e
 async def test_status_po_resecie_nie_pokazuje_ujemnej_delty(db, monkeypatch):
-    """Ta sama sciezka co w produkcji: ingest -> series_state -> /api/status."""
+    """The same path a live run takes: ingest -> series_state -> /api/status."""
     import app.services.ingest as ing
     import app.services.status as stat
 
-    t0 = utcnow().replace(microsecond=0)     # probki i tak sa obcinane do sekund
+    t0 = utcnow().replace(microsecond=0)     # samples are truncated to seconds anyway
 
     async def ingest_at(minutes, five_hour, resets_at):
         when = t0 + timedelta(minutes=minutes)
@@ -93,7 +93,7 @@ async def test_status_po_resecie_nie_pokazuje_ujemnej_delty(db, monkeypatch):
         await ingest_one(db, machine_name="desktop",
                          payload=payload(usage=u, captured_at=when))
 
-    # granice podajemy jawnie: te z fixture'a dawno minely, a sonda odrzuca wygasle okno
+    # explicit boundaries: the fixture's are long past, and the probe drops an expired window
     await ingest_at(0, 50.0, t0 + timedelta(minutes=20))
     await ingest_at(25, 2.0, t0 + timedelta(hours=5, minutes=20))
     await ingest_at(35, 5.0, t0 + timedelta(hours=5, minutes=20))
