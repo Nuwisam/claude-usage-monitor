@@ -274,10 +274,14 @@ Projekt karty i wszystkie cztery układy opisuje `docs/PANEL-ALERT-HANDOUT.md`,
 z obrazami przepuszczonymi przez kwantyzację panelu. Podgląd bez sprzętu:
 
 ```
-python tools/render-png.py --alert solo --zoom 3 --rgb565 --out karta.png
-python tools/render-png.py --alert list --zoom 3 --rgb565 --out karta-lista.png
-python tools/render-png.py --alert solo --flood --zoom 3 --rgb565 --out zalana.png
-python tools/render-png.py --marker upper --zoom 3 --rgb565 --out znacznik.png
+python tools/render-png.py --alert solo   --zoom 3 --rgb565 --out ../docs/handout/card-solo.png
+python tools/render-png.py --alert pair   --zoom 3 --rgb565 --out ../docs/handout/card-pair.png
+python tools/render-png.py --alert list   --zoom 3 --rgb565 --out ../docs/handout/card-list.png
+python tools/render-png.py --alert many   --zoom 3 --rgb565 --out ../docs/handout/card-many.png
+python tools/render-png.py --alert solo --flood --zoom 3 --rgb565 --out ../docs/handout/card-flooded.png
+python tools/render-png.py --marker upper --zoom 3 --rgb565 --out ../docs/handout/bands-marker-upper.png
+python tools/render-png.py --marker lower --zoom 3 --rgb565 --out ../docs/handout/bands-marker-lower.png
+python tools/render-png.py                --zoom 3 --rgb565 --out ../docs/handout/bands-no-alert.png
 ```
 
 Gdyby alert się zawiesił, furtka jest na maszynie z sesją, nie tutaj:

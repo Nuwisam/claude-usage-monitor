@@ -10,22 +10,27 @@ i przepuszczone przez jego własną kwantyzację, czyli **dokładnie to, co poka
 
 | Plik | Co pokazuje |
 |---|---|
-| [`karta-solo.png`](handout/karta-solo.png) | jedna blokada — nazwa projektu bohaterem, kafel `Szczegół`, listwa `Tryb` |
-| [`karta-pair.png`](handout/karta-pair.png) | dwie blokady — dwie równe połowy po 140 px |
-| [`karta-list.png`](handout/karta-list.png) | trzy blokady — lista 3 × 77 px, szczegół najnowszej w stopce |
-| [`karta-many.png`](handout/karta-many.png) | pięć blokad — trzy wiersze i licznik reszty |
-| [`karta-zalana.png`](handout/karta-zalana.png) | klatka **pełna** warstwy ruchu: pasmo w akcencie plus rail 6 px |
-| [`pasy-znacznik-gorny.png`](handout/pasy-znacznik-gorny.png) | stan po zwinięciu — pasek 4 px przy koncie górnym |
-| [`pasy-znacznik-dolny.png`](handout/pasy-znacznik-dolny.png) | to samo przy koncie dolnym (z kredytami — pas i tak równy) |
-| [`pasy-bez-alertu.png`](handout/pasy-bez-alertu.png) | ten sam ekran bez alertu, do porównania |
+| [`card-solo.png`](handout/card-solo.png) | jedna blokada — nazwa projektu bohaterem, kafel `Szczegół`, listwa `Tryb` |
+| [`card-pair.png`](handout/card-pair.png) | dwie blokady — dwie równe połowy po 140 px |
+| [`card-list.png`](handout/card-list.png) | trzy blokady — lista 3 × 77 px, szczegół najnowszej w stopce |
+| [`card-many.png`](handout/card-many.png) | pięć blokad — trzy wiersze i licznik reszty |
+| [`card-flooded.png`](handout/card-flooded.png) | klatka **pełna** warstwy ruchu: pasmo w akcencie plus rail 6 px |
+| [`bands-marker-upper.png`](handout/bands-marker-upper.png) | stan po zwinięciu — pasek 4 px przy koncie górnym |
+| [`bands-marker-lower.png`](handout/bands-marker-lower.png) | to samo przy koncie dolnym (z kredytami — pas i tak równy) |
+| [`bands-no-alert.png`](handout/bands-no-alert.png) | ten sam ekran bez alertu, do porównania |
 
 Wygenerować ponownie:
 
 ```
 cd panel
-python tools/render-png.py --alert list --zoom 3 --rgb565 --out karta.png
-python tools/render-png.py --alert solo --flood --zoom 3 --rgb565 --out zalana.png
-python tools/render-png.py --marker upper --zoom 3 --rgb565 --out znacznik.png
+python tools/render-png.py --alert solo   --zoom 3 --rgb565 --out ../docs/handout/card-solo.png
+python tools/render-png.py --alert pair   --zoom 3 --rgb565 --out ../docs/handout/card-pair.png
+python tools/render-png.py --alert list   --zoom 3 --rgb565 --out ../docs/handout/card-list.png
+python tools/render-png.py --alert many   --zoom 3 --rgb565 --out ../docs/handout/card-many.png
+python tools/render-png.py --alert solo --flood --zoom 3 --rgb565 --out ../docs/handout/card-flooded.png
+python tools/render-png.py --marker upper --zoom 3 --rgb565 --out ../docs/handout/bands-marker-upper.png
+python tools/render-png.py --marker lower --zoom 3 --rgb565 --out ../docs/handout/bands-marker-lower.png
+python tools/render-png.py                --zoom 3 --rgb565 --out ../docs/handout/bands-no-alert.png
 ```
 
 `--rgb565` jest **obowiązkowe** przy ocenie: bez niego oglądasz ładniejszą prawdę z pulpitu.

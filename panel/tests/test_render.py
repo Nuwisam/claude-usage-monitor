@@ -232,9 +232,9 @@ def test_wycofane_kredyty_zostaja_narysowane():
     ("krotki", 1),
     # Ten `detail` miesci sie w JEDNEJ linii kafla (420 px) i kafel ma sie wtedy
     # skrocic, a nie zostawic pustego pola — patrz AlertSolo.detail_box.
-    ("Zakres zrzutu: tylko sesja, sesja i tydzień, czy wszystkie okna limitów", 1),
-    ("Plan na 6 kroków: layout.Alert, render._alert, AlertState, testy geometrii "
-     "i kwantyzacji, a do tego jeszcze jedno zdanie na dokladke", 2),
+    ("Dump scope: session only, session and week, or all the limit windows", 1),
+    ("A 6-step plan: layout.Alert, render._alert, AlertState, geometry and "
+     "quantization tests, plus one more sentence for good measure", 2),
     ("Zażółć gęślą jaźń " * 20, 2),
     ("", 0),
 ])

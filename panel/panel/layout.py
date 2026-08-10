@@ -227,7 +227,7 @@ class AlertList:
     FOOT_LABEL_BASE = 18
     FOOT_TEXT_BASE = 35
 
-    FOOT_LABEL = "SZCZEGÓŁ NAJNOWSZEJ"
+    FOOT_LABEL = "NEWEST DETAIL"
 
     def __init__(self, width, height):
         self.width = width
