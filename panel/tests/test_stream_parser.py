@@ -1,8 +1,8 @@
-"""Parser SSE i konfiguracja.
+"""The SSE parser and the configuration.
 
-Parser ma jeden nieoczywisty obowiazek: `data:` moze wystapic WIELOKROTNIE
-w jednej ramce, bo backend rozbija tak wieloliniowy JSON (events.py:47-56).
-Sklejanie jest wymagane, nie kosmetyczne.
+The parser has one non-obvious duty: `data:` may appear MANY TIMES within
+a single frame, because that is how the backend splits multi-line JSON (events.py:47-56).
+Joining it back together is required, not cosmetic.
 """
 import json
 
@@ -21,8 +21,8 @@ def test_prosta_ramka():
 
 
 def test_data_w_wielu_liniach_jest_sklejane():
-    """events.py:47-56 rozbija wieloliniowy JSON na kilka pol `data:`. Gdyby
-    parser brał tylko ostatnie, kazda ramka z nowa linia w tresci bylaby zla."""
+    """events.py:47-56 splits multi-line JSON into several `data:` fields. Were the
+    parser to take the last one only, every frame with a newline inside would be wrong."""
     body = json.dumps({"tekst": "pierwsza\ndruga"})
     raw = b"event: account\n"
     for line in body.split("\n"):
@@ -32,7 +32,7 @@ def test_data_w_wielu_liniach_jest_sklejane():
 
 
 def test_ramka_podzielona_miedzy_odczytami():
-    """Najczestszy przypadek na prawdziwej sieci: ramka przychodzi w kawalkach."""
+    """The commonest case on a real network: the frame arrives in chunks."""
     assert zdarzenia(b'event: pi', b'ng\ndata: {"a"', b': 1}\n\n') == \
         [("ping", {"a": 1})]
 
@@ -52,7 +52,7 @@ def test_konce_linii_crlf():
 
 
 def test_zly_json_nie_wywala_parsera():
-    """Zepsuta ramka nie moze zabic panelu — nastepna i tak niesie pelny stan."""
+    """A broken frame must not kill the panel — the next one carries the full state anyway."""
     got = zdarzenia(b'event: account\ndata: {to nie json\n\nevent: ping\ndata: {}\n\n')
     assert got == [("account", None), ("ping", {})]
 
@@ -62,9 +62,9 @@ def test_pusty_strumien():
 
 
 def test_spacja_po_dwukropku_jest_opcjonalna():
-    """Tak mowi gramatyka SSE. Nasz backend spacje wysyla zawsze, ale replay.py
-    dostaje nagranie, ktore nie musi z niego pochodzic — a parser wymagajacy
-    spacji zwracalby wtedy zero ramek i ani jednego bledu."""
+    """That is what the SSE grammar says. Our backend always sends the space, but replay.py
+    is handed a recording that need not come from it — and a parser demanding the
+    space would then return zero frames and not a single error."""
     assert zdarzenia(b'event:ping\ndata:{"a":1}\n\n') == [("ping", {"a": 1})]
 
 
@@ -72,7 +72,7 @@ def test_pole_data_bez_wartosci_nie_psuje_ramki():
     assert zdarzenia(b'event: ping\ndata:\n\n') == [("ping", None)]
 
 
-# --- konfiguracja -----------------------------------------------------------
+# --- configuration ----------------------------------------------------------
 
 def cfg(**kw):
     d = {"stream_token": "t", "account_1": {"uuid": "a"}}
@@ -81,8 +81,8 @@ def cfg(**kw):
 
 
 def test_konta_sa_dwoma_polami_w_kolejnosci_pasow():
-    """Ksztalt konfiguracji jest ksztaltem ekranu: trzeciego konta nie da sie
-    dopisac przez nieuwage."""
+    """The shape of the configuration is the shape of the screen: a third account
+    cannot be added by inattention."""
     c = cfg(account_1={"uuid": "a", "name": "gorne"},
             account_2={"uuid": "b", "name": "dolne"})
     assert [a.name for a in c.accounts] == ["gorne", "dolne"]
@@ -96,12 +96,12 @@ def test_samo_pierwsze_konto_wystarczy():
 
 @pytest.mark.parametrize("zmiana,fragment", [
     ({"stream_token": None}, "stream_token"),
-    ({"account_1": None, "account_2": None}, "zadnego konta"),
-    ({"account_2": {"uuid": "a"}}, "powtarza uuid"),
-    ({"account_2": {"name": "bez uuid"}}, "bez uuid"),
-    ({"account_2": "nie obiekt"}, "musi byc obiektem"),
+    ({"account_1": None, "account_2": None}, "no account specified"),
+    ({"account_2": {"uuid": "a"}}, "repeats the uuid"),
+    ({"account_2": {"name": "bez uuid"}}, "has no uuid"),
+    ({"account_2": "nie obiekt"}, "must be an object"),
     ({"brightness": 9}, "brightness"),
-    ({"device": "nie obiekt"}, "device musi byc obiektem"),
+    ({"device": "nie obiekt"}, "device must be an object"),
 ])
 def test_walidacja_lapie_bledy(zmiana, fragment):
     problemy = " ".join(cfg(**zmiana).validate())
@@ -109,35 +109,35 @@ def test_walidacja_lapie_bledy(zmiana, fragment):
 
 
 @pytest.mark.parametrize("zmiana,fragment", [
-    ({"brightness": "jasno"}, "brightness musi byc liczba"),
-    ({"tick_sec": "szybko"}, "tick_sec musi byc liczba"),
-    ({"width": None}, "width musi byc liczba"),
-    ({"height": 0}, "height musi byc >= 1"),
-    # json.load przyjmuje gole `Infinity`, a int(float("inf")) to OverflowError,
-    # nie ValueError — wiec goly except (TypeError, ValueError) go nie lapal.
-    ({"brightness": float("inf")}, "brightness musi byc liczba"),
-    ({"tick_sec": float("inf")}, "tick_sec musi byc liczba skonczona"),
-    ({"tick_sec": float("nan")}, "tick_sec musi byc liczba skonczona"),
+    ({"brightness": "jasno"}, "brightness must be a number"),
+    ({"tick_sec": "szybko"}, "tick_sec must be a number"),
+    ({"width": None}, "width must be a number"),
+    ({"height": 0}, "height must be >= 1"),
+    # json.load accepts a bare `Infinity`, and int(float("inf")) is an OverflowError,
+    # not a ValueError — so a plain except (TypeError, ValueError) did not catch it.
+    ({"brightness": float("inf")}, "brightness must be a number"),
+    ({"tick_sec": float("inf")}, "tick_sec must be a finite number"),
+    ({"tick_sec": float("nan")}, "tick_sec must be a finite number"),
 ])
 def test_zle_liczby_daja_problem_a_nie_wyjatek(zmiana, fragment):
-    """validate() obiecuje ZWROCIC liste problemow. Gole `int(self.brightness)`
-    rzucalo ValueError, ktory pod pythonw konczyl sie tracebackiem w logu
-    i restartem zadania co minute — zamiast jednym zdaniem o tym, co poprawic."""
+    """validate() promises to RETURN a list of problems. A bare `int(self.brightness)`
+    threw a ValueError, which under pythonw ended in a traceback in the log
+    and the task restarting every minute — instead of one sentence about what to fix."""
     problemy = " ".join(cfg(**zmiana).validate())
     assert fragment in problemy
 
 
 def test_liczba_w_cudzyslowie_jest_konwertowana():
-    """Sprawdzanie bez zapisu bylo pozorne: `int("480")` sie udaje, wiec validate()
-    milczalo, a Layout liczyl potem `"480" - 1` i pekal TypeError-em juz PO tym,
-    jak konfiguracje ogloszono zdatna do uzycia."""
+    """Checking without writing back was only apparent: `int("480")` succeeds, so validate()
+    stayed silent, and Layout then computed `"480" - 1` and broke with a TypeError already
+    AFTER the configuration had been declared fit for use."""
     c = cfg(width="480", tick_sec="2")
     assert not c.validate()
     assert c.width == 480 and c.tick_sec == 2.0
 
 
 def test_brak_pliku_to_inny_blad_niz_zepsuty_json(tmp_path):
-    """Dwa rozne komunikaty: 'jeszcze nie zainstalowane' i 'zepsute przy edycji'."""
+    """Two different messages: 'not installed yet' and 'broken while being edited'."""
     with pytest.raises(C.ConfigError, match="brak pliku"):
         C.load(str(tmp_path / "nie-ma.json"))
     zly = tmp_path / "zly.json"

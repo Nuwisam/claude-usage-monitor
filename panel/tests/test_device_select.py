@@ -1,12 +1,12 @@
-"""Wybor urzadzenia: co wolno, czego nie wolno i co ma byc glosne.
+"""Device selection: what is allowed, what is not, and what has to be loud.
 
-Caly ten plik pilnuje jednej zasady z naglowka device.py: klient nigdy nie
-siega po "pierwszy wolny". Kazdy przypadek, w ktorym wskazanie jest niepewne,
-ma konczyc sie DeviceNotFound — bo cicha podmiana celu (przejecie ekranu przez
-inny program w chwili, gdy ten sie restartuje) jest awaria, ktorej z zewnatrz nie
-da sie powiazac z przyczyna.
+This whole file guards one rule from the header of device.py: the client never
+reaches for "the first one free". Every case in which the indication is uncertain
+has to end in DeviceNotFound — because a silent swap of the target (another program
+taking the screen over at the moment this one restarts) is a failure that cannot be
+tied to its cause from the outside.
 
-Bez sprzetu: podstawiamy atrapy zamiast urzadzen.
+No hardware: we substitute dummies for the devices.
 """
 import pytest
 
@@ -36,28 +36,28 @@ def targets(*specs, backend="ax206"):
     return out
 
 
-# --- lancuch portow ---------------------------------------------------------
+# --- port chain -------------------------------------------------------------
 
 
 @pytest.mark.parametrize("ports,want", [
     ((3, 4), "3.4"),
     ((1,), "1"),
     ((3, 4, 2, 1), "3.4.2.1"),
-    ((), ""),                    # urzadzenie na korzeniu magistrali
+    ((), ""),                    # a device at the root of the bus
 ])
 def test_format_port_path(ports, want):
     assert ax206.format_port_path(ports) == want
 
 
 def test_port_path_nie_zawiera_magistrali():
-    """Numer magistrali jest syntetycznym indeksem kontrolera — tej samej natury
-    co `Hub_#`, ktory wywalil poprzedni selektor. Do klucza nie wchodzi."""
+    """The bus number is a synthetic index of the controller — the same nature as
+    the `Hub_#` that wrecked the previous selector. It does not go into the key."""
     t = targets(((3, 4), 7))[0]
     assert t.port_path == "3.4"
     assert "7" not in t.port_path
 
 
-# --- wybor ------------------------------------------------------------------
+# --- selection --------------------------------------------------------------
 
 
 def test_wybor_po_port_path():
@@ -69,13 +69,13 @@ def test_brak_wskazanego_port_path_to_blad_nie_podmiana():
     ts = targets(((3, 4), 1), ((3, 2), 1))
     with pytest.raises(DeviceNotFound) as e:
         device.select(ts, {"port_path": "5.1"})
-    # Komunikat ma wyliczyc, co widac — bez tego jedyna diagnoza jest "nie ma".
+    # The message has to list what is visible — without that the only diagnosis is "absent".
     assert "3.4" in str(e.value) and "3.2" in str(e.value)
 
 
 def test_ten_sam_port_path_na_dwoch_magistralach_nie_wybiera_zadnego():
-    """Mozliwe przy dwoch kontrolerach USB. Jeden z tych ekranow moze nalezec
-    do innego programu — wiec zaden nie zostaje wybrany."""
+    """Possible with two USB controllers. One of those screens may belong to
+    another program — so neither of them gets picked."""
     ts = targets(((3, 4), 1), ((3, 4), 2))
     with pytest.raises(DeviceNotFound) as e:
         device.select(ts, {"port_path": "3.4"})
@@ -88,8 +88,8 @@ def test_wybor_po_indeksie():
 
 
 def test_index_jako_napis_daje_czytelny_blad():
-    # panel.json bywa edytowany recznie; "1" zamiast 1 ma dac DeviceNotFound,
-    # nie TypeError z formatowania komunikatu.
+    # panel.json is sometimes edited by hand; "1" instead of 1 has to give DeviceNotFound,
+    # not a TypeError out of formatting the message.
     ts = targets(((3, 4), 1))
     with pytest.raises(DeviceNotFound):
         device.select(ts, {"index": "1"})
@@ -104,8 +104,8 @@ def test_brak_selektora_przy_dwoch_urzadzeniach_to_blad():
     ts = targets(((3, 4), 1), ((3, 2), 1))
     with pytest.raises(DeviceNotFound) as e:
         device.select(ts, None)
-    # Komunikat ma prowadzic do NOWEGO ksztaltu pliku, inaczej instrukcja
-    # kierowalaby wprost w blad "device i panels naraz".
+    # The message has to lead to the NEW shape of the file, otherwise the instruction
+    # would steer straight into the "device and panels at once" error.
     assert "port_path" in str(e.value) and "panels" in str(e.value)
 
 
@@ -115,13 +115,13 @@ def test_pusta_lista():
 
 
 def test_index_liczy_sie_w_obrebie_sterownika():
-    """Dwa sterowniki maja wlasne numeracje, wiec {"index": 0} znaczy to samo co
-    zawsze — pierwszy ekran TEGO sterownika, nie pierwszy na biurku."""
+    """Two drivers have their own numbering, so {"index": 0} means what it always
+    means — the first screen of THAT driver, not the first one on the desk."""
     ts = targets(((3, 4), 1)) + targets(((8, 4), 1), backend="turing-a")
     assert [t.id for t in ts] == ["ax206#0", "turing-a#0"]
 
 
-# --- referencje -------------------------------------------------------------
+# --- references -------------------------------------------------------------
 
 
 def test_release_oddaje_wszystkie_poza_zatrzymanym():
@@ -131,17 +131,17 @@ def test_release_oddaje_wszystkie_poza_zatrzymanym():
 
 
 def test_release_bez_uchwytu_nie_wybucha():
-    """Nie kazdy sterownik trzyma referencje do oddania — port szeregowy jej nie
-    ma. Wspolny kod nie moze na tym pekac."""
+    """Not every driver holds a reference to hand back — a serial port has none.
+    The shared code must not break on that."""
     device.release([Target(backend="x", index=0, port_path="1")])
 
 
-# --- konfiguracja -----------------------------------------------------------
+# --- configuration ----------------------------------------------------------
 
 
 def test_stary_location_jest_bledem_z_instrukcja():
-    """Cicha migracja odpada: wymagalaby zgadywania, ktory ekran autor mial na
-    mysli. Ma byc jedno czytelne zdanie w logu, nie traceback pod pythonw."""
+    """A silent migration is out: it would take guessing which screen the author had
+    in mind. One readable sentence in the log, not a traceback under pythonw."""
     cfg = C.Config({"stream_token": "t", "account_1": {"uuid": "u"},
                     "device": {"location": "Port_#0004.Hub_#0005"}})
     problems = cfg.validate()

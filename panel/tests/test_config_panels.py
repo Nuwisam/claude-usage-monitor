@@ -81,7 +81,7 @@ def test_empty_list_is_an_error():
 
 
 def test_panels_must_be_a_list():
-    assert any("lista" in p for p in problems(panels={"backend": "ax206"}))
+    assert any("list" in p for p in problems(panels={"backend": "ax206"}))
 
 
 def test_unknown_selector_key_is_rejected():
@@ -94,14 +94,14 @@ def test_unknown_selector_key_is_rejected():
 def test_two_entries_for_one_device_are_rejected():
     ps = problems(panels=[{"backend": "ax206", "port_path": "3.4"},
                           {"backend": "ax206", "port_path": "3.4"}])
-    assert any("to samo urzadzenie" in p for p in ps)
+    assert any("the same device" in p for p in ps)
 
 
 def test_two_entries_without_selectors_are_not_flagged():
     """Two different drivers, each with a single device - the normal two-screen
     desk. Only an identical selector means a collision."""
     ps = problems(panels=[{"backend": "ax206"}, {"backend": "ax206", "index": 1}])
-    assert not any("to samo urzadzenie" in p for p in ps)
+    assert not any("the same device" in p for p in ps)
 
 
 @pytest.mark.parametrize("value", ["jasno", None, float("inf"), float("nan"), 9])
@@ -139,7 +139,7 @@ def test_a_half_turn_reaches_the_spec_and_not_the_selector():
 
 def test_rotate_is_not_an_unknown_key():
     ps = problems(panels=[{"backend": "ax206", "port_path": "3.4", "rotate": 180}])
-    assert not any("nieznane klucze" in p for p in ps)
+    assert not any("unknown keys" in p for p in ps)
 
 
 def test_an_omitted_angle_means_the_ordinary_mounting():
@@ -151,7 +151,7 @@ def test_a_quarter_turn_says_why_not():
     """Not "invalid value": someone asking for 90 wants a portrait screen, and the
     answer is that the layout does not exist, not that they mistyped."""
     ps = problems(panels=[{"backend": "turing-rev-a", "rotate": 90}])
-    assert any("rotate" in p and "pionow" in p for p in ps)
+    assert any("rotate" in p and "portrait" in p for p in ps)
 
 
 @pytest.mark.parametrize("value", ["do gory nogami", float("nan"), True])
@@ -166,7 +166,7 @@ def test_two_entries_differing_only_by_the_angle_are_still_one_device():
     ps = problems(panels=[{"backend": "ax206", "port_path": "3.4"},
                           {"backend": "ax206", "port_path": "3.4",
                            "rotate": 180}])
-    assert any("to samo urzadzenie" in p for p in ps)
+    assert any("the same device" in p for p in ps)
 
 
 def test_broken_width_does_not_break_panel_validation():

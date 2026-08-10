@@ -1,9 +1,9 @@
-"""Sceny testowe w ksztalcie kontraktu.
+"""Test scenes in the shape of the contract.
 
-Dane demonstracyjne sa te same co w makiecie (blok text/x-dc na koncu
-"Ekran 3.5 cala.dc.html"), zeby render dalo sie porownac z projektem 1:1.
-Stany, ktorych w produkcji nie da sie wywolac, sa tu tak samo jak
-w frontend/src/mocks — bo inaczej nikt ich nigdy nie zobaczy przed awaria.
+The demonstration data is the same as in the mockup (the text/x-dc block at the end
+of "Ekran 3.5 cala.dc.html"), so that the render can be compared with the design 1:1.
+States that a live run cannot be made to produce are here just as they are
+in frontend/src/mocks — because otherwise nobody would ever see them before a failure.
 """
 from datetime import timedelta
 
@@ -59,11 +59,11 @@ def rung(key, state, **kw):
     return d
 
 
-# --- sceny ------------------------------------------------------------------
+# --- scenes -----------------------------------------------------------------
 
 
 def base():
-    """Dokladnie dane z makiety: konto Max bez kredytow i konto Team z kredytami."""
+    """Exactly the data from the mockup: a Max account with no credits and a Team one with them."""
     a = account(
         "00000000-0000-4000-8000-000000000003", "you@example.org",
         cascade=[rung("session", "on", isCurrent=True, utilization=31),
@@ -102,8 +102,8 @@ def base():
 
 
 def states():
-    """Stany, ktorych w produkcji nie da sie wywolac na zadanie:
-    `unknown` (awaria klienta) i `inferred_reset` (okno wrocilo w ciszy)."""
+    """States that a live run cannot be made to produce on demand:
+    `unknown` (a client failure) and `inferred_reset` (the window came back in silence)."""
     a = account(
         "aaaa1111-0000-0000-0000-000000000001", "unknown@example.pl",
         cascade=[rung("credits", "unknown")],
@@ -132,7 +132,7 @@ def states():
 
 
 def edges():
-    """Skrajnosci ukladu: dluga nazwa, trzycyfrowa sesja, brak drugiego konta."""
+    """Layout extremes: a long name, a three-digit session, no second account."""
     a = account(
         "cccc3333-0000-0000-0000-000000000003",
         "bardzo.dluga.nazwa.konta.ktora.nie.miesci.sie@przyklad.example.pl",

@@ -1,9 +1,9 @@
-"""Parser ramki `alert`. Zepsuta ramka nie moze zabic panelu.
+"""Parser of the `alert` frame. A broken frame must not kill the panel.
 
-To jest jedyne wejscie danych o zablokowanych sesjach do klienta, a ich zrodlem jest
-payload hooka Claude Code — czyli ksztalt, ktory zmienia sie miedzy wersjami klienta.
-Kazdy test tutaj sprawdza wiec to samo pytanie z innej strony: czy panel przezyje
-wpis, ktorego nie rozumie.
+This is the only way data about blocked sessions gets into the client, and its source is
+the payload of a Claude Code hook — that is, a shape that changes between client versions.
+Every test here therefore asks the same question from another side: will the panel
+survive an entry it does not understand.
 """
 from panel import status
 
@@ -35,8 +35,8 @@ def test_uszkodzony_wpis_nie_zabija_reszty():
 
 
 def test_nieznany_reason_nie_jest_bledem():
-    """Writer moze byc nowszy niz panel. 'CLAUDE IS WAITING' jest prawda w kazdym
-    takim przypadku, a pusty ekran nie."""
+    """The writer may be newer than the panel. 'CLAUDE IS WAITING' is true in every
+    such case; an empty screen is not."""
     out = status.parse_frame(frame(entry(reason="cos-nowego")))
     assert out[0].title == status.UNKNOWN
 
@@ -47,8 +47,8 @@ def test_brak_since_nie_wyrzuca_wpisu():
 
 
 def test_since_w_przyszlosci_przechodzi():
-    """Zegary maszyn sie rozjezdzaja. Wpis z przyszlosci jest dziwny, ale prawdziwy —
-    o tym, co z nim zrobic, decyduje `fmt.waited`, ktore nie schodzi ponizej zera."""
+    """Machine clocks drift apart. An entry from the future is odd but real — what to
+    do with it is decided by `fmt.waited`, which does not go below zero."""
     out = status.parse_frame(frame(entry(since="2099-01-01T00:00:00Z")))
     assert len(out) == 1
 
@@ -59,11 +59,12 @@ def test_smieci_zamiast_ramki():
 
 
 def test_kolejnosc_od_najmlodszej_bez_wzgledu_na_powod():
-    """Powod nie ma wplywu na kolejnosc — decyduje sam wiek.
+    """The reason has no bearing on the order — age alone decides.
 
-    Karta obcina sie do trzech wierszy, a kazda blokada byla juz pokazana solo, gdy
-    wchodzila. Warte pokazania sa wiec te, ktorych jeszcze nie widziales. Dawna ranga
-    (plan, pytanie, zgoda) wypychala z wierszy blokade, ktora wlasnie przejela ekran.
+    The card cuts itself to three rows, and every block was already shown solo when it
+    came in. The ones worth showing are therefore the ones not seen yet. The old rank
+    (plan, question, permission) pushed out of the rows the very block that had just
+    taken the screen over.
     """
     out = status.parse_frame(frame(
         entry(key="perm-stary", reason="permission", since="2026-08-05T20:00:00Z"),
@@ -75,7 +76,7 @@ def test_kolejnosc_od_najmlodszej_bez_wzgledu_na_powod():
 
 
 def test_wpis_bez_stempla_laduje_na_koncu():
-    """Brak wiedzy o wieku nie moze udawac ani swiezosci, ani starosci."""
+    """Not knowing the age must pass for neither freshness nor staleness."""
     out = status.parse_frame(frame(
         entry(key="bez", reason="plan", since=None),
         entry(key="stary", reason="permission", since="2026-08-05T20:00:00Z"),
@@ -95,8 +96,8 @@ def test_brak_maszyny_nie_jest_bledem():
 
 
 def test_tryb_i_subagent_wchodza_do_listwy():
-    """`permissionMode` i `agentType` sa w kontrakcie od poczatku (docs/API.md § 3.2)
-    i to one odpowiadaja na pytanie 'czemu on w ogole pyta'."""
+    """`permissionMode` and `agentType` have been in the contract from the start
+    (docs/API.md § 3.2) and they are what answers 'why is it asking at all'."""
     out = status.parse_frame(frame(entry(permissionMode="plan",
                                          agentType="general-purpose")))
     assert out[0].mode_label == "plan · general-purpose"
@@ -108,6 +109,6 @@ def test_listwa_trybu_znosi_brak_obu_pol():
 
 
 def test_nieznany_reason_ma_skrot():
-    """Ta sama zasada co przy `title`: nieznany powod dostaje slowo prawdziwe zawsze."""
+    """The same rule as with `title`: an unknown reason gets a word that is always true."""
     out = status.parse_frame(frame(entry(reason="cos-nowego")))
     assert out[0].short == status.SHORT_UNKNOWN

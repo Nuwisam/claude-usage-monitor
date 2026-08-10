@@ -1,6 +1,6 @@
-"""Zablokowana sesja na ekranie: karta, zwiniecie do znacznika, koszt zmiany sceny.
+"""A blocked session on the screen: the card, the fold into a marker, the cost of a scene change.
 
-Zegar jest wstrzykiwany wszedzie, bo inaczej test wypalenia okna trwalby 300 s.
+The clock is injected everywhere, because otherwise the window burn-out test would take 300 s.
 """
 import pytest
 
@@ -8,7 +8,7 @@ from panel import app as app_mod, config as C, fmt, render, status, surface, the
 
 
 class Zegar:
-    """Monotonic pod kontrola testu."""
+    """Monotonic under the test's control."""
 
     def __init__(self, t=1000.0):
         self.t = t
@@ -21,8 +21,8 @@ class Zegar:
 
 
 def cfg(**kw):
-    # Blysk domyslnie wylaczony: testy karty maja sprawdzac karte, nie to, co ja
-    # poprzedza. Testy blysku wlaczaja go jawnie.
+    # The flash is off by default: the card tests are to check the card, not what comes
+    # before it. The flash tests switch it on explicitly.
     d = {"stream_token": "t", "account_1": {"uuid": "konto-a"},
          "account_2": {"uuid": "konto-b"}, "alert_flash_sec": 0}
     d.update(kw)
@@ -30,8 +30,8 @@ def cfg(**kw):
 
 
 def po_migotaniu(a, z):
-    """Renderuje, az baner przestanie migac. Okno uzbraja sie przy PIERWSZYM renderze
-    po pojawieniu sie klucza, wiec sam skok zegara nie wystarczy."""
+    """Renders until the banner stops blinking. The window arms itself on the FIRST render
+    after the key appears, so moving the clock alone is not enough."""
     ekran = a.screen()
     z.skok(a.cfg.alert_flash_sec + 1)
     return a.screen()
@@ -57,7 +57,7 @@ def wpis(**kw):
     return base
 
 
-# --- wejscie i wyjscie karty ------------------------------------------------
+# --- card entry and exit ----------------------------------------------------
 
 def test_karta_wchodzi_po_debounce():
     z = Zegar()
@@ -86,40 +86,40 @@ def test_pusty_zbior_gasi_karte_dopiero_po_lingerze():
     z.skok(5)
     assert a.screen().alert is not None
     a.on_event("alert", ramka())
-    # Linger zaczyna sie w pierwszym renderze PO oproznieniu zbioru, nie w chwili
-    # przyjscia ramki: liczy sie moment, w ktorym scena mialaby sie przelaczyc.
+    # The linger starts on the first render AFTER the set empties, not at the moment the
+    # frame arrives: what counts is the moment the scene would have switched.
     assert a.screen().alert is not None, "linger ogranicza liczbe przejsc sceny"
     z.skok(a.cfg.blocked_linger_sec + 1)
     assert a.screen().alert is None
 
 
 def test_karta_w_lingerze_jest_zamrozona():
-    """Bez zamrozenia 'czeka N min' tykaloby na prompcie, na ktory juz odpowiedziales,
-    a kazdy przeskok tego napisu to pelna klatka na AX206."""
+    """Without the freeze, 'waiting N min' would tick on a prompt that has already been
+    answered, and every jump of that caption is a full frame on the AX206."""
     z = Zegar()
     a = app(z)
-    # Tak dobrane, zeby przy pierwszym renderze bylo 119 s, a piec sekund pozniej 124 s.
+    # Chosen so that the first render sees 119 s and five seconds later 124 s.
     a.on_event("alert", ramka(wpis(since="2026-08-05T21:05:06Z")))
     z.skok(5)
     przed = a.screen().alert.rows[0].waited
     assert przed == "1 min"
     a.on_event("alert", ramka())
-    a.screen()                      # uzbrojenie lingera
-    z.skok(5)                       # przekracza granice minuty — bez zamrozenia "2 min"
+    a.screen()                      # arming the linger
+    z.skok(5)                       # crosses the minute boundary — without the freeze "2 min"
     assert a.screen().alert.rows[0].waited == przed
 
 
 def test_wypalenie_okna_zwija_karte_do_znacznika():
     z = Zegar()
     a = app(z, alert_takeover_sec=30)
-    a.on_event("alert", ramka(wpis(since="2026-08-05T21:06:50Z")))   # 10 s temu
+    a.on_event("alert", ramka(wpis(since="2026-08-05T21:06:50Z")))   # 10 s ago
     z.skok(5)
     assert a.screen().alert is not None
-    # Okno liczy sie od `since` z SERWERA, wiec przesuwamy zegar serwera, nie tylko
-    # monotonic: inaczej test sprawdzalby cos innego niz produkcja.
+    # The window counts from the SERVER's `since`, so we move the server clock, not just
+    # the monotonic one: otherwise the test would check something other than the real run.
     a.clock.anchor("2026-08-05T21:08:00Z")
     a.first_data_at = z.t
-    a.screen()                      # okno wypalone: karta wchodzi w linger
+    a.screen()                      # window burnt out: the card enters the linger
     z.skok(a.cfg.blocked_linger_sec + 1)
     ekran = a.screen()
     assert ekran.alert is None, "po alert_takeover_sec karta ma oddac ekran"
@@ -141,12 +141,12 @@ def test_nowa_blokada_dostaje_nowe_okno():
 
 
 def test_swieza_blokada_wciaga_wypalona_na_ta_sama_karte():
-    """Regresja na trzy martwe uklady z czterech.
+    """Regression on three dead layouts out of four.
 
-    Okno nalezy do ZBIORU: dopoki cokolwiek jest swieze, karta wypisuje wszystkie
-    czekajace. Przy filtrowaniu per wpis dwie blokady musialyby zaczac sie w tym samym
-    pieciominutowym oknie — przy pracy sekwencyjnej to sie nie zdarza, wiec `AlertPair`,
-    `AlertList` i `AlertMany` nie mialy jak wejsc na ekran.
+    The window belongs to the SET: as long as anything is fresh, the card lists everything
+    waiting. With per-entry filtering two blocks would have to start inside the same
+    five-minute window — with sequential work that never happens, so `AlertPair`,
+    `AlertList` and `AlertMany` had no way of reaching the screen.
     """
     z = Zegar()
     a = app(z, alert_takeover_sec=30)
@@ -161,15 +161,15 @@ def test_swieza_blokada_wciaga_wypalona_na_ta_sama_karte():
 
 
 def test_wypalony_zbior_gasnie_w_calosci():
-    """Gdy wypali sie OSTATNIA swieza blokada, karta oddaje ekran razem z reszta.
+    """When the LAST fresh block burns out, the card hands the screen back along with the rest.
 
-    Uczciwie: to jest guard PRZED NADMIAROWA POPRAWKA, nie dowod na nia. Zdaje sie
-    tak samo na starym kodzie i tak ma byc — pilnuje, ze okno nalezace do zbioru nie
-    zaczelo trzymac karty w nieskonczonosc. Test rozstrzygajacy o samej zmianie to
-    `test_swieza_blokada_wciaga_wypalona_na_ta_sama_karte`.
+    Honestly: this is a guard AGAINST AN OVERREACHING FIX, not proof of one. It passes the
+    same way on the old code and that is as it should be — it watches that a window belonging
+    to the set has not started holding the card forever. The test that settles the change
+    itself is `test_swieza_blokada_wciaga_wypalona_na_ta_sama_karte`.
 
-    Obie blokady musza wejsc swieze: zbior stary od poczatku nie zbuduje karty w ogole,
-    wiec nie byloby czego gasic.
+    Both blocks have to come in fresh: a set that is old from the start builds no card at all,
+    so there would be nothing to put out.
     """
     z = Zegar()
     a = app(z, alert_takeover_sec=30)
@@ -179,9 +179,9 @@ def test_wypalony_zbior_gasnie_w_calosci():
     z.skok(5)
     a.first_data_at = z.t
     assert len(a.screen().alert.rows) == 2
-    # Zegar SERWERA, bo okno liczy sie od `since`, nie od monotonic.
+    # The SERVER clock, because the window counts from `since`, not from the monotonic one.
     a.clock.anchor("2026-08-05T21:09:00Z")
-    a.screen()                      # okno wypalone dla obu: karta wchodzi w linger
+    a.screen()                      # window burnt out for both: the card enters the linger
     z.skok(a.cfg.blocked_linger_sec + 1)
     ekran = a.screen()
     assert ekran.alert is None, "wypalony zbior gasnie w calosci"
@@ -189,8 +189,8 @@ def test_wypalony_zbior_gasnie_w_calosci():
 
 
 def test_zero_wylacza_karte_takze_bez_since():
-    """`alert_takeover_sec: 0` to "od razu znacznik, bez karty" — takze dla wpisu bez
-    stempla, ktory wczesniej omijal porownanie wieku i karte jednak dostawal."""
+    """`alert_takeover_sec: 0` means "a marker right away, no card" — including for an entry
+    with no stamp, which used to skip the age comparison and get a card after all."""
     z = Zegar()
     a = app(z, alert_takeover_sec=0)
     a.on_event("alert", ramka(wpis(since=None)))
@@ -201,10 +201,10 @@ def test_zero_wylacza_karte_takze_bez_since():
     assert ekran.bands[0].alert, "wpis zyje dalej jako znacznik"
 
 
-# --- blysk ------------------------------------------------------------------
+# --- flash ------------------------------------------------------------------
 
 def fazy(a, z, sekundy):
-    """Wartosci `flood` w kolejnych sekundach."""
+    """The `flood` values in consecutive seconds."""
     out = []
     for _ in range(sekundy):
         out.append(a.screen().alert.flood)
@@ -267,8 +267,8 @@ def test_infinity_miga_przez_cale_zycie_karty():
     (0, 0.0), (-5, 0.0), ("bzdura", 0.0), (None, 0.0), (float("nan"), 0.0),
 ])
 def test_seconds(raw, oczekiwane):
-    """Wartosci pochodza z recznie edytowanego panel.json i ida do POROWNANIA —
-    goly string wywroci tick TypeError-em. Smieci maja znaczyc wartosc domyslna."""
+    """The values come from a hand-edited panel.json and go into a COMPARISON —
+    a bare string tips the tick over with a TypeError. Junk is to mean the default."""
     assert app_mod.seconds(raw) == oczekiwane
 
 
@@ -291,8 +291,8 @@ def test_takeover_zero_daje_od_razu_znacznik():
 
 
 def test_smieci_w_progach_nie_wywracaja_ticku():
-    """Regresja: `age >= "infinity"` to TypeError, czyli martwy tick pod pythonw,
-    bez konsoli, ktora by go pokazala."""
+    """Regression: `age >= "infinity"` is a TypeError, that is a dead tick under pythonw,
+    with no console to show it."""
     z = Zegar()
     a = app(z, alert_takeover_sec="bzdura", alert_flash_sec="bzdura")
     a.first_data_at = z.t
@@ -302,9 +302,9 @@ def test_smieci_w_progach_nie_wywracaja_ticku():
 
 
 def test_migniecie_banera_miesci_sie_w_ticku():
-    """Sedno poprawki: pelnoekranowy blysk to pelna klatka (1,87 s na Turingu),
-    czyli powolne zamalowanie zamiast blysku. Sam baner musi byc na tyle tani,
-    zeby zdazyc w sekunde."""
+    """The heart of the fix: a full-screen flash is a full frame (1.87 s on the Turing),
+    that is a slow repaint instead of a flash. The banner alone has to be cheap enough
+    to make it inside a second."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
     blokady = status.parse_frame(ramka(wpis()))
     R = render.Renderer()
@@ -317,11 +317,11 @@ def test_migniecie_banera_miesci_sie_w_ticku():
     assert nbytes * 6.1e-6 < 0.5, "%.0f ms na drucie — nie zdazy w ticku" % (nbytes * 6.1e-3)
 
 
-# --- pierwszenstwo ----------------------------------------------------------
+# --- precedence -------------------------------------------------------------
 
 def test_alert_bije_holding():
-    """Alert jest wiadomoscia, na ktora czekasz — nie ma powodu, zeby czekal na
-    uplyw progu splash."""
+    """An alert is the message being waited for — there is no reason for it to wait out
+    the splash threshold."""
     z = Zegar()
     a = app(z)
     assert a.holding()
@@ -341,15 +341,15 @@ def test_alert_bije_niezgodny_kontrakt():
 
 
 def test_po_karcie_nie_wracamy_do_holding():
-    """Regresja: sam latch `ever_painted` nie wystarczal, bo `screen()` mial WLASNA,
-    niezalezna bramke czasu — po zgaszeniu karty malowal 'brak danych z serwera'."""
+    """Regression: the `ever_painted` latch alone was not enough, because `screen()` had its
+    OWN, independent time gate — once the card went out it painted 'no data from server'."""
     z = Zegar()
     a = app(z)
     a.on_event("alert", ramka(wpis()))
     z.skok(5)
     assert a.tick() is not None
     a.on_event("alert", ramka())
-    a.screen()                      # uzbrojenie lingera
+    a.screen()                      # arming the linger
     z.skok(a.cfg.blocked_linger_sec + 1)
     assert not a.holding()
     ekran = a.screen()
@@ -357,8 +357,8 @@ def test_po_karcie_nie_wracamy_do_holding():
 
 
 def test_alert_nie_udaje_swiezych_danych():
-    """Ramka `alert` nie moze ani otworzyc bramki `first_data_at`, ani ustawic
-    `link_state` na `live`: nie jest dowodem swiezosci danych o zuzyciu."""
+    """An `alert` frame may neither open the `first_data_at` gate nor set `link_state`
+    to `live`: it is no proof that the usage data is fresh."""
     z = Zegar()
     a = app(z)
     a.on_event("alert", ramka(wpis()))
@@ -375,7 +375,7 @@ def test_wylacznik_konfiguracji():
     assert a.screen().alert is None
 
 
-# --- znacznik przy koncie ---------------------------------------------------
+# --- the marker next to the account -----------------------------------------
 
 def test_znacznik_laduje_na_pasie_wlasciwego_konta():
     z = Zegar()
@@ -396,10 +396,11 @@ def test_alert_bez_dopasowania_laduje_na_pasie_gornym():
 
 
 def test_powod_nie_wypycha_tytulu_poza_pas():
-    """Powod odejmuje sobie miejsce z budzetu TYTULU, a nie dokleja sie za pasem.
+    """The reason takes its room out of the TITLE's budget instead of being glued on past
+    the band.
 
-    Sprawdzane na najgorszym przypadku: dluga nazwa, zegar, znacznik lacza i plakietka
-    planu naraz — czyli wszystko, co konkuruje o te sama szerokosc.
+    Checked on the worst case: a long name, the clock, the link marker and the plan badge
+    all at once — that is, everything competing for the same width.
     """
     from panel import draw, layout as L
 
@@ -416,13 +417,13 @@ def test_powod_nie_wypycha_tytulu_poza_pas():
         render.Renderer()._header(d, b, state,
                                   render.ScreenState(clock="21:07", link="live"))
         px = img.load()
-        # Kolumny na prawo od pasa musza zostac tlem — nic nie wyjechalo poza margines.
+        # The columns right of the band must stay background — nothing ran past the margin.
         for x in range(b.x1 + 1, 480):
             for y in range(b.header[1], b.header[3]):
                 assert px[x, y] == theme.BG, "cos wyjechalo poza pas w kolumnie %d" % x
-        # Koniec TYTULU, nie koniec naglowka: tytul jest do lewej, a powod, plakietka
-        # i zegar do prawej, wiec miedzy nimi jest przerwa. Szukamy pierwszej przerwy
-        # szerszej niz odstep miedzyliterowy.
+        # The end of the TITLE, not the end of the header: the title is set left, and the
+        # reason, the badge and the clock right, so there is a gap between them. We look for
+        # the first gap wider than the spacing between letters.
         tusz = [any(px[x, y] != theme.BG for y in range(b.header[1], b.header[3]))
                 for x in range(b.x0, b.x1)]
         koniec, przerwa = 0, 0
@@ -438,8 +439,8 @@ def test_powod_nie_wypycha_tytulu_poza_pas():
 
 
 def test_znacznik_pasa_ma_pelna_wysokosc_i_siedzi_w_marginesie():
-    """Pasek 4 px stoi w polu marginesu (PAD_X 14), wiec uklad pasa nie drga ani
-    o piksel — i ma pelna wysokosc pasa niezaleznie od liczby wierszy w srodku."""
+    """The 4 px bar stands in the margin field (PAD_X 14), so the band's layout does not
+    shift by a pixel — and it has the band's full height whatever the number of rows inside."""
     from panel import draw, layout as L
 
     lay = L.Layout(480, 320)
@@ -455,7 +456,7 @@ def test_znacznik_pasa_ma_pelna_wysokosc_i_siedzi_w_marginesie():
         assert L.MARK_W < L.PAD_X, "pasek musialby zabrac miejsce trescia pasa"
 
 
-# --- koszt na drucie --------------------------------------------------------
+# --- cost on the wire -------------------------------------------------------
 
 def scena_pasy(now_ms):
     from tests import fixtures
@@ -474,10 +475,10 @@ def _frakcja(a, b):
 
 
 def test_przejscie_do_karty_miesci_sie_pod_progiem_pelnej_klatki():
-    """Przypina liczbe, na ktorej stoi `FULL_AT = 0.85`.
+    """Pins the number `FULL_AT = 0.85` stands on.
 
-    Przy dawnym progu 0.60 to przejscie ladowalo 2 punkty NAD nim i zamienialo
-    45 wycinkow w pelna klatke — czyli 1,16 s w 1,87 s, bez zadnego zysku.
+    At the old threshold of 0.60 this transition landed 2 points ABOVE it and turned
+    45 crops into a full frame — that is 1.16 s into 1.87 s, for no gain at all.
     """
     now_ms = fmt.ms(fmt.parse_utc(NOW))
     pasy = scena_pasy(now_ms)
@@ -492,11 +493,11 @@ def test_przejscie_do_karty_miesci_sie_pod_progiem_pelnej_klatki():
 
 
 def test_sam_znacznik_jest_tani():
-    """Znacznik ma prawo zapalac sie i gasnac czesto — musi kosztowac tyle co nic.
+    """The marker has the right to light up and go out often — it has to cost next to nothing.
 
-    Prog jest luzniejszy niz przy trojkacie (2%), bo pasek idzie przez CALA wysokosc
-    pasa, a nazwa konta zmienia przy tym kolor: brudzi sie lewa kolumna kafli i dwa
-    naglowki. 6% to ~0,11 s na Turingu, czyli nadal ulamek ticku.
+    The threshold is looser than for the triangle (2%), because the bar runs through the
+    band's WHOLE height and the account name changes color along with it: the left column of
+    tiles and two headers get dirty. 6% is ~0.11 s on the Turing, still a fraction of a tick.
     """
     now_ms = fmt.ms(fmt.parse_utc(NOW))
     pasy = scena_pasy(now_ms)
@@ -509,7 +510,7 @@ def test_sam_znacznik_jest_tani():
     assert rects <= 12
 
 
-# --- format czasu -----------------------------------------------------------
+# --- time format ------------------------------------------------------------
 
 @pytest.mark.parametrize("sekundy,oczekiwane", [
     (0, "a moment"), (59, "a moment"), (60, "1 min"), (245, "4 min"),
@@ -521,15 +522,15 @@ def test_waited(sekundy, oczekiwane):
 
 
 def test_waited_nie_schodzi_ponizej_zera():
-    """Zegary maszyn sie rozjezdzaja, wiec `since` z przyszlosci jest realne."""
+    """Machine clocks drift apart, so a `since` from the future is real."""
     assert fmt.waited(10_000.0, 0.0) == "a moment"
     assert fmt.waited(None, 0.0) == "—"
 
 
-# --- uklady karty -----------------------------------------------------------
+# --- card layouts -----------------------------------------------------------
 
 def blokady(n):
-    """n blokad o roznych powodach i stemplach, w kolejnosci parsera."""
+    """n blocks with different reasons and stamps, in the parser's order."""
     return status.parse_frame(ramka(*[
         wpis(key="k%d" % i, reason=("plan", "question", "permission")[i % 3],
              project="projekt-%d" % i, detail="szczegol %d" % i,
@@ -542,8 +543,8 @@ def blokady(n):
     (4, "_alert_many"), (5, "_alert_many"),
 ])
 def test_uklad_wybiera_liczba_blokad(ile, metoda, monkeypatch):
-    """Prog jest przy trzech: do dwoch nazwa projektu zostaje bohaterem, od trzech
-    schodzi do listy, bo trzy nazwy w 34 px nie istnieja."""
+    """The threshold is at three: up to two the project name stays the hero, from three on
+    it drops into a list, because three names in 34 px do not exist."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
     stan = render.alert_state(blokady(ile), now_ms)
     wolane = []
@@ -565,8 +566,8 @@ def test_lista_pokazuje_trzy_a_liczy_wszystkie():
 
 
 def test_pasmo_podaje_najstarsze_czekanie_a_nie_naglowek():
-    """Pierwszy wiersz to NAJMLODSZA blokada, a godzina w pasmie to poczatek
-    NAJSTARSZEGO czekania na ekranie. To dwie rozne rzeczy i musza sie rozjezdzac."""
+    """The first row is the NEWEST block, while the hour in the banner is the start of the
+    OLDEST wait on the screen. Those are two different things and they have to diverge."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
     stan = render.alert_state(status.parse_frame(ramka(
         wpis(key="plan", reason="plan", since="2026-08-05T21:06:00Z"),
@@ -577,8 +578,8 @@ def test_pasmo_podaje_najstarsze_czekanie_a_nie_naglowek():
 
 
 def test_swieza_blokada_jest_widoczna_mimo_trzech_starszych():
-    """Regresja: przy oknie nalezacym do ZBIORU ranga powodu wypychala z wierszy
-    wlasnie te blokade, ktora przejela ekran — zostawala sama nazwa w stopce."""
+    """Regression: with the window belonging to the SET, the reason's rank pushed out of the
+    rows the very block that had taken the screen over — only its name stayed in the footer."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
     stan = render.alert_state(status.parse_frame(ramka(
         wpis(key="s1", reason="plan", project="stary-1", since="2026-08-05T19:07:00Z"),
@@ -599,8 +600,8 @@ def test_kafel_szczegolu_nie_wchodzi_na_listwe_trybu():
 
 @pytest.mark.parametrize("ze_stopka", [True, False])
 def test_wiersze_listy_wypelniaja_ekran_bez_szpar(ze_stopka):
-    """Reszta z dzielenia idzie tam, gdzie daje ja przegladarka. Szpara tla przy
-    stopce czytalaby sie jako urwany ekran."""
+    """The remainder of the division goes where the browser puts it. A gap of background
+    at the footer would read as a screen cut short."""
     from panel import layout as L
     lay = L.Layout(480, 320)
     for uklad in (lay.alert_list, lay.alert_many):
@@ -613,8 +614,8 @@ def test_wiersze_listy_wypelniaja_ekran_bez_szpar(ze_stopka):
 
 
 def _dol_tuszu(px, x0, x1, y0, y1, tlo, prog=25):
-    """Ostatni wiersz, w ktorym w podanym prostokacie jest tusz. Dla napisu bez
-    zejsc ponizej linii bazowej to jest wlasnie linia bazowa minus jeden."""
+    """The last row in which there is ink inside the given rectangle. For a caption with
+    no descenders below the baseline that is exactly the baseline minus one."""
     ostatni = None
     for y in range(y0, y1):
         for x in range(x0, x1):
@@ -626,19 +627,20 @@ def _dol_tuszu(px, x0, x1, y0, y1, tlo, prog=25):
 
 
 def test_tusz_pasma_i_listwy_stoi_tam_gdzie_makieta():
-    """Linie bazowe sa ZMIERZONE na wyrenderowanej makiecie, wiec test pilnuje pomiaru,
-    a nie wzoru.
+    """The baselines are MEASURED on the rendered mockup, so the test guards a measurement,
+    not a formula.
 
-    Zmierzone na makiecie (`1a-alert`, render 3x, dol cyfr zegara i dol napisu w listwie
-    `Tryb`): pasmo 24,33 px, listwa 306,33 px. Pillow z anchor="ls" klazie dol tuszu na
-    `base - 1`, wiec przy poprawnych stalych ostatni zapisany wiersz to 23 i 305.
-    Wczesniej bylo 26 i 308 — o 1,67 px za nisko, w kazdym z czterech ukladow naraz.
+    Measured on the mockup (`1a-alert`, rendered 3x, the bottom of the clock digits and the
+    bottom of the caption in the `MODE` strip): banner 24.33 px, strip 306.33 px. Pillow with
+    anchor="ls" puts the bottom of the ink at `base - 1`, so with the right constants the last
+    written row is 23 and 305. It was 26 and 308 before — 1.67 px too low, in each of the four
+    layouts at once.
     """
     from panel import layout as L
 
     now_ms = fmt.ms(fmt.parse_utc(NOW))
-    # Z `permissionMode`, inaczej listwa `Tryb` w ogole sie nie rysuje i mierzylibysmy
-    # pusty pas.
+    # With `permissionMode`, otherwise the `MODE` strip is not drawn at all and we would be
+    # measuring an empty band.
     stan = render.alert_state(
         status.parse_frame(ramka(wpis(permissionMode="default"))), now_ms)
     px = render.Renderer().frame(render.ScreenState(alert=stan)).image.load()
@@ -646,9 +648,10 @@ def test_tusz_pasma_i_listwy_stoi_tam_gdzie_makieta():
     assert L.BANNER_BASE == 24, "pomiar makiety: dol cyfr zegara na 24,33 px"
     assert L.AlertSolo.MODE_BASE == 306, "pomiar makiety: dol napisu `Tryb` na 306,33 px"
 
-    # Zegar w pasmie: cyfry nie schodza ponizej linii bazowej, wiec dol tuszu ja podaje.
+    # The clock in the banner: the digits do not go below the baseline, so the bottom of the
+    # ink gives it.
     assert _dol_tuszu(px, 380, 470, 0, L.BANNER_H, theme.ACCENT_800) == L.BANNER_BASE - 1
-    # Listwa `Tryb`: ani "TRYB", ani "default" nie ma zejscia.
+    # The `MODE` strip: neither "MODE" nor "default" has a descender.
     assert _dol_tuszu(px, 18, 300, 320 - L.AlertSolo.MODE_H, 320,
                       theme.SUNKEN) == L.AlertSolo.MODE_BASE - 1
 
@@ -656,12 +659,14 @@ def test_tusz_pasma_i_listwy_stoi_tam_gdzie_makieta():
 @pytest.mark.parametrize("ile", [1, 2, 3, 5])
 @pytest.mark.parametrize("zalane,kolor", [(False, "NEUTRAL_900"), (True, "ACCENT")])
 def test_rail_stoi_w_obu_klatkach_kazdego_ukladu(ile, zalane, kolor):
-    """Rail nie jest wlasnoscia klatki pelnej: stoi pod pasmem zawsze, a zalanie tylko
-    go przemalowuje. Pasek pojawiajacy sie z niczego bylby mocniejszym ruchem niz zmiana
-    koloru, a poza oknem `alert_flash_sec` karta zostawalaby bez lewej krawedzi.
+    """The rail is not a property of the full frame: it always stands below the banner, and
+    flooding only repaints it. A bar appearing out of nothing would be a stronger movement
+    than a change of color, and outside the `alert_flash_sec` window the card would be left
+    with no left edge.
 
-    Idzie przez CALA wysokosc pod pasmem, takze przez listwe `Tryb` w ukladzie 1a
-    i przez stopki w 1c/1d — dlatego pasmo rysuje sie na koncu, nad trescia.
+    It runs through the WHOLE height below the banner, through the `MODE` strip in layout 1a
+    and through the footers in 1c/1d too — which is why the banner is drawn last, over the
+    content.
     """
     from panel import layout as L
 
@@ -682,9 +687,9 @@ def test_rail_stoi_w_obu_klatkach_kazdego_ukladu(ile, zalane, kolor):
 
 @pytest.mark.parametrize("ile", [1, 2, 3, 5])
 def test_przejscie_do_karty_miesci_sie_pod_progiem_dla_kazdego_ukladu(ile):
-    """`FULL_AT = 0.85` musi wytrzymac KAZDY uklad, nie tylko ten z jedna blokada:
-    powyzej progu zestaw wycinkow zamienia sie w pelna klatke, czyli 1,87 s na Turingu
-    zamiast ~1,2 s."""
+    """`FULL_AT = 0.85` has to hold for EVERY layout, not only the one with a single block:
+    above the threshold the set of crops turns into a full frame, that is 1.87 s on the
+    Turing instead of ~1.2 s."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
     pasy = scena_pasy(now_ms)
     karta = scena_pasy(now_ms)
@@ -698,12 +703,13 @@ def test_przejscie_do_karty_miesci_sie_pod_progiem_dla_kazdego_ukladu(ile):
 
 @pytest.mark.parametrize("ile", [1, 2, 3, 5])
 def test_klatka_pelna_miesci_sie_w_ticku(ile):
-    """Sedno warstwy ruchu: podmiana klatki pustej na pelna to pasmo plus rail, nie
-    caly ekran. Pelnoekranowy blysk bylby pelna klatka, czyli 1,87 s powolnego
-    zamalowania zamiast blysku.
+    """The heart of the movement layer: swapping the empty frame for the full one is the
+    banner plus the rail, not the whole screen. A full-screen flash would be a full frame,
+    that is 1.87 s of slow repainting instead of a flash.
 
-    Po jednym przebiegu na uklad, bo koszt zalania nie moze zalezec od tego, ile
-    blokad akurat czeka — pasmo i rail sa wspolne, wiec liczba ma wyjsc ta sama."""
+    One pass per layout, because the cost of the flood must not depend on how many blocks
+    happen to be waiting — the banner and the rail are shared, so the number has to come
+    out the same."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
     pusta = render.ScreenState(alert=render.alert_state(blokady(ile), now_ms))
     pelna = render.ScreenState(

@@ -1,9 +1,9 @@
-"""Petla klienta — to, co robi z EKRANEM, zanim cokolwiek wie.
+"""The client loop — what it does with the SCREEN before it knows anything.
 
-Panel trzyma ostatnia klatke bez podlaczonego hosta, wiec obraz z poprzedniego
-biegu jest stanem wyjsciowym kazdego startu, a nie pusta kartka. Ten plik pilnuje
-jedynej reguly, ktora z tego wynika: dopoki nie mamy danych ani pewnego powodu,
-zeby zamalowac ekran, nie dotykamy go wcale.
+The panel holds its last frame with no host attached, so the image from the previous
+run is the starting state of every start-up, not a blank sheet. This file guards the
+one rule that follows from it: until we have data or a certain reason to paint over
+the screen, we do not touch it at all.
 """
 from panel import app as app_mod, config as C
 
@@ -15,10 +15,10 @@ def cfg(**kw):
 
 
 def test_przed_pierwszymi_danymi_nie_dotykamy_ekranu():
-    """Regresja: `splash_after_sec` bramkowalo tylko pelnoekranowa karte stanu,
-    a pasy z napisem "brak danych z serwera" szly na panel juz w pierwszym ticku.
-    Kazdy restart wycieral wiec obraz z poprzedniego biegu — dokladnie to, czemu
-    ten prog mial zapobiegac."""
+    """Regression: `splash_after_sec` gated the full-screen status card only, while
+    the bands reading "no data from server" went to the panel on the very first tick.
+    Every restart therefore wiped the image from the previous run — exactly what
+    this threshold was there to prevent."""
     a = app_mod.App(cfg())
     assert a.holding()
     assert a.tick() is None, "tick nie moze zbudowac ani wyslac klatki"
@@ -31,8 +31,8 @@ def test_pierwsze_dane_otwieraja_rysowanie():
 
 
 def test_po_uplywie_progu_malujemy_karte_stanu():
-    """Gdy dane nie przychodza wcale, w koncu trzeba powiedziec to wprost —
-    milczacy panel z godzinnymi liczbami klamie bardziej niz komunikat."""
+    """When no data arrives at all, it has to be said out loud in the end —
+    a silent panel with hour-old numbers lies more than a message does."""
     a = app_mod.App(cfg())
     a.started -= a.cfg.splash_after_sec + 1
     assert not a.holding()
@@ -40,9 +40,10 @@ def test_po_uplywie_progu_malujemy_karte_stanu():
 
 
 def test_nieznane_zdarzenie_jest_no_opem():
-    """Na tym stoi cala zgodnosc wstecz strumienia: serwer moze dolozyc ramke, ktorej
-    ten panel nie zna, i nie wolno jej ani ruszyc modelu, ani udac swiezych danych.
-    Dopoki nie bylo tego testu, wlasnosc byla przypadkiem konstrukcji, nie umowa."""
+    """The whole backward compatibility of the stream rests on this: the server may add
+    a frame this panel does not know, and it must neither move the model nor pass for
+    fresh data. Until this test existed, the property was an accident of the
+    construction, not an agreement."""
     a = app_mod.App(cfg())
     a.on_event("cos-czego-nie-znamy", {"serverNow": "2026-08-05T21:07:00Z",
                                        "account": {"uuid": "a"}})
@@ -53,8 +54,9 @@ def test_nieznane_zdarzenie_jest_no_opem():
 
 
 def test_niezgodny_kontrakt_nie_czeka_na_prog():
-    """Jedyna rzecz, ktora wiemy od razu i ktora uniewaznia poprzedni obraz:
-    skoro nie rozumiemy ramek, stare liczby na szkle sa juz tylko dekoracja."""
+    """The one thing we know right away that invalidates the previous image:
+    since we do not understand the frames, the old numbers on the glass are
+    decoration and nothing more."""
     a = app_mod.App(cfg())
     a.contract_mismatch = 4
     assert not a.holding()

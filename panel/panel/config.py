@@ -215,9 +215,9 @@ class Config:
         """Returns a list of problems. An empty list = a usable configuration."""
         problems = []
         if not self.stream_token:
-            problems.append("brak stream_token")
+            problems.append("missing stream_token")
         if not self.stream_url:
-            problems.append("brak stream_url")
+            problems.append("missing stream_url")
 
         seen = set()
         for slot in ("account_1", "account_2"):
@@ -225,23 +225,23 @@ class Config:
             if raw is None:
                 continue
             if not isinstance(raw, dict):
-                problems.append("%s musi byc obiektem {\"uuid\": ...}" % slot)
+                problems.append("%s must be an object {\"uuid\": ...}" % slot)
                 continue
             uuid = (raw.get("uuid") or "").strip()
             if not uuid:
-                problems.append("%s bez uuid" % slot)
+                problems.append("%s has no uuid" % slot)
             elif uuid in seen:
-                problems.append("%s powtarza uuid z poprzedniego slotu" % slot)
+                problems.append("%s repeats the uuid from the previous slot" % slot)
             else:
                 seen.add(uuid)
         if not seen:
-            problems.append("nie wskazano zadnego konta (account_1 / account_2)")
+            problems.append("no account specified (account_1 / account_2)")
 
         self._check_panels(problems)
 
         dev = self._d.get("device")
         if dev is not None and not isinstance(dev, dict):
-            problems.append("device musi byc obiektem, np. "
+            problems.append("device must be an object, e.g. "
                             "{\"port_path\": \"3.4\"}")
         elif isinstance(dev, dict) and "location" in dev:
             # The `location` selector took "Port_#0004.Hub_#0005" from the registry,
@@ -250,10 +250,10 @@ class Config:
             # migration is out: it would take guessing which module was meant, and
             # that is exactly what is being got rid of here.
             problems.append(
-                "device.location (\"%s\") nie jest juz obslugiwane — czlon "
-                "Hub_# to licznik enumeracji, ktory przeskakuje bez ruszania "
-                "wtyczki. Uruchom `python -m panel --list` i wpisz podany "
-                "port_path" % dev.get("location"))
+                "device.location (\"%s\") is no longer supported — the Hub_# "
+                "part is an enumeration counter that jumps without the plug "
+                "being touched. Run `python -m panel --list` and enter the "
+                "port_path it reports" % dev.get("location"))
         # An upper bound ONLY where something states one: 0..7 is the range of the
         # PROPERTY_BRIGHTNESS property in the AX206 firmware. The rest get the floor
         # alone, because a ceiling would have to be invented — and an invented
@@ -280,31 +280,31 @@ class Config:
 
         if "panels" in self._raw and "device" in self._raw:
             problems.append(
-                "panel.json ma naraz `device` (stary ksztalt) i `panels` (nowy) "
-                "— zostaw jedno; scalanie ich znaczyloby zgadywanie")
+                "panel.json has both `device` (the old shape) and `panels` (the "
+                "new one) — leave one; merging them would mean guessing")
         if "panels" in self._raw and "brightness" in self._raw:
             problems.append(
-                "jasnosc jest teraz per panel, w kazdym wpisie `panels` — skale "
-                "sterownikow sa rozne, wiec gorne `brightness` byloby dwuznaczne")
+                "brightness is now per panel, in each `panels` entry — driver "
+                "scales differ, so a top-level `brightness` would be ambiguous")
 
         raw = self._raw.get("panels")
         if raw is not None and not isinstance(raw, list):
-            problems.append("panels musi byc lista obiektow")
+            problems.append("panels must be a list of objects")
             return
         entries = self._d.get("panels") or []
         if not entries:
-            problems.append("nie wskazano zadnego panelu (`panels`)")
+            problems.append("no panel specified (`panels`)")
             return
 
         seen = {}
         for i, entry in enumerate(entries):
             where = "panels[%d]" % i
             if not isinstance(entry, dict):
-                problems.append("%s musi byc obiektem" % where)
+                problems.append("%s must be an object" % where)
                 continue
             backend = entry.get("backend")
             if backend not in REGISTRY:
-                problems.append("%s: nieznany backend %r (znam: %s)"
+                problems.append("%s: unknown backend %r (known: %s)"
                                 % (where, backend, ", ".join(known())))
                 continue
             mod = REGISTRY[backend]
@@ -314,10 +314,11 @@ class Config:
                 # migrate: `Hub_#NNNN` inside it is an enumeration counter that
                 # jumped without anyone touching a plug.
                 problems.append(
-                    "%s.location (\"%s\") nie jest juz obslugiwane — czlon Hub_# "
-                    "to licznik enumeracji, ktory przeskakuje bez ruszania "
-                    "wtyczki. Uruchom `python -m panel --list` i wpisz podany "
-                    "port_path" % (where, entry.get("location")))
+                    "%s.location (\"%s\") is no longer supported — the Hub_# "
+                    "part is an enumeration counter that jumps without the "
+                    "plug being touched. Run `python -m panel --list` and "
+                    "enter the port_path it reports"
+                    % (where, entry.get("location")))
                 continue
 
             extra = [k for k in entry
@@ -327,14 +328,14 @@ class Config:
                 # only device there is" - a typo quietly aimed the client at
                 # whatever happened to be plugged in.
                 problems.append(
-                    "%s: nieznane klucze %s; dla %s wolno: %s"
+                    "%s: unknown keys %s; for %s the allowed ones are: %s"
                     % (where, ", ".join(sorted(extra)), backend,
                        ", ".join(mod.SELECTOR_KEYS)))
 
             key = (backend, tuple(sorted((k, str(v)) for k, v in entry.items()
                                          if k in mod.SELECTOR_KEYS)))
             if key in seen and key[1]:
-                problems.append("%s wskazuje to samo urzadzenie co %s"
+                problems.append("%s points at the same device as %s"
                                 % (where, seen[key]))
             seen.setdefault(key, where)
 
@@ -369,14 +370,14 @@ class Config:
         try:
             value = int(raw)
         except (TypeError, ValueError, OverflowError):
-            problems.append("%s.rotate musi byc liczba stopni (jest: %r)"
+            problems.append("%s.rotate must be a number of degrees (got: %r)"
                             % (where, raw))
             return
         if value not in ROTATIONS:
             problems.append(
-                "%s.rotate=%r — wolno tylko %s. Cwierc obrotu wymagalaby ukladu "
-                "pionowego (320x480), a rysowany jest jeden uklad 3:2"
-                % (where, raw, " albo ".join(str(v) for v in ROTATIONS)))
+                "%s.rotate=%r — only %s allowed. A quarter turn would require a "
+                "portrait layout (320x480), and only one 3:2 layout is drawn"
+                % (where, raw, " or ".join(str(v) for v in ROTATIONS)))
 
     @staticmethod
     def _panel_number(problems, name, raw, scale):
@@ -388,10 +389,10 @@ class Config:
         try:
             value = int(raw)
         except (TypeError, ValueError, OverflowError):
-            problems.append("%s musi byc liczba (jest: %r)" % (name, raw))
+            problems.append("%s must be a number (got: %r)" % (name, raw))
             return
         if not (scale.lo <= value <= scale.hi):
-            problems.append("%s poza zakresem %s dla tego sterownika"
+            problems.append("%s is out of the range %s for this driver"
                             % (name, scale.describe()))
 
     def _number(self, problems, name, kind, low, high=None):
@@ -410,20 +411,20 @@ class Config:
         except (TypeError, ValueError, OverflowError):
             # OverflowError, because json.load accepts bare `Infinity` and `NaN`,
             # and int(float("inf")) is neither a TypeError nor a ValueError.
-            problems.append("%s musi byc liczba (jest: %r)" % (name, raw))
+            problems.append("%s must be a number (got: %r)" % (name, raw))
             return
         if isinstance(value, float) and not math.isfinite(value):
             # `Infinity` and `NaN` pass through float() and through EVERY range
             # comparison, so without this line they fall into the tick loop:
             # wait(inf) raises OverflowError there, and wait(nan) returns at once
             # and turns the timing into a busy loop.
-            problems.append("%s musi byc liczba skonczona (jest: %r)" % (name, raw))
+            problems.append("%s must be a finite number (got: %r)" % (name, raw))
             return
         if value < low:
-            problems.append("%s musi byc >= %s" % (name, low))
+            problems.append("%s must be >= %s" % (name, low))
             return
         if high is not None and value > high:
-            problems.append("%s poza zakresem %s..%s" % (name, low, high))
+            problems.append("%s is out of the range %s..%s" % (name, low, high))
             return
         # The value is stored AFTER conversion. Without this the check was only
         # apparent: "width": "480" passed validation, because int("480") succeeds —

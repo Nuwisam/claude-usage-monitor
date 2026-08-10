@@ -1,7 +1,7 @@
-"""Uklad, kolory i sam render. Bez sprzetu.
+"""The layout, the colors and the render itself. No hardware.
 
-Testy pilnuja rzeczy, ktore na 480x320 psuja sie po cichu: obciete ogonki,
-prostokaty wychodzace poza ekran, kolory ginace po kwantyzacji 5/6/5.
+The tests guard the things that break quietly on 480x320: clipped tails,
+rectangles running off the screen, colors lost to the 5/6/5 quantization.
 """
 import pytest
 
@@ -11,7 +11,7 @@ from panel import draw, layout as L, render, theme, view
 from tests import fixtures
 
 
-# --- geometria --------------------------------------------------------------
+# --- geometry ---------------------------------------------------------------
 
 def test_pasy_dziela_ekran_bez_nachodzenia():
     lay = L.Layout(480, 320)
@@ -22,8 +22,8 @@ def test_pasy_dziela_ekran_bez_nachodzenia():
 
 
 def test_kredyty_nie_wchodza_na_tydzien():
-    """Wiersz kredytow jest przyklejony do dolu pasa. Gdyby pas byl za niski,
-    nachodzilby na odliczanie tygodnia i nikt by tego nie zauwazyl na PNG."""
+    """The credits row is glued to the bottom of the band. Were the band too short,
+    it would run onto the week countdown and nobody would notice that on a PNG."""
     for band in L.Layout(480, 320).bands:
         assert band.fits, "kredyty nachodza na tydzien"
 
@@ -43,11 +43,11 @@ def test_kolumna_liczb_i_blok_nie_nachodza():
     assert band.num_right < band.block_x0
 
 
-# --- typografia -------------------------------------------------------------
+# --- typography -------------------------------------------------------------
 
 def test_trzycyfrowa_wartosc_miesci_sie_w_kolumnie():
-    """Makieta schodzi ze 42 na 34 px przy 100% wlasnie dlatego. Gdyby nie,
-    liczba rozepchnelaby kolumne i paski przestalyby startowac rowno."""
+    """That is exactly why the mockup drops from 42 to 34 px at 100%. Without it
+    the number would push the column apart and the bars would stop starting level."""
     f_big = draw.font(L.F_SES_NUM)
     f_tight = draw.font(L.F_SES_NUM_TIGHT)
     f_pct = draw.font(L.F_SES_PCT)
@@ -73,7 +73,7 @@ def test_ellipsize_nie_przekracza_szerokosci():
     assert draw.ellipsize("krotki", f, 300) == "krotki", "krotkie zostaja bez zmian"
 
 
-# --- kolory -----------------------------------------------------------------
+# --- colors -----------------------------------------------------------------
 
 @pytest.mark.parametrize("fg,nazwa", [
     (theme.TEXT, "tekst"), (theme.TEXT_50, "plan"), (theme.TEXT_28, "kontur"),
@@ -82,9 +82,9 @@ def test_ellipsize_nie_przekracza_szerokosci():
     (theme.SURFACE, "kafel szczegolu"), (theme.SUNKEN, "listwa"),
 ])
 def test_kolory_przezywaja_kwantyzacje(fg, nazwa):
-    """Panel ma 5/6/5 bitow. Najbardziej zagrozony jest kreskowany kontur
-    (28% bieli na prawie czarnym tle) — gdyby zlal sie z tlem, stan `unknown`
-    stalby sie niewidoczny."""
+    """The panel has 5/6/5 bits. The most endangered one is the dashed outline
+    (28% white on a nearly black background) — were it to blend into the background,
+    the `unknown` state would become invisible."""
     assert theme.to_rgb565_pair(fg) != theme.to_rgb565_pair(theme.BG), \
         "%s ginie na tle po kwantyzacji" % nazwa
 
@@ -105,12 +105,12 @@ def test_kolory_przezywaja_kwantyzacje(fg, nazwa):
     (theme.SUNKEN, theme.BG, "listwa na tle"),
 ])
 def test_pary_kolorow_przezywaja_kwantyzacje(fg, bg, nazwa):
-    """Osobny test od powyzszego, bo tamten porownuje WYLACZNIE z `theme.BG`.
+    """A separate test from the one above, because that one compares SOLELY with `theme.BG`.
 
-    Marginalna para karty to `ACCENT_800` na `BG` (roznica 42,13,4 przed kwantyzacja),
-    a nie tekst na banerze. Pary z `SURFACE` i `SUNKEN` sa tu dlatego, ze kafel szczegolu
-    i listwa trybu roznia sie od tla o kilka jednostek — gdyby zlaly sie po kwantyzacji,
-    karta stracilaby caly podzial na pola.
+    The card's marginal pair is `ACCENT_800` on `BG` (a difference of 42, 13, 4 before
+    quantization), not the text on the banner. The pairs with `SURFACE` and `SUNKEN` are here
+    because the detail tile and the mode strip differ from the background by a few units —
+    were they to blend after quantization, the card would lose its whole division into fields.
     """
     assert theme.to_rgb565_pair(fg) != theme.to_rgb565_pair(bg), \
         "%s znika po kwantyzacji" % nazwa
@@ -133,8 +133,8 @@ def test_kazda_scena_renderuje_sie(scene):
 
 
 def test_ta_sama_scena_daje_ten_sam_ladunek():
-    """Na tym stoi cala oszczednosc: klatke wysylamy tylko, gdy rozni sie od
-    poprzedniej. Gdyby render byl niedeterministyczny, panel nadawalby non stop."""
+    """The whole saving rests on this: we send a frame only when it differs from the
+    previous one. Were the render non-deterministic, the panel would transmit non-stop."""
     from panel import fmt
     now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
     def zbuduj():
@@ -158,8 +158,8 @@ def test_pusty_slot_nie_wybucha():
 
 
 def test_trzy_stany_lacza_daja_trzy_rozne_obrazy():
-    """Roznica RYSUNKIEM, nie kolorem: gdy strumien padnie, wiek odczytu rosnie
-    obu kontom naraz i wyglada to identycznie jak 'przestales pracowac'."""
+    """The difference is in the DRAWING, not in the color: when the stream dies, the
+    reading age grows on both accounts at once and that looks exactly like 'the work stopped'."""
     from panel import fmt
     now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
     def klatka(link):
@@ -171,10 +171,10 @@ def test_trzy_stany_lacza_daja_trzy_rozne_obrazy():
 
 
 def test_wiek_bierze_starsza_z_dwoch_serii():
-    """Etykieta wieku jest tu JEDYNYM nosnikiem swiezosci i stoi tylko przy
-    wierszu sesji. Backend potwierdza kazda serie osobno, wiec gdyby brala
-    stempel sesji, panel pisalby "1 min temu" obok pewnie wygladajacego paska
-    tygodnia sprzed trzech dni."""
+    """The age label is the ONLY carrier of freshness here and stands next to the
+    session row alone. The backend confirms each series separately, so were it to take
+    the session stamp, the panel would write "1 min ago" beside a confidently drawn
+    week bar from three days back."""
     from panel import fmt
     now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
     acc = fixtures.account(
@@ -192,16 +192,18 @@ def test_wiek_bierze_starsza_z_dwoch_serii():
     assert render.band_state(acc, now_ms=now_ms).ago == "3 d 0 h ago"
 
 
-# Pakowanie pikseli ma swoj plik: tests/test_pixels.py.
+# Pixel packing has a file of its own: tests/test_pixels.py.
 
 
 def test_wycofane_kredyty_zostaja_narysowane():
-    """Regresja na realny przypadek: organizacja odcina kredyty, szczebel schodzi na `off`
-    i wiersz kwot ZNIKAL z pasa. Panel gubil wtedy jedyna liczbe, ktora o wydatkach mial —
-    a kwoty przychodza dalej, bo backend podaje je z ostatniego pomiaru.
+    """Regression on a real case: the organization cuts credits off, the rung drops to `off`
+    and the amounts row USED TO VANISH from the band. The panel then lost the only number it had
+    about spending — and the amounts keep coming, because the backend gives them from the last
+    measurement.
 
-    Porownujemy ladunki: wersja z kwotami MUSI dac inny obraz niz `off` bez kwot, a taki
-    sam jak `on` z tymi samymi kwotami — bo rysunek jest ten sam, rozni sie tylko stan.
+    We compare payloads: the version with amounts MUST give a different image than `off` without
+    amounts, and the same one as `on` with those same amounts — because the drawing is the same,
+    only the state differs.
     """
     from panel import fmt
     now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
@@ -226,12 +228,12 @@ def test_wycofane_kredyty_zostaja_narysowane():
     assert wycofane == dzialajace, "powodu wycofania panel nie rysuje; kwoty to kwoty"
 
 
-# --- lamanie tekstu ---------------------------------------------------------
+# --- text wrapping ----------------------------------------------------------
 
 @pytest.mark.parametrize("tekst,linie", [
     ("krotki", 1),
-    # Ten `detail` miesci sie w JEDNEJ linii kafla (420 px) i kafel ma sie wtedy
-    # skrocic, a nie zostawic pustego pola — patrz AlertSolo.detail_box.
+    # This `detail` fits in ONE line of the tile (420 px) and the tile is then to
+    # shorten itself rather than leave an empty field — see AlertSolo.detail_box.
     ("Dump scope: session only, session and week, or all the limit windows", 1),
     ("A 6-step plan: layout.Alert, render._alert, AlertState, geometry and "
      "quantization tests, plus one more sentence for good measure", 2),
@@ -239,8 +241,8 @@ def test_wycofane_kredyty_zostaja_narysowane():
     ("", 0),
 ])
 def test_wrap_lines_nie_przekracza_limitow(tekst, linie):
-    """`detail` bywa zdaniem, a kafel ma dwie linie i szerokosc 420 px. Ani jedno,
-    ani drugie nie moze zalezec od tresci."""
+    """`detail` is sometimes a sentence, and the tile has two lines and a width of
+    420 px. Neither of those may depend on the content."""
     f = draw.font(12)
     out = draw.wrap_lines(tekst, f, 420, 2)
     assert len(out) == linie
@@ -255,7 +257,7 @@ def test_wrap_lines_obcina_ostatnia_linie_wielokropkiem():
 
 
 def test_wrap_lines_znosi_slowo_dluzsze_niz_linia():
-    """Regresja: bez tego jedno dlugie slowo albo znikalo, albo zapetlalo funkcje."""
+    """Regression: without this one long word either vanished or looped the function."""
     f = draw.font(12)
     out = draw.wrap_lines("a" * 400, f, 100, 2)
     assert len(out) == 1 and draw.text_width(out[0], f) <= 100
