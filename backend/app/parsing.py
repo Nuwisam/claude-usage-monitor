@@ -380,7 +380,7 @@ def parse_usage(payload: Any, fresh_covered: frozenset[str] = frozenset()) -> Pa
     nulls: set[str] = set()
 
     if not isinstance(payload, dict):
-        return ParseResult([], seen, nulls, ["payload nie jest obiektem"])
+        return ParseResult([], seen, nulls, ["payload is not an object"])
 
     for key, val in payload.items():
         seen.add(key)
@@ -395,10 +395,10 @@ def parse_usage(payload: Any, fresh_covered: frozenset[str] = frozenset()) -> Pa
             continue
         if not isinstance(val, dict):
             # e.g. member_dashboard_available=bool lands here only if the schema changes
-            problems.append("klucz %s ma nieoczekiwany typ %s" % (key, type(val).__name__))
+            problems.append("key %s has an unexpected type %s" % (key, type(val).__name__))
             continue
         if "utilization" not in val:
-            problems.append("bucket %s bez pola utilization" % key)
+            problems.append("bucket %s without a utilization field" % key)
             continue
         skey = "bucket:%s" % key
         extra = {k: v for k, v in val.items() if k not in ("utilization", "resets_at")}
@@ -414,11 +414,11 @@ def parse_usage(payload: Any, fresh_covered: frozenset[str] = frozenset()) -> Pa
     # --- 2. limits[] ------------------------------------------------------
     limits = payload.get("limits")
     if limits is not None and not isinstance(limits, list):
-        problems.append("limits nie jest lista")
+        problems.append("limits is not a list")
         limits = None
     for i, lim in enumerate(limits or []):
         if not isinstance(lim, dict):
-            problems.append("limits[%d] nie jest obiektem" % i)
+            problems.append("limits[%d] is not an object" % i)
             continue
         scope = lim.get("scope") or {}
         model = ((scope.get("model") or {}).get("display_name")
@@ -463,7 +463,7 @@ def parse_usage(payload: Any, fresh_covered: frozenset[str] = frozenset()) -> Pa
             extra={k: v for k, v in eu.items() if k != "utilization"},
         ))
     elif eu is not None:
-        problems.append("extra_usage nie jest obiektem")
+        problems.append("extra_usage is not an object")
 
     # --- 4. spend — on Team this IS the binding limit ----------------------
     sp = payload.get("spend")
@@ -484,7 +484,7 @@ def parse_usage(payload: Any, fresh_covered: frozenset[str] = frozenset()) -> Pa
             extra={k: v for k, v in sp.items() if k not in ("percent", "severity")},
         ))
     elif sp is not None:
-        problems.append("spend nie jest obiektem")
+        problems.append("spend is not an object")
 
     if fresh_covered:
         for o in obs:

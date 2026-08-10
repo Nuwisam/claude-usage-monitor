@@ -1,16 +1,16 @@
-"""Kaskada limitow: 5 h -> tydzien -> kredyty -> twardy blok.
+"""The limit cascade: 5 h -> week -> credits -> hard block.
 
-CZYSTE FUNKCJE — zero I/O. Wejsciem sa fakty o seriach, wyjsciem cztery szczeble.
+PURE FUNCTIONS — zero I/O. The input is facts about series, the output four rungs.
 
-Dlaczego to jest w backendzie, a nie w UI: to wiedza dziedzinowa, nie uklad pikseli.
-Zaobserwowana na koncie Team: przed limitem 5 h i tygodniowym wszystko dziala normalnie,
-potem praca idzie z kredytow, a na koncu jest twardy blok na limicie wydatkow. Zeby to
-odczytac, trzeba siegnac do nietypowanych blokow `spend` i `extra_usage` — i wlasnie
-dlatego ma to testy tutaj, a nie sklejanie w komponencie React.
+Why this is in the backend and not in the UI: it is domain knowledge, not a pixel layout.
+Observed on the Team account: before the 5 h and the weekly limit everything works normally,
+then the work runs on credits, and at the end there is a hard block on the spend limit. To
+read that, one has to reach into the untyped `spend` and `extra_usage` blocks — and that is
+exactly why it has tests here instead of being glued together in a React component.
 
-Jedna zasada ponad wszystkimi: **"off" i "unknown" to dwie rozne rzeczy.** "Kredyty
-wylaczone" jest informacja, "nie wiem, czy masz kredyty" jest brakiem informacji. Zlanie
-ich w jedno pokazywaloby pewna sciezke wyjscia z limitu, ktorej moze nie byc.
+One rule above all others: **"off" and "unknown" are two different things.** "Credits are
+off" is information, "I do not know whether you have credits" is an absence of information.
+Merging them into one would show a certain way out of the limit that may not be there.
 """
 from __future__ import annotations
 
@@ -25,18 +25,18 @@ SESSION, WEEKLY, CREDITS, HARD_BLOCK = "session", "weekly", "credits", "hard_blo
 
 @dataclass
 class SeriesFacts:
-    """Wycinek stanu serii, ktory kaskada potrzebuje. Budowany z SeriesState + UsageSeries
-    PRZED filtrowaniem na potrzeby widoku — `extra:usage` na koncie bez kredytow ma
-    utilization = null i wypada z `series[]`, a kaskada wlasnie z niego czyta.
+    """The slice of series state the cascade needs. Built from SeriesState + UsageSeries
+    BEFORE the filtering done for the view — `extra:usage` on an account without credits has
+    utilization = null and drops out of `series[]`, and the cascade reads from exactly that.
     """
     series_key: str
     source: str
     kind: str | None = None
     bucket_key: str | None = None
-    utilization: float | None = None       # ZMIERZONA, bez wnioskowania
+    utilization: float | None = None       # MEASURED, without inference
     is_active: bool | None = None
     extra: dict[str, Any] | None = None
-    # Powod, dla ktorego miernik tej serii nie dziala (patrz parsing.meter_withdrawn).
+    # The reason this series' meter does not work (see parsing.meter_withdrawn).
     unavailable_reason: str | None = None
 
 
@@ -62,7 +62,7 @@ def _money(v: Any) -> tuple[int | None, str | None, int | None]:
 
 
 def _flag(extra: dict[str, Any] | None, key: str) -> bool | None:
-    """Tylko prawdziwy bool cokolwiek znaczy. Brak pola => None, czyli 'nie wiem'."""
+    """Only a real bool means anything. A missing field => None, that is 'I do not know'."""
     if not isinstance(extra, dict):
         return None
     v = extra.get(key)
@@ -82,15 +82,15 @@ def build_cascade(facts: list[SeriesFacts]) -> list[CascadeRung]:
     spend = _pick(facts, source="spend")
     eu = _pick(facts, source="extra_usage")
 
-    # --- kredyty ----------------------------------------------------------
-    # Powod wycofania ma PIERWSZENSTWO przed flaga: gdy organizacja zamyka brame, licznik
-    # jest wyzerowany, a my mamy w rekach jedyny sygnal, ktory to od zwyklego "kredytow
-    # nigdy nie bylo" odroznia. Bez tego oba stany wygladalyby identycznie.
+    # --- credits ----------------------------------------------------------
+    # The withdrawal reason OUTRANKS the flag: when the organization shuts the gate, the meter
+    # is zeroed, and we hold the only signal that tells this apart from a plain "there never
+    # were any credits". Without it both states would look identical.
     reason = ((spend.unavailable_reason if spend else None)
               or (eu.unavailable_reason if eu else None))
 
-    # Dwa niezalezne zrodla tej samej prawdy: `spend.enabled` i `extra_usage.is_enabled`.
-    # Bierzemy pierwsze, ktore jest prawdziwym boolem; brak obu => nie wiemy.
+    # Two independent sources of the same truth: `spend.enabled` and `extra_usage.is_enabled`.
+    # We take the first one that is a real bool; neither present => we do not know.
     enabled = _flag(spend.extra if spend else None, "enabled")
     if enabled is None:
         enabled = _flag(eu.extra if eu else None, "is_enabled")
@@ -100,9 +100,9 @@ def build_cascade(facts: list[SeriesFacts]) -> list[CascadeRung]:
     used_minor, used_cur, used_exp = _money((spend.extra or {}).get("used") if spend else None)
     lim_minor, lim_cur, lim_exp = _money((spend.extra or {}).get("limit") if spend else None)
     if lim_minor is None:
-        # `cap` bywa alternatywna nazwa gornej granicy, ale w REALNEJ odpowiedzi jest
-        # zagniezdzony: {"credits": null, "money": {"amount_minor": ...}}. Plaski odczyt
-        # bral wiec sam zewnetrzny slownik i zawsze wychodzil pusty.
+        # `cap` is sometimes an alternative name for the upper bound, but in a REAL response
+        # it is nested: {"credits": null, "money": {"amount_minor": ...}}. A flat read
+        # therefore took the outer dictionary alone and always came out empty.
         cap = (spend.extra or {}).get("cap") if spend else None
         if isinstance(cap, dict) and isinstance(cap.get("money"), dict):
             cap = cap["money"]
@@ -118,8 +118,8 @@ def build_cascade(facts: list[SeriesFacts]) -> list[CascadeRung]:
         currency=used_cur or lim_cur, exponent=used_exp if used_exp is not None else lim_exp,
     )
 
-    # --- twardy blok ------------------------------------------------------
-    # Gdy kredyty dzialaja, blok stoi na limicie wydatkow. Gdy nie — zaraz za tygodniowym.
+    # --- hard block -------------------------------------------------------
+    # When credits work, the block stands at the spend limit. When not — right after the weekly.
     if enabled is None:
         hard = CascadeRung(key=HARD_BLOCK, state=UNKNOWN)
     elif enabled:
@@ -127,9 +127,9 @@ def build_cascade(facts: list[SeriesFacts]) -> list[CascadeRung]:
                            currency=lim_cur or used_cur,
                            exponent=lim_exp if lim_exp is not None else used_exp)
     else:
-        # Przy wycofanym mierniku prog istnieje, ale jest POZA kontraktem: sufit organizacji
-        # nie ma w odpowiedzi ani kwoty, ani procentu, ani `resets_at`. `reason` jest tu
-        # jedyna trescia, jaka mozemy o nim podac.
+        # With a withdrawn meter the threshold exists, but it is OUTSIDE the contract: the
+        # organization ceiling has neither an amount, nor a percent, nor `resets_at` in the
+        # response. `reason` is here the only content we can give about it.
         hard = CascadeRung(key=HARD_BLOCK, state=ON, reason=reason)
 
     rungs = [_window_rung(SESSION, session), _window_rung(WEEKLY, weekly), credits, hard]
@@ -139,7 +139,7 @@ def build_cascade(facts: list[SeriesFacts]) -> list[CascadeRung]:
 
 def _exhausted(r: CascadeRung, eu: SeriesFacts | None) -> bool:
     if r.key == HARD_BLOCK:
-        return False                      # szczebel terminalny, nie ma z niego zejscia
+        return False                      # terminal rung, there is no descending from it
     if r.key == CREDITS:
         if _flag(eu.extra if eu else None, "spend_limit_reached") is True:
             return True
@@ -151,9 +151,9 @@ def _exhausted(r: CascadeRung, eu: SeriesFacts | None) -> bool:
 
 def _mark_current(rungs: list[CascadeRung], session: SeriesFacts | None,
                   weekly: SeriesFacts | None, eu: SeriesFacts | None) -> None:
-    """`is_active` z limits[] mowi, ktore okno wiaze. Jesli jest wyczerpane, praca
-    faktycznie idzie ze szczebla nizej — to wlasnie zaobserwowany przypadek Team:
-    tygodniowy jest `is_active` i ma 100%, a realnie leci z kredytow.
+    """`is_active` from limits[] says which window binds. If it is exhausted, the work
+    actually runs from the rung below — that is exactly the observed Team case: the weekly
+    one is `is_active` and stands at 100%, while in reality it runs on credits.
     """
     start = 0
     if weekly is not None and weekly.is_active:
@@ -161,25 +161,25 @@ def _mark_current(rungs: list[CascadeRung], session: SeriesFacts | None,
     elif session is not None and session.is_active:
         start = 0
     elif session is None or session.utilization is None:
-        start = 1                          # bez okna 5 h zaczynamy od tygodniowego
+        start = 1                          # with no 5 h window we start from the weekly
 
     i, descended = start, False
     while i < len(rungs):
         r = rungs[i]
-        if r.state == OFF:                 # wylaczony szczebel sie pomija
+        if r.state == OFF:                 # a rung that is off gets skipped
             i, descended = i + 1, True
             continue
         if r.state == UNKNOWN:
-            break                          # nie zgadujemy — UI napisze "nie wiem"
+            break                          # we do not guess — the UI will write "unknown"
         if _exhausted(r, eu):
             i, descended = i + 1, True
             continue
         break
     if i >= len(rungs):
         return
-    # Na nieznanym szczeblu stajemy tylko wtedy, gdy REALNIE tu zeszlismy z czegos znanego
-    # ("tygodniowy wyczerpany, co dalej — nie wiem"). Przy zerowej wiedzy o wszystkich
-    # szczeblach nie wskazujemy zadnego, bo to bylo by zgadywanie.
+    # We stop on an unknown rung only when we REALLY descended here from something known
+    # ("the weekly one is exhausted, what next — I do not know"). With zero knowledge about
+    # all the rungs we point at none, because that would be guessing.
     if rungs[i].state == UNKNOWN and not descended:
         return
     rungs[i].is_current = True

@@ -22,7 +22,7 @@ _SECRETS = re.compile(
 
 
 def _redact(text: str) -> str:
-    return _SECRETS.sub("[ZREDAGOWANO]", text)
+    return _SECRETS.sub("[REDACTED]", text)
 
 
 def _sink(message) -> None:
