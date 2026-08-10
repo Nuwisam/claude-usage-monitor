@@ -78,25 +78,26 @@ def bye_frame(reason: str) -> str:
 
 
 # --------------------------------------------------------------------------- alerts
-# Sesje, ktore stanely i czekaja na czlowieka. IN-PROCESS, bez bazy — stan z definicji
-# chwilowy, a tabela oznaczalaby migracje i cykl zycia wierszy dla czegos, co gasnie,
-# gdy ktos kliknie "tak".
+# Sessions that have stalled and are waiting for a human. IN-PROCESS, no database — the
+# state is momentary by definition, and a table would mean a migration and a row lifecycle
+# for something that goes out the moment somebody clicks "yes".
 #
-# UWAGA, restart procesu NIE jest tu przezroczysty i wczesniej stalo tu zdanie, ze jest.
-# Mapa idzie do zera, ale sonda o tym nie wie: ona porownuje swoj znacznik z WLASNYM
-# katalogiem stanu, a te sie zgadzaja, wiec nie ma powodu wysylac czegokolwiek. Zywa blokada
-# nie zostaje wiec ogloszona ponownie — az do najblizszej ZMIANY zbioru na maszynie.
-# Zeby to naprawic, serwer musialby powiedziec sondzie, co ma (np. w odpowiedzi na POST
-# pomiaru, ktory i tak leci co minute) — dopoki tego nie ma, jest to znane ograniczenie.
+# NOTE, a process restart is NOT transparent here, and a sentence claiming otherwise used
+# to stand in this spot. The map goes to zero, but the probe does not know that: it compares
+# its own stamp against its OWN state directory, and those two agree, so it has no reason to
+# send anything. A live block is therefore not announced again — not until the next CHANGE
+# of the set on that machine. To fix it, the server would have to tell the probe what it
+# holds (e.g. in the reply to the measurement POST, which goes out every minute anyway) —
+# until that exists, this is a known limitation.
 #
-# Klucz to NAZWA MASZYNY z tokenu ingestu, a wartoscia jest CALY biezacy zbior tej
-# maszyny. Kazdy POST zastepuje wpis maszyny w calosci, wiec nie ma tu stanu do
-# uzgadniania i nie ma sposobu, zeby zgubione "wyjscie" zostawilo sierote.
+# The key is the MACHINE NAME from the ingest token, and the value is that machine's ENTIRE
+# current set. Every POST replaces the machine's entry as a whole, so there is no state to
+# reconcile here and no way for a lost "exit" to leave an orphan behind.
 ALERTS: dict[str, list[SessionAlert]] = {}
 
-# Sufit wieku przy skladaniu snapshotu. Writer ma wlasny TTL (`blocked_ttl_sec`), ale
-# maszyna, ktora zniknela w trakcie blokady, nigdy juz nie przysle korekty — bez tego
-# jej wpis wisialby do restartu procesu.
+# Age ceiling applied when the snapshot is assembled. The writer has its own TTL
+# (`blocked_ttl_sec`), but a machine that vanished mid-block will never send a correction —
+# without this its entry would hang there until the process restarts.
 ALERT_MAX_AGE_SEC = 86400.0
 
 
@@ -112,9 +113,9 @@ def _aware(v: datetime) -> datetime:
 
 
 def current_alerts(*, now: datetime) -> list[SessionAlert]:
-    """Zbior ze wszystkich maszyn, najstarsze pierwsze. Wpis bez `since` przechodzi:
-    brak stempla znaczy 'nie wiem, jak dlugo', nie 'przeterminowany' — i laduje na
-    koncu, bo o kolejnosci ma decydowac wiek, a nie brak wiedzy o nim."""
+    """The set from every machine, oldest first. An entry without `since` gets through:
+    a missing stamp means 'no idea how long', not 'expired' — and it lands at the
+    end, because order is to be decided by age, not by the absence of knowledge of it."""
     ref = _aware(now)
     out: list[SessionAlert] = []
     for alerts in ALERTS.values():
