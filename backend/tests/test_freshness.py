@@ -1,7 +1,7 @@
-"""Testy tabelaryczne czterech stanow swiezosci.
+"""Table-driven tests of the four freshness states.
 
-Najwazniejszy test w projekcie to `test_dzialajacy_klient_bez_probek_daje_unknown` —
-sprawdza, ze narzedzie NIE pokaze falszywego zera, gdy sonda sie zepsuje.
+The most important test in the project is `test_dzialajacy_klient_bez_probek_daje_unknown` —
+it checks that the tool will NOT show a false zero when the probe breaks down.
 """
 from datetime import datetime, timedelta
 
@@ -23,26 +23,26 @@ def test_swieza_probka():
 
 
 def test_starsza_probka_w_trwajacym_oknie_jest_wciaz_prawdziwa():
-    """utilization nie rosnie samo z siebie, wiec wartosc sprzed godziny jest nadal
-    poprawna, dopoki okno sie nie zresetowalo."""
+    """utilization does not rise by itself, so a value from an hour ago is still
+    correct as long as the window has not reset."""
     assert freshness(NOW, m(60), NOW + timedelta(hours=1), m(60)) == STALE
 
 
 def test_po_resecie_bez_aktywnosci_wnioskujemy_zero():
-    """Okno minelo, klient milczal przez caly ten czas => nikt nic nie spalil."""
+    """The window has passed, the client was silent the whole time => nobody burned anything."""
     reset = NOW - timedelta(hours=2)
     assert freshness(NOW, m(240), reset, m(240)) == INFERRED_RESET
 
 
 def test_dzialajacy_klient_bez_probek_daje_unknown():
-    """NAJWAZNIEJSZY PRZYPADEK.
+    """THE MOST IMPORTANT CASE.
 
-    Okno sie zresetowalo, ale klient ZYL po resecie i mimo to nie ma probki dla tej serii.
-    To awaria sondy, nie brak aktywnosci. Gdybysmy wnioskowali 0%, uzytkownik odpalilby
-    duze zadanie w przekonaniu, ze ma pelny limit — i trafil w sciane.
+    The window reset, but the client was ALIVE after the reset and still there is no sample
+    for this series. That is a probe failure, not an absence of activity. Were we to infer
+    0%, the user would launch a big job believing the limit is full — and hit a wall.
     """
     reset = NOW - timedelta(hours=2)
-    ostatni_batch = NOW - timedelta(minutes=5)      # klient zyje
+    ostatni_batch = NOW - timedelta(minutes=5)      # the client is alive
     assert freshness(NOW, m(240), reset, ostatni_batch) == UNKNOWN
 
 
@@ -68,14 +68,14 @@ def test_granica_okna_swiezosci():
 @pytest.mark.parametrize("state,last,expected", [
     (LIVE, 42.0, 42.0),
     (STALE, 42.0, 42.0),
-    (INFERRED_RESET, 42.0, 0.0),      # wnioskowanie, do oznaczenia wizualnie
-    (UNKNOWN, 42.0, None),            # jedyna poprawna odpowiedz to brak liczby
+    (INFERRED_RESET, 42.0, 0.0),      # inference, to be marked visually
+    (UNKNOWN, 42.0, None),            # the only correct answer is no number
 ])
 def test_display_utilization(state, last, expected):
     assert display_utilization(state, last) == expected
 
 
 def test_unknown_nigdy_nie_zwraca_zera():
-    """Regresja na najgrozniejszy blad: UNKNOWN nie moze udawac 0%."""
+    """Regression on the most dangerous bug: UNKNOWN must not pretend to be 0%."""
     assert display_utilization(UNKNOWN, 0.0) is None
     assert display_utilization(UNKNOWN, 99.9) is None

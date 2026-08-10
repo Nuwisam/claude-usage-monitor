@@ -1,34 +1,34 @@
-"""Realne payloady z konta Team — trzy stany kredytow, zdjete z tej samej maszyny.
+"""Real payloads from a Team account — three credit states, taken from the same machine.
 
-NIE `test_*.py`, wiec pytest tego nie zbiera; testy importuja `tests.team`.
+NOT `test_*.py`, so pytest does not collect it; the tests import `tests.team`.
 
-Dwie rodziny fixture'ow, bo czytaja je dwaj rozni konsumenci:
+Two families of fixtures, because two different consumers read them:
 
-  * WYCINEK `usage` (`usage_team_*.json`) — to je `parse_usage`. Dokladnie to, co sonda
-    wysyla w polu `usage`, czyli `cachedUsageUtilization.utilization`.
-  * PELNY `.claude.json` (`claude_json_*.json`) — to czyta SONDA. Rozmiar i uklad pliku
-    sa tu czescia przypadku testowego: `_extract_block` chodzi po tekscie `text.find`-em,
-    a plik ma duplikaty kluczy roznjace sie wielkoscia liter (`z:/...` i `Z:/...`).
+  * The `usage` SLICE (`usage_team_*.json`) — this is what `parse_usage` eats. Exactly
+    what the probe sends in the `usage` field, that is `cachedUsageUtilization.utilization`.
+  * The FULL `.claude.json` (`claude_json_*.json`) — this is what the PROBE reads. The size
+    and the layout of the file are part of the test case here: `_extract_block` walks the
+    text with `text.find`, and the file has duplicate keys differing in letter case.
 
-Tozsamosci sa wyczyszczone (e-mail, UUID-y, userID, machineID, kod referencyjny, sciezki
-projektow, tresci polecen). NIETKNIETE zostaly `cachedUsageUtilization` i
-`cachedExtraUsageDisabledReason` — bajt w bajt poza samym `accountUuid`, ktory MUSI byc
-ten sam w `oauthAccount` i w `cachedUsageUtilization`, bo ingest kluczuje po nim
-(zasada 7).
+Identities are scrubbed (e-mail, UUIDs, userID, machineID, referral code, project paths,
+command bodies). LEFT UNTOUCHED are `cachedUsageUtilization` and
+`cachedExtraUsageDisabledReason` — byte for byte apart from `accountUuid` itself, which
+MUST be the same in `oauthAccount` and in `cachedUsageUtilization`, because ingest keys
+on it (rule 7).
 
-Trzy stany, ktore te pliki utrwalaja:
+The three states these files pin down:
 
   |                              | active | pool_exhausted | withdrawn                  |
   |------------------------------|--------|----------------|----------------------------|
   | spend.enabled                | true   | true           | false                      |
-  | spend.percent                | 93     | 100            | 0  <- fantom               |
-  | spend.used / limit           | 277,95 / 300,00 EUR    | 300,04 / 300,00 | 0,00 / null |
+  | spend.percent                | 93     | 100            | 0  <- phantom              |
+  | spend.used / limit           | 277.95 / 300.00 EUR    | 300.04 / 300.00 | 0.00 / null |
   | spend.disabled_reason        | null   | null           | org_level_disabled_until   |
   | extra_usage.spend_limit_reached | false | false       | true                       |
   | cachedExtraUsageDisabledReason  | null  | org_spend_cap_reached | org_level_disabled_until |
 
-Kolumna srodkowa jest tu po to, zeby pilnowac, czego zmieniac NIE WOLNO: wyczerpana
-WLASNA pula to dzialajacy licznik, ktory mowi prawde (100%), a nie wycofany miernik.
+The middle column is here to guard what MUST NOT be changed: an exhausted OWN pool is a
+working meter telling the truth (100%), not a withdrawn meter.
 """
 from __future__ import annotations
 
@@ -40,25 +40,25 @@ from typing import Any
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
-# --- rodzina A: wycinek `usage`, wejscie dla parse_usage ---------------------
+# --- family A: the `usage` slice, input for parse_usage ---------------------
 USAGE_ACTIVE = FIXTURES / "usage_team_active.json"
 USAGE_POOL_EXHAUSTED = FIXTURES / "usage_team_pool_exhausted.json"
 USAGE_WITHDRAWN = FIXTURES / "usage_team_withdrawn.json"
 
-# --- rodzina B: pelny ~/.claude.json, wejscie dla sondy ----------------------
+# --- family B: the full ~/.claude.json, input for the probe -----------------
 CLAUDE_JSON_CREDITS_OK = FIXTURES / "claude_json_credits_ok.json"
 CLAUDE_JSON_POOL_EXHAUSTED = FIXTURES / "claude_json_pool_exhausted.json"
 CLAUDE_JSON_COMPANY_EXHAUSTED = FIXTURES / "claude_json_company_exhausted.json"
 
-# (plik `.claude.json`, oczekiwany `cachedExtraUsageDisabledReason`) — trzy stany.
+# (the `.claude.json` file, the expected `cachedExtraUsageDisabledReason`) — three states.
 CLAUDE_JSON_STATES = [
     (CLAUDE_JSON_CREDITS_OK, None),
     (CLAUDE_JSON_POOL_EXHAUSTED, "org_spend_cap_reached"),
     (CLAUDE_JSON_COMPANY_EXHAUSTED, "org_level_disabled_until"),
 ]
 
-# Konto z tych samych plikow, przelozone na pola, ktore sklada sonda
-# (client/usage-probe.py:571). Team, bo tylko na Team `spend` jest wiazacym limitem.
+# The account from the same files, mapped onto the fields the probe assembles
+# (client/usage-probe.py:571). Team, because `spend` is a binding limit only on Team.
 ACCOUNT_TEAM_REAL = {
     "uuid": "00000000-0000-4000-8000-000000000001",
     "email": "usage-monitor@example.test",
@@ -74,7 +74,7 @@ ACCOUNT_TEAM_REAL = {
 
 
 def usage(path: Path) -> dict[str, Any]:
-    """Swieza KOPIA wycinka `usage`. Kopia, bo testy modyfikuja payloady w miejscu."""
+    """A fresh COPY of the `usage` slice. A copy, because tests modify payloads in place."""
     return json.loads(path.read_text("utf-8"))
 
 
@@ -85,11 +85,11 @@ def spend_block(payload: dict[str, Any]) -> dict[str, Any]:
 def team_payload(usage_path: Path = USAGE_ACTIVE, *, captured_at: datetime | None = None,
                  account: dict | None = None, event: str = "PostToolUse",
                  extra_usage_disabled_reason: Any = ...) -> dict[str, Any]:
-    """Kompletny payload sondy wokol realnego wycinka `usage`.
+    """A complete probe payload around a real `usage` slice.
 
-    `extra_usage_disabled_reason` domyslnie NIE JEST dokladany: sonda ponizej wersji 4
-    tego pola nie przysyla i backend musi to przezyc. Podanie `None` to co innego niz
-    pominiecie — to jawne "sprawdzilem, powodu nie ma".
+    `extra_usage_disabled_reason` is NOT added by default: a probe below version 4 does
+    not send this field and the backend has to survive that. Passing `None` is something
+    other than omitting it — it is an explicit "I checked, there is no reason".
     """
     meas: dict[str, Any] = {"source": "cli_merged", "cache_age_s": 42, "fresh_age_s": 7}
     if extra_usage_disabled_reason is not ...:
