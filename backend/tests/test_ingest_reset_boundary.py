@@ -35,7 +35,7 @@ from tests.test_ingest_e2e import REAL, db, payload, utcnow   # noqa: F401
 def five_hour(util, resets_at):
     """The real payload with the value and boundary of the `five_hour` bucket swapped in.
 
-    `resets_at=None` reproduces EXACTLY what the probe does under the `reset-w-toku` rule:
+    `resets_at=None` reproduces EXACTLY what the probe does under the `reset-in-progress` rule:
     the percentage stays (it is fresh and true), only the boundary field itself is zeroed,
     because it comes from a stale cache (`client/usage-probe.py`, `sanitize`)."""
     u = json.loads(json.dumps(REAL))

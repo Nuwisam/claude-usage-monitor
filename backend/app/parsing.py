@@ -213,7 +213,7 @@ def carry_reset_window(prev: datetime | None, incoming: datetime | None,
     A measurement without a boundary does not mean "there is no boundary", only "this
     reading does not know it". There are two reasons and both are normal: Anthropic reports
     no boundary for a window at 0% usage, and the probe zeroes a boundary that has gone
-    stale in its OWN cache (the `reset-w-toku` rule, `client/usage-probe.py`).
+    stale in its OWN cache (the `reset-in-progress` rule, `client/usage-probe.py`).
 
     Both extreme solutions are wrong:
       * overwrite with NULL — we lose a boundary that STILL describes the running window.
@@ -296,8 +296,9 @@ def window_start_index(rows: Sequence[Sample], eps_sec: float, monotonic_eps: fl
     Three signals, because `resets_at` happens to be None for two different reasons and no
     single one of them sees every reset:
       shift  - the boundary jumped by a whole window (with a tolerance, rule 9),
-      passed - the sample is younger than the known boundary; the only signal for the probe's
-               `reset-w-toku`, where sanitize() zeroes `resets_at` while usage may be rising,
+      passed - the sample is younger than the known boundary; the only signal for the
+               probe's `reset-in-progress`, where sanitize() zeroes `resets_at` while usage
+               may be rising,
       drop   - utilization fell; impossible within a window (the monotonicity guard). The
                rescue for a series with no known boundary — at 0% Anthropic reports no
                `resets_at`.

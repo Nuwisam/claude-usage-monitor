@@ -135,9 +135,6 @@ carries an `i18n-keep:` note at its site saying why** — so do not "finish the 
 - `backend/tests/test_session_status.py` — the only surviving record of a cp1250 bug, and the
   record is the bytes: the mojibake `'umieraÄ‡'`, `Ł` as `C5 81`, Polish paths and commands as
   tool input, and the docstrings explaining them.
-- `client/usage-probe.py` — the diagnostic slugs. They are keys tallied by a generic
-  `Counter()` over a log that already outlives several versions of the code; translating one
-  splits its count rather than renaming it.
 - `panel/README.md` — one verbatim Windows device description, compared character by
   character against Device Manager.
 

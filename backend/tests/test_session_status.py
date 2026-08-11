@@ -366,7 +366,7 @@ def test_suspension_leaves_a_trace_in_the_log(ss):
     ss.alert_dispatch(CFG, hook("Stop"))
     with open(ss.LOG, encoding="utf-8") as f:
         lines = [json.loads(l) for l in f if l.strip()]
-    assert [r for r in lines if r.get("alert_skip") == "rejestr-niepelny"]
+    assert [r for r in lines if r.get("alert_skip") == "registry-incomplete"]
 
 
 def test_empty_state_directory_does_not_read_registry(ss, monkeypatch):

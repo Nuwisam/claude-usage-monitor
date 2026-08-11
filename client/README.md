@@ -90,7 +90,7 @@ that a failed installation leaves the file untouched.
 
 | What's needed | How to check | If missing |
 |---|---|---|
-| `claude` on `PATH` | `claude --version` | The full path goes into `config.json` as `claude_bin`. Without it the probe has nothing to delegate the measurement to, and logs `brak-claude-w-path` |
+| `claude` on `PATH` | `claude --version` | The full path goes into `config.json` as `claude_bin`. Without it the probe has nothing to delegate the measurement to, and logs `no-claude-in-path` |
 | A working Python | in order: `python3 --version`, `python --version`, `py -3 --version` | Stop — the hook has nothing to run with |
 | `~/.claude/settings.json` | the file exists and parses as JSON | No file: create `{}`. **It exists but doesn't parse: stop.** Do not overwrite it — it holds Claude Code's entire configuration |
 
@@ -437,7 +437,7 @@ clock.
   a stampede. The race window is non-zero: occasionally two calls go through instead of one.
   Harmless at this scale.
 - **Bootstrap** — on a machine's first run, `cachedUsageUtilization` doesn't exist yet. The
-  probe logs `brak-cache`, runs `/usage`, and the measurement appears on the next cycle.
+  probe logs `no-cache`, runs `/usage`, and the measurement appears on the next cycle.
 - **Expired-window guard** — we only get `resets_at` from the cache. When the window resets
   between the cache write and the read, the pair (percentage, `resets_at`) is contradictory.
   With a fresh percentage we zero `resets_at`; without a fresh one we drop the whole series
@@ -503,7 +503,7 @@ counts toward `backlogAccepted`, so the spool can still be trimmed.
 Merging assumes the dump is fresher, but the dump is allowed to be up to 900 s old, and
 ordinary work in Claude Code refreshes the cache within that window — the order can flip
 (measured: 2 times out of 1646 measurements, by up to −105 s). When that happens the dump is
-**ignored entirely** (`fresh_skip: zrzut-starszy-od-cache`).
+**ignored entirely** (`fresh_skip: dump-older-than-cache`).
 
 The dangerous case is a window reset between the dump and the cache: the percentage would come
 from the dump, i.e. from before the reset (95%), while `resets_at` comes **exclusively** from

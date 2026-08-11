@@ -109,7 +109,7 @@ def test_merge_overwrites_with_fresh_percentages(probe):
 def test_coverage_is_not_a_value_change(probe):
     """A fresh reading EQUAL to the cached value is a confirmation, not a missing event.
     Previously only changes counted, so a series with an unchanged percentage and an expired
-    window dropped out of the measurement instead of getting `reset-w-toku` — losing the one
+    window dropped out of the measurement instead of getting `reset-in-progress` — losing the one
     true reading. Dating on the backend side depends on that set as well."""
     _, covered = probe.merge(_cache(five=40, weekly=41),
                              {"session": 40, "weekly_all": 41, "scoped": {}})
@@ -173,7 +173,7 @@ def test_expired_window_without_fresh_data_drops_out(probe):
     usage, _ = probe.merge(_cache(five=95, resets=PAST), None)
     usage, events = probe.sanitize(usage, [], time.time())
     assert usage["five_hour"] is None
-    assert any("okno-wygaslo" in e for e in events)
+    assert any("window-expired" in e for e in events)
     assert all(l["kind"] != "session" for l in usage["limits"])
 
 
@@ -185,7 +185,7 @@ def test_expired_window_with_fresh_data_keeps_percent_but_loses_reset_time(probe
     usage, events = probe.sanitize(usage, covered, time.time())
     assert usage["five_hour"]["utilization"] == 2
     assert usage["five_hour"]["resets_at"] is None
-    assert any("reset-w-toku" in e for e in events)
+    assert any("reset-in-progress" in e for e in events)
 
 
 def test_future_reset_is_left_untouched(probe):
@@ -204,14 +204,14 @@ def test_absurd_value_in_cache_drops_out(probe):
 def test_fresh_percent_equal_to_cache_saves_series_with_expired_window(probe):
     """Regression: `sanitize` asks about COVERAGE, not about change. When the dump confirmed
     the same value while the window in the cache had already expired, the series must get
-    `reset-w-toku` — it used to drop out of the measurement entirely, losing the one true
+    `reset-in-progress` — it used to drop out of the measurement entirely, losing the one true
     reading."""
     usage, covered = probe.merge(_cache(five=40, resets=PAST),
                                  {"session": 40, "weekly_all": 41, "scoped": {}})
     usage, events = probe.sanitize(usage, covered, time.time())
     assert usage["five_hour"]["utilization"] == 40
     assert usage["five_hour"]["resets_at"] is None
-    assert any("reset-w-toku" in e for e in events)
+    assert any("reset-in-progress" in e for e in events)
 
 
 def test_sanitize_does_not_crash_on_odd_scope(probe):

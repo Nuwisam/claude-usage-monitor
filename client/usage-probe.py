@@ -41,18 +41,6 @@ We merge: the structure from the cache + fresh percentages from stdout laid on t
 The result has EXACTLY the same shape as the former HTTP response, so the backend parser
 needs no changes.
 
-i18n-keep: every diagnostic SLUG this file writes stays Polish — `brak-cache`,
-`cache-przeterminowany`, `cache-innego-konta`, `nie-komenda-lokalna`, `stary-zrzut`,
-`brak-procentow`, `zrzut-starszy-od-cache`, `reset-w-toku`, `okno-wygaslo`,
-`brak-claude-w-path`, `brak-pliku-wyjscia`, `spawn-*`, `brak-credentials`, `odczyt-*`,
-`rejestr-brzeg-sesji`, `rejestr-niepelny`, `rejestr-bez-biezacej-sesji`, and the JSON key
-`"wpisy"`. They are not prose and nobody reads them as words: they are keys, tallied by a
-generic Counter() in analyze-samples.py over usage-samples.jsonl, which is already
-megabytes of history. Translating one does not rename a value, it SPLITS its count in
-two — and the log outlives the code, so the split is permanent and silent.
-`cache-z-przyszlosci` proves the point: it no longer exists anywhere in this file and is
-still being counted from the log.
-
 THE SIGNALLER (section "alert" below) detects the moment Claude Code has stopped and is
 waiting for a HUMAN: a permission prompt, AskUserQuestion, ExitPlanMode. Each block is one
 file in the state directory; the set of those files is the WHOLE truth, and the POST is
@@ -74,7 +62,7 @@ Deliberately a local file, not the repo — a machine token has no business in g
 """
 import sys, os, json, time, re
 
-SCRIPT_VERSION = 12
+SCRIPT_VERSION = 13
 
 # Marker inherited by the child process. `claude -p "/usage"` is a normal Claude Code
 # session — it will fire the Stop hook, which fires the probe, which would fire another
@@ -248,12 +236,12 @@ def load_token_meta():
     is no longer a fatal error: measurement keeps working, only the plan tags disappear."""
     path = _find(".credentials.json", in_claude_dir=True)
     if not path:
-        return {"reason": "brak-credentials"}
+        return {"reason": "no-credentials"}
     try:
         with open(path, "r", encoding="utf-8") as f:      # READ-ONLY
             oa = (json.load(f).get("claudeAiOauth") or {})
     except Exception as e:
-        return {"reason": "odczyt-%s" % type(e).__name__}
+        return {"reason": "read-%s" % type(e).__name__}
     exp = oa.get("expiresAt")
     return {"subscription_type": oa.get("subscriptionType"),
             "rate_limit_tier": oa.get("rateLimitTier"),
@@ -294,7 +282,7 @@ def spawn_refresh(cfg):
     does not use it, and it is a dozen or so node/npx processes per run."""
     exe = find_claude(cfg)
     if not exe:
-        return "brak-claude-w-path"
+        return "no-claude-in-path"
     import subprocess
     env = dict(os.environ)
     env[CHILD_ENV] = "1"                # barrier against hook recursion
@@ -310,7 +298,7 @@ def spawn_refresh(cfg):
         os.makedirs(OUTDIR, exist_ok=True)
         out = open(CLI_OUT, "wb")
     except Exception:
-        return "brak-pliku-wyjscia"
+        return "no-output-file"
     try:
         subprocess.Popen(
             [exe, "-p", "--no-session-persistence", "--model", "haiku",
@@ -377,12 +365,12 @@ def read_fresh():
     if d.get("num_turns"):
         # num_turns>0 means "/usage" missed the local command and went to the model.
         # Such a result is worthless and expensive — we do not use it and we signal it.
-        return None, None, "nie-komenda-lokalna"
+        return None, None, "not-local-command"
     if age > CLI_MAX_AGE_S:
-        return None, None, "stary-zrzut"
+        return None, None, "stale-dump"
     parsed = parse_usage_text(d.get("result") or "")
     if parsed["session"] is None and parsed["weekly_all"] is None:
-        return None, None, "brak-procentow"
+        return None, None, "no-percentages"
     return parsed, os.path.getmtime(CLI_OUT), None
 
 
@@ -402,7 +390,7 @@ def dump_outdated(fresh_at, cache_at):
     `window_start_index` reads as a reset.
 
     In the normal direction that same reset is harmless: the dump gives ~1%, the boundary from
-    the cache is expired, `sanitize` zeroes it and reports `reset-w-toku`.
+    the cache is expired, `sanitize` zeroes it and reports `reset-in-progress`.
 
     The cost of rejecting is ZERO: the cache value stays, and it is newer — and incidentally
     more accurate, because stdout truncates percentages to whole numbers."""
@@ -445,7 +433,7 @@ def merge(cached_usage, fresh):
     Returns a payload shaped identically to the former HTTP response, plus the list of
     series COVERED by the dump. Coverage is not the same as change: a fresh reading equal
     to the cached value IS a confirmation and has to count, because dating on the backend
-    side (`measurement.fresh_covered`) and the `reset-w-toku` decision in `sanitize` both
+    side (`measurement.fresh_covered`) and the `reset-in-progress` decision in `sanitize` both
     depend on this list."""
     if not fresh:
         return cached_usage, []
@@ -500,7 +488,7 @@ def sanitize(usage, covered, now):
     The question is "did the series get a FRESH percent", so we read `covered`, not the
     list of changes. Earlier the list of changed values went here, so a series with a fresh
     percent EQUAL to the cached one and an expired window was thrown out of the measurement
-    instead of getting `reset-w-toku` — meaning the one true reading was lost.
+    instead of getting `reset-in-progress` — meaning the one true reading was lost.
 
       * the series got a fresh percent  -> the percent is true, only the reset time is
         stale. We zero resets_at; the next cache write (<=5 min) supplies a new one.
@@ -525,10 +513,10 @@ def sanitize(usage, covered, now):
         if exp and exp <= now:
             if ("bucket:%s" % key) in covered_set:
                 bucket["resets_at"] = None
-                events.append("%s:reset-w-toku" % key)
+                events.append("%s:reset-in-progress" % key)
             else:
                 usage[key] = None
-                events.append("%s:okno-wygaslo" % key)
+                events.append("%s:window-expired" % key)
 
     kept = []
     for lim in (usage.get("limits") or []):
@@ -543,9 +531,9 @@ def sanitize(usage, covered, now):
         if exp and exp <= now:
             if _limit_key(lim) in covered_set:
                 lim["resets_at"] = None
-                events.append("limit:%s:reset-w-toku" % kind)
+                events.append("limit:%s:reset-in-progress" % kind)
             else:
-                events.append("limit:%s:okno-wygaslo" % kind)
+                events.append("limit:%s:window-expired" % kind)
                 continue
         kept.append(lim)
     if "limits" in usage:
@@ -996,16 +984,16 @@ def registry_view(event, session_id):
     if event in ("SessionStart", "SessionEnd"):
         # On these two the record is just being created or just disappearing, so its absence
         # proves nothing. The next `UserPromptSubmit` or `Stop` will do the collecting.
-        return None, "rejestr-brzeg-sesji"
+        return None, "registry-session-edge"
     live = live_sessions()
     if live is None:
-        return None, "rejestr-niepelny"
+        return None, "registry-incomplete"
     if session_id and session_id not in live:
         # The current session is ALIVE — this hook is running inside it. If it is not in the
         # registry, then we do not understand the registry (a different harness version, a
         # different directory, an unregistered session) and deletion of ANYTHING must not
         # rest on it.
-        return None, "rejestr-bez-biezacej-sesji"
+        return None, "registry-no-current-session"
     return live, None
 
 
@@ -1516,7 +1504,7 @@ def sweep_session(cfg, hook):
         # `analyze-samples.py` counts something else there. Logged only when there really
         # was something to hold back.
         log_local({"t": round(time.time(), 3), "alert_skip": hold_reason,
-                   "event": event, "wpisy": held_back})
+                   "event": event, "entries": held_back})
     # UNCONDITIONALLY, not `if hit`: deletions that did not go through here left the server
     # with a set that is not on disk (`sweep_ttl` deletes and does not publish, the `del`
     # escape hatch deletes from outside the probe). `publish()` compares the snapshot with
@@ -1625,24 +1613,24 @@ def main():
     if not cached or not isinstance(cached.get("utilization"), dict):
         # The first run on a machine: Claude Code has never written the cache yet.
         # The spawn above will fix it, the measurement appears in the next cycle.
-        log_local({"t": round(time.time(), 3), "ok": False, "skip": "brak-cache",
+        log_local({"t": round(time.time(), 3), "ok": False, "skip": "no-cache",
                    "spawn": spawn_err, "event": hook.get("hook_event_name")})
         return 0
 
     cache_at = (cached.get("fetchedAtMs") or 0) / 1000.0
     cache_age = time.time() - cache_at
     if cache_age > CACHE_MAX_AGE_S:
-        log_local({"t": round(time.time(), 3), "ok": False, "skip": "cache-przeterminowany",
+        log_local({"t": round(time.time(), 3), "ok": False, "skip": "cache-expired",
                    "cache_age_s": round(cache_age), "spawn": spawn_err})
         return 0
 
     # Claude Code clears the cache on an account change, but that is not taken on trust.
     if acct and cached.get("accountUuid") and cached["accountUuid"] != acct.get("accountUuid"):
-        log_local({"t": round(time.time(), 3), "ok": False, "skip": "cache-innego-konta"})
+        log_local({"t": round(time.time(), 3), "ok": False, "skip": "cache-other-account"})
         return 0
 
     if fresh and dump_outdated(fresh_at, cache_at):
-        fresh, fresh_skip = None, "zrzut-starszy-od-cache"
+        fresh, fresh_skip = None, "dump-older-than-cache"
 
     usage, covered = merge(cached["utilization"], fresh)
     usage, dropped = sanitize(usage, covered, time.time())
