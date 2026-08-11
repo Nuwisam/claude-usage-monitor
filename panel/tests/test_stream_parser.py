@@ -128,7 +128,7 @@ def test_bad_numbers_give_a_problem_not_an_exception(change, fragment):
 
 
 def test_number_in_quotes_is_converted():
-    """Checking without writing back was only apparent: `int("480")` succeeds, so validate()
+    """Checking without writing back was only for show: `int("480")` succeeds, so validate()
     stayed silent, and Layout then computed `"480" - 1` and broke with a TypeError already
     AFTER the configuration had been declared fit for use."""
     c = cfg(width="480", tick_sec="2")

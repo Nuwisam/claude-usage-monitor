@@ -1,4 +1,4 @@
-"""Test scenes in the shape of the contract.
+"""Test scenes shaped like the contract.
 
 The demonstration data is the same as in the 3.5-inch screen mockup (the text/x-dc
 block at the end of it; the mockup is not tracked here), so the render can be
@@ -106,7 +106,7 @@ def states():
     """States that a live run cannot be made to produce on demand:
     `unknown` (a client failure) and `inferred_reset` (the window came back in silence)."""
     a = account(
-        "aaaa1111-0000-0000-0000-000000000001", "unknown@example.pl",
+        "aaaa1111-0000-0000-0000-000000000001", "unknown@example.org",
         cascade=[rung("credits", "unknown")],
         series=[
             series("limit:session|session|-|-", "Session", kind="session",
@@ -117,7 +117,7 @@ def states():
                    utilization=None, rawUtilization=88, resetsAt=_at(4000)),
         ])
     b = account(
-        "bbbb2222-0000-0000-0000-000000000002", "reset@example.pl",
+        "bbbb2222-0000-0000-0000-000000000002", "reset@example.org",
         tier="default_claude_max_20x",
         cascade=[rung("credits", "on", usedMinor=125, limitMinor=30000,
                       currency="USD", exponent=2)],
@@ -136,7 +136,7 @@ def edges():
     """Layout extremes: a long name, a three-digit session, no second account."""
     a = account(
         "cccc3333-0000-0000-0000-000000000003",
-        "very.long.account.name.that.does.not.fit.here@example.example.com",
+        "very.long.account.name.that.does.not.fit.here@example.example.org",
         cascade=[rung("credits", "on", isCurrent=True, usedMinor=123456,
                       limitMinor=200000, currency="USD", exponent=2)],
         series=[

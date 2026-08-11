@@ -1,7 +1,7 @@
 """The scheduled task's target. The .pyw extension + pythonw.exe = no console window.
 
 This file lives in the repo, but the task does NOT point at it directly. Under
-%LOCALAPPDATA%\\claude-usage-monitor\\panel-run.pyw sits a dozen-odd lines of
+%LOCALAPPDATA%\\claude-usage-monitor\\panel-run.pyw sits a dozen or so lines of
 redirection that run THIS file from the repo — the same convention as with the
 probe (client/README.md). Thanks to that, editing in the repo takes effect at once,
 without copying, and Windows does not demand administrator rights for a link.

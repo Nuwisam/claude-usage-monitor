@@ -2,7 +2,7 @@
 
 It is the same product watched from two screens — a divergence in the time format
 would be visible at once and would look like a data bug, not a format bug.
-Every case carries its place in the original in a comment.
+Every case cites its place in the original in a comment.
 """
 from datetime import timedelta
 

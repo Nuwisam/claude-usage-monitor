@@ -140,7 +140,7 @@ class AlertSolo:
 
     def detail_box(self, lines):
         """The detail tile grows with the number of lines, not the other way round: a
-        one-line `detail` has no reason to leave an empty field below itself.
+        one-line `detail` has no reason to leave empty space below itself.
 
         The height of the text block is truncated DOWNWARD. The browser keeps the block
         in fractions — one line at line-height 1.35 is 16.2 px — and only the tile EDGE
@@ -246,7 +246,7 @@ class AlertList:
         """The rows with the footer and without it. With no detail the footer has nothing
         to show, and an empty band at the bottom would read as a cut-off screen.
 
-        The remainder of the division goes where the browser puts it: the heights are
+        The remainder of the division goes where the mockup's browser puts it: the heights are
         computed from FRACTIONAL boundaries, not through `//`. With 242 px for three rows
         that gives 81 / 80 / 81, and not 80 / 80 / 80 plus two pixels of background at the footer.
         """

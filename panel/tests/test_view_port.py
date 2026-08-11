@@ -172,7 +172,7 @@ def test_credits_have_three_states():
 
     assert view.credits(model.CascadeRung({"key": "credits", "state": "off"})).state == "off"
     assert view.credits(model.CascadeRung({"key": "credits", "state": "unknown"})).state == "unknown"
-    assert view.credits(None).state == "unknown", "no rung is no knowledge"
+    assert view.credits(None).state == "unknown", "no rung means no knowledge"
 
 
 def test_withdrawn_credits_show_amounts_instead_of_disappearing():
@@ -201,7 +201,7 @@ def test_account_without_credits_does_not_get_a_zero_row():
     c = view.credits(model.CascadeRung({"key": "credits", "state": "off",
                                         "usedMinor": 0, "currency": "USD",
                                         "exponent": 2}))
-    assert c.used is None, "half a pair of amounts is not amounts"
+    assert c.used is None, "half a pair of amounts is not a pair"
 
 
 def test_credits_without_limit_do_not_divide_by_zero():

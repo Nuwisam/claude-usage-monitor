@@ -140,7 +140,7 @@ def test_release_without_a_handle_does_not_blow_up():
 
 
 def test_old_location_is_an_error_with_instructions():
-    """A silent migration is out: it would take guessing which screen the author had
+    """A silent migration is out: it would require guessing which screen the author had
     in mind. One readable sentence in the log, not a traceback under pythonw."""
     cfg = C.Config({"stream_token": "t", "account_1": {"uuid": "u"},
                     "device": {"location": "Port_#0004.Hub_#0005"}})

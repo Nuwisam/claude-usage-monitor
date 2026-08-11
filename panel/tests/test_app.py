@@ -43,7 +43,7 @@ def test_unknown_event_is_a_no_op():
     """The whole backward compatibility of the stream rests on this: the server may add
     a frame this panel does not know, and it must neither move the model nor pass for
     fresh data. Until this test existed, the property was an accident of the
-    construction, not an agreement."""
+    implementation, not an agreement."""
     a = app_mod.App(cfg())
     a.on_event("something-we-dont-know", {"serverNow": "2026-08-05T21:07:00Z",
                                           "account": {"uuid": "a"}})

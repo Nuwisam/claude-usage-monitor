@@ -47,7 +47,7 @@ def test_number_column_and_bar_column_do_not_overlap():
 
 def test_three_digit_value_fits_in_column():
     """That is exactly why the mockup drops from 42 to 34 px at 100%. Without it
-    the number would force the column wider and the bars would stop starting level."""
+    the number would force the column wider and the bars would no longer start level."""
     f_big = draw.font(L.F_SES_NUM)
     f_tight = draw.font(L.F_SES_NUM_TIGHT)
     f_pct = draw.font(L.F_SES_PCT)
@@ -71,7 +71,7 @@ def test_descenders_are_not_clipped():
 
 def test_ellipsize_does_not_exceed_width():
     f = draw.font(15)
-    long_name = "very.long.account.name.that.does.not.fit@example.example.pl"
+    long_name = "very.long.account.name.that.does.not.fit@example.example.org"
     for limit in (40, 80, 160, 300):
         assert draw.text_width(draw.ellipsize(long_name, f, limit), f) <= limit
     assert draw.ellipsize("short", f, 300) == "short", "short strings stay unchanged"
@@ -114,7 +114,7 @@ def test_color_pairs_survive_quantization(fg, bg, name):
     The card's marginal pair is `ACCENT_800` on `BG` (a difference of 42, 13, 4 before
     quantization), not the text on the banner. The pairs with `SURFACE` and `SUNKEN` are here
     because the detail tile and the mode strip differ from the background by a few units —
-    were they to blend after quantization, the card would lose its whole division into fields.
+    were they to blend after quantization, the card would lose all separation between its areas.
     """
     assert theme.to_rgb565_pair(fg) != theme.to_rgb565_pair(bg), \
         "%s disappears after quantization" % name
@@ -182,7 +182,7 @@ def test_age_takes_the_older_of_two_series():
     from panel import fmt
     now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
     acc = fixtures.account(
-        "u", "who@example.pl",
+        "u", "who@example.org",
         series=[fixtures.series("limit:session|session|-|-", "Session",
                                 kind="session", bucketKey="five_hour",
                                 utilization=31,
@@ -202,7 +202,7 @@ def test_age_takes_the_older_of_two_series():
 def test_withdrawn_credits_still_get_drawn():
     """Regression on a real case: the organization cuts credits off, the rung drops to `off`
     and the amounts row USED TO VANISH from the band. The panel then lost the only number it had
-    about spending — and the amounts keep coming, because the backend gives them from the last
+    about spending — and the amounts keep coming, because the backend reports them from the last
     measurement.
 
     We compare payloads: the version with amounts MUST give a different image than `off` without
@@ -237,7 +237,7 @@ def test_withdrawn_credits_still_get_drawn():
 @pytest.mark.parametrize("text,lines", [
     ("short", 1),
     # This `detail` fits in ONE line of the tile (420 px) and the tile is then to
-    # shorten itself rather than leave an empty field — see AlertSolo.detail_box.
+    # shorten itself rather than leave empty space — see AlertSolo.detail_box.
     ("Dump scope: session only, session and week, or all the limit windows", 1),
     ("A 6-step plan: layout.Alert, render._alert, AlertState, geometry and "
      "quantization tests, plus one more sentence for good measure", 2),

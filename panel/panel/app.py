@@ -260,7 +260,7 @@ class App:
         # With no time gate of its own: `holding()` already answers for "do not touch
         # the screen while you know nothing". A second, independent threshold here was
         # a bug — once the alert card went out, control went into the bands with empty
-        # accounts and painted "no data from server" for a dozen-odd seconds, that is
+        # accounts and painted "no data from server" for a dozen or so seconds, that is
         # exactly the screen `holding()` is there to suppress.
         if self.first_data_at is None:
             host = self.cfg.stream_url.split("//")[-1].split("/")[0]

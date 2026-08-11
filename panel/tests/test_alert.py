@@ -163,7 +163,7 @@ def test_fresh_block_pulls_burnt_one_onto_same_card():
 def test_burnt_out_set_extinguishes_entirely():
     """When the LAST fresh block burns out, the card hands the screen back along with the rest.
 
-    Honestly: this is a guard AGAINST AN OVERREACHING FIX, not proof of one. It passes the
+    To be fair: this is a guard AGAINST AN OVERREACHING FIX, not proof of one. It passes the
     same way on the old code and that is as it should be — it watches that a window belonging
     to the set has not started holding the card forever. The test that settles the change
     itself is `test_fresh_block_pulls_burnt_one_onto_same_card`.
@@ -407,7 +407,7 @@ def test_reason_does_not_push_title_past_band():
     lay = L.Layout(480, 320)
     b = lay.bands[0]
     long_name = ("very.long.account.name.that.nobody.saw.coming"
-                 "@subdomain.example.example.pl")
+                 "@subdomain.example.example.org")
     f = draw.font(L.F_NAME)
     lengths = []
     for alert in (None, "question"):
@@ -417,7 +417,7 @@ def test_reason_does_not_push_title_past_band():
         render.Renderer()._header(d, b, state,
                                   render.ScreenState(clock="21:07", link="live"))
         px = img.load()
-        # The columns right of the band must stay background — nothing ran past the margin.
+        # The columns right of the band must stay background — nothing spilled outside the margin.
         for x in range(b.x1 + 1, 480):
             for y in range(b.header[1], b.header[3]):
                 assert px[x, y] == theme.BG, "something spilled outside the band in column %d" % x
@@ -439,7 +439,7 @@ def test_reason_does_not_push_title_past_band():
 
 
 def test_band_marker_has_full_height_and_sits_in_the_margin():
-    """The 4 px marker sits in the margin field (PAD_X 14), so the band's layout does not
+    """The 4 px marker sits in the margin (PAD_X 14), so the band's layout does not
     shift by a pixel — and it has the band's full height whatever the number of rows inside."""
     from panel import draw, layout as L
 
@@ -544,7 +544,7 @@ def blocks(n):
 ])
 def test_layout_picks_method_by_block_count(count, method, monkeypatch):
     """The threshold is at three: up to two the project name stays the hero, from three on
-    it drops into a list, because three names in 34 px do not exist."""
+    it drops into a list, because three names at 34 px do not exist."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
     state = render.alert_state(blocks(count), now_ms)
     called = []
@@ -600,7 +600,7 @@ def test_detail_tile_does_not_run_into_the_mode_strip():
 
 @pytest.mark.parametrize("with_footer", [True, False])
 def test_list_rows_fill_the_screen_without_gaps(with_footer):
-    """The remainder of the division goes where the browser puts it. A gap of background
+    """The remainder of the division goes where the mockup's browser puts it. A gap of background
     at the footer would read as a screen cut short."""
     from panel import layout as L
     lay = L.Layout(480, 320)

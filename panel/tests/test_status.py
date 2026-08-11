@@ -2,7 +2,7 @@
 
 This is the only way data about blocked sessions gets into the client, and its source is
 the payload of a Claude Code hook — that is, a shape that changes between client versions.
-Every test here therefore asks the same question from another side: will the panel
+Every test here therefore asks the same question from a different angle: will the panel
 survive an entry it does not understand.
 """
 from panel import status
@@ -76,7 +76,7 @@ def test_order_by_newest_regardless_of_reason():
 
 
 def test_entry_without_timestamp_lands_last():
-    """Not knowing the age must pass for neither freshness nor staleness."""
+    """Not knowing the age must not pass for either freshness or staleness."""
     out = status.parse_frame(frame(
         entry(key="missing", reason="plan", since=None),
         entry(key="old", reason="permission", since="2026-08-05T20:00:00Z"),

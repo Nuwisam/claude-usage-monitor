@@ -247,7 +247,7 @@ class Config:
             # The `location` selector took "Port_#0004.Hub_#0005" from the registry,
             # where `Hub_#NNNN` is an enumeration counter, not hardware. It jumped
             # with the plug untouched and the panel stopped finding itself. A silent
-            # migration is out: it would take guessing which module was meant, and
+            # migration is out: it would require guessing which module was meant, and
             # that is exactly what is being got rid of here.
             problems.append(
                 "device.location (\"%s\") is no longer supported — the Hub_# "
