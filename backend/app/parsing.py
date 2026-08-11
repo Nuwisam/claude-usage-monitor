@@ -7,11 +7,11 @@ Rules carried over from step 0:
   * The response has 17 top-level keys, 5 of which were new to us. A closed list must not
     be assumed — the parser accepts any new key and reports it as drift.
   * `bucket.utilization` is a float, `limits[].percent` an int, `spend.percent` an int.
-    Everything is brought down to 0..100.
+    Everything is normalized to 0..100.
   * `resets_at` in the raw response is ISO-8601 with microseconds and an offset. The
     statusline reported an epoch — the parser takes both, because it costs three lines.
   * On a Team account the binding limit is `spend` (the organization's monthly limit), not
-    the time windows. That is why `spend` is a first-class series, not a side field.
+    the time windows. That is why `spend` is a first-class series, not a secondary field.
   * Amounts in `spend` are in minor units with an exponent — we do not flatten them to a float.
 """
 from __future__ import annotations
@@ -197,7 +197,7 @@ def known_same_reset_window(a: datetime | None, b: datetime | None, eps_sec: flo
     minute — except that the upper bound is set not by the probe's frequency but by its
     silence: when the client goes quiet right after the write, the wrong value holds until
     `freshness()` degrades it, that is until `CLIENT_SILENT_SEC` (6 h by default,
-    `app/config.py:38`), and for that whole time it is served as `live`/`stale`, that is as
+    `app/config.py:38`), and for that whole time it is served as `live`/`stale` — as
     a value and not as ignorance. A frozen state lies for exactly as long, and on top of
     that has no way out of it: for `spend:org` and `extra:usage` a boundary will NEVER
     arrive. The sample reaches the database in both variants, so neither loses history. The
@@ -222,7 +222,7 @@ def carry_reset_window(prev: datetime | None, incoming: datetime | None,
         client silence (`app/freshness.py`).
       * always hold the old one — the state then claims that the current window ends at an
         instant that HAS ALREADY PASSED. A confident-looking untruth. Rule 4 of AGENTS.md
-        speaks literally about `utilization`, not about time fields, so this is not a
+        is literally about `utilization`, not about time fields, so this is not a
         quotation of it but an analogy: the same move, namely swapping ignorance for a
         definite number the recipient has no way to challenge.
 
@@ -349,7 +349,7 @@ def probe_key(o: Observation) -> str | None:
     This is NOT a `series_series_key`: the probe knows neither `group` nor `surface` nor the
     slugging, and it builds the key out of what it has at hand in `usage` (see `_limit_key`
     in client/usage-probe.py). A divergence here is SILENT — the sets would never match,
-    `covered_by_fresh` would never light up and the timestamping would quietly fall back to the
+    `covered_by_fresh` would never be set and the timestamping would quietly fall back to the
     state from before this change. Hence: NO `_slug` (the probe sends a raw `display_name`)
     and NO `surface` (`merge` matches on `kind`+`model`, so two limits differing only in
     surface really are both covered).

@@ -122,7 +122,7 @@ Interval = tuple[datetime, datetime]
 
 def _quiet_intervals(times: list[datetime], from_: datetime, to: datetime,
                      threshold: timedelta) -> list[Interval]:
-    """Gaps longer than `threshold` in a sequence of timestamps, counting the start and the
+    """Gaps longer than `threshold` in a sequence of timestamps, including the start and the
     end of the range. An empty list of timestamps => silence over the whole range."""
     out: list[Interval] = []
     prev = from_
@@ -138,7 +138,7 @@ def _quiet_intervals(times: list[datetime], from_: datetime, to: datetime,
 def _subtract(spans: list[Interval], holes: list[Interval],
               min_len: timedelta) -> list[Interval]:
     """spans minus holes. Segments shorter than `min_len` are dropped — otherwise the
-    seam between two quiet periods left few-second splinters pretending to be failures."""
+    seam between two quiet periods left few-second slivers pretending to be failures."""
     out: list[Interval] = []
     for a, b in spans:
         cur = a
@@ -185,7 +185,7 @@ def _reset_boundaries(rows: list[tuple[datetime, datetime | None]]) -> list[date
 
 def _find_gaps(from_: datetime, to: datetime, batch_times: list[datetime],
                sample_times: list[datetime], threshold: timedelta) -> list[HistoryGap]:
-    """Two kinds of hole, because they mean two different things.
+    """Two kinds of gap, because they mean two different things.
 
     `client_silent` — there were no batches. No work was going on, so nothing to measure.
     `no_samples`    — batches did arrive, but for THIS series there was not one sample.
@@ -331,7 +331,7 @@ async def batches(
         select(IngestBatch).order_by(IngestBatch.id.desc()).limit(limit)
     )).scalars().all()
     # The fields describing Anthropic's HTTP response went away with version 3 of the
-    # probe — there is no request left for them to describe. Their place goes to the
+    # probe — there is no request left for them to describe. In their place comes the
     # provenance of the measurement: where it was taken from and how old it was when sent.
     # This is the one place where `cli_merged` (fresh percents from stdout) and
     # `cli_usage_cache` (the cache alone) can be told apart.

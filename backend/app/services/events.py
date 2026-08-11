@@ -16,7 +16,7 @@ Three decisions that are not obvious:
    this (rule 7).
 
 3. PUBLISHING NEVER WAITS. `put_nowait` only; on a full queue we drain it and insert a
-   `lag` frame. Ingest sits in the path of your actual work — a slow consumer must not
+   `lag` frame. Ingest sits on the critical path of your actual work — a slow consumer must not
    slow the probe down, and losing intermediate frames is harmless because every frame is
    the account's FULL state, not a delta.
 
@@ -80,10 +80,10 @@ def bye_frame(reason: str) -> str:
 # --------------------------------------------------------------------------- alerts
 # Sessions that have stalled and are waiting for a human. IN-PROCESS, no database — the
 # state is ephemeral by definition, and a table would mean a migration and a row lifecycle
-# for something that goes out the moment somebody clicks "yes".
+# for something that disappears the moment somebody clicks "yes".
 #
 # NOTE, a process restart is NOT transparent here, and a sentence claiming otherwise used
-# to sit in this spot. The map goes to zero, but the probe does not know that: it compares
+# to be here. The map goes to zero, but the probe does not know that: it compares
 # its own timestamp against its OWN state directory, and those two agree, so it has no reason
 # to send anything. A live block is therefore not announced again — not until the next CHANGE
 # of the set on that machine. To fix it, the server would have to tell the probe what it
@@ -115,7 +115,7 @@ def _aware(v: datetime) -> datetime:
 def current_alerts(*, now: datetime) -> list[SessionAlert]:
     """The set from every machine, oldest first. An entry without `since` gets through:
     a missing timestamp means 'no idea how long', not 'expired' — and it lands at the
-    end, because order is to be decided by age, not by the absence of knowledge of it."""
+    end, because order is to be decided by age, not by the absence of knowledge about it."""
     ref = _aware(now)
     out: list[SessionAlert] = []
     for alerts in ALERTS.values():

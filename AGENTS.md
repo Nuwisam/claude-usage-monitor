@@ -52,7 +52,7 @@ sum of module costs.
 
 **3. The probe never raises an exception.**
 `except Exception: sys.exit(0)` at the top level. This is the only code in the project that runs
-in the path of your own work — a bug here breaks the session, not just a chart.
+on the critical path of your own work — a bug here breaks the session, not just a chart.
 
 **4. `unknown` is never zero.**
 `app/freshness.py` distinguishes "the window reset and nobody worked" (0% can be inferred) from

@@ -8,7 +8,7 @@ used with two accounts in rotation, a static list would drift out of date again.
 prohibition there is detection — the first occurrence of a new (machine, account) pair emits
 a `new_account_for_token` event, visible in Diagnostics.
 
-The `X-Ingest-Key` edge filter sits in Apache and cuts off scanners before they reach Python.
+The `X-Ingest-Key` edge filter lives in Apache and cuts off scanners before they reach Python.
 It is not serious cryptography — the real authorization is here.
 """
 import hmac

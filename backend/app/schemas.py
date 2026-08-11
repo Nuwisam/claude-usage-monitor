@@ -44,7 +44,7 @@ def _naive_utc(v: datetime) -> datetime:
     Worse is what cannot be seen: the MySQL driver formats a datetime with `strftime` and
     IGNORES tzinfo, so a parameter with an offset other than UTC (e.g. '+02:00') would land
     in WHERE as wall-clock time and quietly shift the whole range by two hours. With 'Z' the
-    same thing comes out by accident — which is why the boundary is closed here instead of
+    result happens to be the same — which is why the boundary is closed here instead of
     counting on the client.
     """
     return v if v.tzinfo is None else v.astimezone(timezone.utc).replace(tzinfo=None)

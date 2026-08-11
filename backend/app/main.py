@@ -14,7 +14,7 @@ from app.routers import read as read_router
 from app.routers import stream as stream_router
 
 # The built frontend. Copied into the image from the `node` stage (see backend/Dockerfile);
-# when running without a UI build the directory simply does not exist and the API works alone.
+# when running without a UI build the directory simply does not exist and the API works on its own.
 # STATIC_DIR allows pointing at a different directory — used by tests and by dev with a local `dist`.
 STATIC_DIR = Path(
     os.environ.get("STATIC_DIR") or Path(__file__).resolve().parent.parent / "static"
@@ -50,7 +50,7 @@ async def health() -> dict:
     """No authorization — this serves the container healthcheck, which has no session at all.
 
     It hands back the bare fact that the process is alive: no data, no configuration. The
-    reverse proxy has no reason to expose it, but if it did, there is nothing here to carry off.
+    reverse proxy has no reason to expose it, but if it did, there is nothing here worth taking.
     """
     return {"status": "ok"}
 
@@ -80,8 +80,8 @@ async def unhandled(request, exc: Exception):
 # --------------------------------------------------------------------------- UI
 # Static files are served by the backend, with no separate nginx container. Reasons: the
 # deployment host had exhausted Docker's address pools, and the nginx `auth_request` variant
-# carries a known pitfall (`$scheme` inside the container is http, `$request_uri` comes without
-# the prefix, so `rd=` after login throws the user at the service root). Here the SSO gate
+# has a known pitfall (`$scheme` inside the container is http, `$request_uri` comes without
+# the prefix, so `rd=` after login dumps the user at the service root). Here the SSO gate
 # stays in the backend.
 #
 # ORDER MATTERS: the /api routers are mounted HIGHER UP, so a 404 from the API stays a 404
@@ -89,7 +89,7 @@ async def unhandled(request, exc: Exception):
 if STATIC_DIR.is_dir():
     INDEX = STATIC_DIR / "index.html"
 
-    # File names in /assets are hashed by Vite, so they can sit in cache for a long time.
+    # File names in /assets are hashed by Vite, so they can be cached for a long time.
     app.mount(
         "/assets",
         StaticFiles(directory=STATIC_DIR / "assets"),

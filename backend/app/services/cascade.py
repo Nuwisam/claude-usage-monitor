@@ -10,7 +10,7 @@ exactly why it has tests here instead of being glued together in a React compone
 
 One rule above all others: **"off" and "unknown" are two different things.** "Credits are
 off" is information, "I do not know whether you have credits" is an absence of information.
-Merging them into one would show a certain way out of the limit that may not be there.
+Merging them into one would show a way out of the limit that may not be there.
 """
 from __future__ import annotations
 
@@ -139,7 +139,7 @@ def build_cascade(facts: list[SeriesFacts]) -> list[CascadeRung]:
 
 def _exhausted(r: CascadeRung, eu: SeriesFacts | None) -> bool:
     if r.key == HARD_BLOCK:
-        return False                      # terminal rung, there is no descending from it
+        return False                      # terminal rung, there is nothing below it
     if r.key == CREDITS:
         if _flag(eu.extra if eu else None, "spend_limit_reached") is True:
             return True
@@ -170,7 +170,7 @@ def _mark_current(rungs: list[CascadeRung], session: SeriesFacts | None,
             i, descended = i + 1, True
             continue
         if r.state == UNKNOWN:
-            break                          # we do not guess — the UI will write "unknown"
+            break                          # we do not guess — the UI will show "unknown"
         if _exhausted(r, eu):
             i, descended = i + 1, True
             continue

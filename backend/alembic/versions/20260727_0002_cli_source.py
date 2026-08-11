@@ -23,11 +23,11 @@ result from disk. The migration pulls the schema along in three steps:
    machine and said nothing about the version running there — it was worse than no column,
    because it looked like data.
 
-3. SWITCHES OVER the limit_samples.source enum. `probe` stays, because the historical rows
+3. SWITCHES the limit_samples.source enum. `probe` stays, because the historical rows
    are correct measurements. `statusline` and `ratelimit_headers` drop out: they were never
    deployed and never will be — statusline does not work in the VS Code extension (#55643,
    closed not_planned), and the anthropic-ratelimit-unified-* headers would require a MITM
-   proxy on one's own traffic. The enum promised sources that do not exist.
+   proxy on your own traffic. The enum promised sources that do not exist.
 """
 from typing import Sequence, Union
 

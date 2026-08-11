@@ -79,7 +79,7 @@ class Account(Base):
 
 
 class Machine(Base):
-    """Machine == ingest token. Serves to revoke a single machine and to answer the
+    """Machine == ingest token. Exists to make a single machine revocable and to answer the
     question 'where did this data come from'."""
     __tablename__ = "machines"
 
@@ -131,7 +131,7 @@ class UsageSeries(Base):
     first_seen_at: Mapped[datetime] = _dt(nullable=False, server_default=func.now(6))
     last_seen_at: Mapped[datetime | None] = _dt()
     # A series seen only as null (e.g. seven_day_opus on an account without Opus) — we register
-    # it, but mark it, so that the UI does not clutter itself up with empty charts.
+    # it, but mark it, so that the UI is not cluttered with empty charts.
     ever_non_null: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
@@ -221,7 +221,7 @@ class LimitSample(Base):
     # /api/oauth/usage itself. It stays in the enum, because those rows are still in the
     # database and are still valid measurements. `statusline` and `ratelimit_headers` were
     # never shipped — statusline does not work in the VS Code extension (#55643, closed as
-    # not_planned), and the headers would need a MITM proxy on one's own traffic. Removed so
+    # not_planned), and the headers would need a MITM proxy on your own traffic. Removed so
     # that the enum does not promise sources that do not exist.
     source: Mapped[str] = mapped_column(
         Enum("probe", "cli_merged", "cli_usage_cache", name="sample_source"),
@@ -250,7 +250,7 @@ class LimitSample(Base):
 
 
 class SeriesState(Base):
-    """The hot row per (account, series), which lets /api/status read a dozen-odd rows
+    """The hot row per (account, series), which lets /api/status read a dozen or so rows
     instead of a groupwise-max over the whole fact table. A cache — rebuildable from limit_samples."""
     __tablename__ = "series_state"
 

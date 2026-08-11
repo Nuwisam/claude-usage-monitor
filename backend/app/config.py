@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     # --- Authorization of access to the UI/API ---
     # Required, with no default: every default would be the wrong answer. `none` would
     # silently open the data up for someone who simply did not read this far; anything
-    # else would knock over a local deployment that has no proxy in front of it. Let
+    # else would break a local deployment that has no proxy in front of it. Let
     # whoever installs it say outright what is supposed to happen.
     #
     # Type `Literal`, not `str` — Compose substitutes an EMPTY STRING for an unset

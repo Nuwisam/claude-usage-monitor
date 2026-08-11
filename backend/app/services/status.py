@@ -107,7 +107,7 @@ def _delta_1h(rows: Sequence[Sample], *, now: datetime, current: float | None,
     """The rise in usage and the time of the sample it is counted from.
 
     Baseline CLIPPED TO THE CURRENT WINDOW: without it, right after a reset the reference
-    point was a sample from the previous window and the UI wrote "-46 pp in the last hour"
+    point was a sample from the previous window and the UI showed "-46 pp in the last hour"
     for a whole hour.
     """
     if current is None:
@@ -293,8 +293,8 @@ async def build_account_status(
 
     # There used to be a warning here: "some series on account X are in the unknown state".
     # It went away together with the very notion of `unknown` in the UI: the view now shows
-    # the last MEASURED percent, and how much it is worth is told by the reading-age label
-    # next to each series. So the banner restated with a state name what was already shown
+    # the last MEASURED percent, and the reading-age label next to each series says how much
+    # it is worth. So the banner restated with a state name what was already shown
     # beside it as a number of minutes. `warnings[]` stays in the contract — nobody fills
     # it today, and that is the correct state, not a missing implementation.
 

@@ -51,7 +51,7 @@ router = APIRouter()
 #
 # WHY AN IN-PROCESS LOCK IS ENOUGH: entrypoint.sh starts a single uvicorn process
 # DELIBERATELY, because the SSE broker (services/events.py) lives in process memory — see
-# AGENTS.md, "Pitfalls of this environment". With --workers > 1 this lock falls silent and
+# AGENTS.md, "Pitfalls of this environment". With --workers > 1 this lock protects nothing and
 # 1020 comes back. It is the same condition AGENTS.md already forbids breaking, but there
 # it breaks loudly (SSE stops arriving) and here QUIETLY, so it is spelled out.
 #
@@ -195,8 +195,8 @@ async def ingest(
     #    unchanged value dedup writes no sample but does move `last_confirmed_at` — which
     #    is exactly what keeps the state `live`. Gating on the sample count would mute
     #    events in the most common case of all: when nothing is changing.
-    # 3. An exception must NOT bring ingest down. The probe is the only code sitting in
-    #    the path of your actual work; the chart may break, the session may not.
+    # 3. An exception must NOT bring ingest down. The probe is the only code sitting on
+    #    the critical path of your actual work; the chart may break, the session may not.
     try:
         await publish_accounts(db, [u for u in touched if u])
     except Exception as exc:                               # noqa: BLE001

@@ -175,7 +175,7 @@ def measured_at(ts: datetime | None, offset: timedelta,
     Expanded: `arrived_at - (sent_at - ts)`. The client's WALL clock does not enter the
     calculation — only the difference `sent_at - ts` counts, and that one is within a single
     clock and therefore trustworthy. The same formula handles entries from the spool: their
-    `sent_at` comes from the moment of the failed attempt, so the age computes itself and
+    `sent_at` comes from the moment of the failed attempt, so the age works out on its own and
     nothing has to be recalculated on the client side.
 
     Clamping to `arrived_at` guarantees the measurement is not newer than the moment of receipt.
@@ -417,7 +417,7 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
 
     source = meas.get("source") or "probe"
     if source not in ("probe", "cli_merged", "cli_usage_cache"):
-        source = "cli_usage_cache"      # unknown label: we do not wreck the write over an enum
+        source = "cli_usage_cache"      # unknown label: we do not fail the write over an enum
 
     batch = IngestBatch(
         received_at=now, machine_id=machine.id,
