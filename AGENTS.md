@@ -119,31 +119,11 @@ and regression tests for this; a real reset moves the boundary by a whole window
 told apart with a threshold, not with equality.
 
 **10. UI text is English (US), and so are comments.**
-The deliberate inconsistency is gone: series labels, warnings and captions reach the screen in
-English, and code comments are written the same way. Fixed terminology: window, pool, series,
+Series labels, warnings and captions reach the screen in English, and code comments are
+written the same way. Fixed terminology: window, pool, series,
 sample, freshness, cascade, withdrawn meter, block, permission, credits, overage, reset, probe,
 frame, banner, card. `display_label` is refreshed on every ingest, so a dictionary fix reaches
 series registered earlier.
-
-The migration is finished. **Every Polish string still in the tree is a decision, and each one
-carries an `i18n-keep:` note at its site saying why** — so do not "finish the job" on them:
-
-- `panel/panel/draw.py`, `panel/panel/__main__.py`, `panel/tests/test_render.py` — the glyphs
-  ARE the measurement. `Ń` reaches higher than any unaccented capital, `ĄĘŚŹŻgjpqy` spans the
-  full ascender-to-descender range, and line height is computed from them. English text makes
-  these pass while measuring nothing.
-- `backend/tests/test_session_status.py` — the only surviving record of a cp1250 bug, and the
-  record is the bytes: the mojibake `'umieraÄ‡'`, `Ł` as `C5 81`, Polish paths and commands as
-  tool input, and the docstrings explaining them.
-- `panel/README.md` — one verbatim Windows device description, compared character by
-  character against Device Manager.
-
-Three earlier versions of this paragraph listed unfinished work by naming individual strings,
-and each time the strings were translated out from under it — the note became the false
-statement it was warning about. Hence the rule that outlives it: **do not describe the tree
-from memory, ask it.** `git grep -nE '[ąćęłńóśźż]' -- . ':!docs/handout'` finds the accented
-ones, `git grep -n i18n-keep` finds the sanctioned ones, and neither sees diacritic-free
-Polish — so a grep is a floor and a read is the check.
 
 **11. Time comes in through `NaiveUtcDt`, goes out through `UtcDt`.**
 Ever since the output started carrying a zone, the browser **sends it back** (`Date.toISOString()`), while
@@ -297,7 +277,7 @@ unanswered.
   cost two accidental calls at ~$0.10 each.
 - **The hook payload is UTF-8, but `sys.stdin` decodes it with the locale encoding.** In the
   hook process, measured `sys.stdin.encoding = cp1250`, `errors = surrogateescape` — meaning
-  `sys.stdin.read()` silently corrupts Polish characters (one character becomes two: `ć` →
+  `sys.stdin.read()` silently corrupts accented characters (one character becomes two: `ć` →
   `Ä‡`), and turns bytes with no cp1250 counterpart (`0x81 0x83 0x88 0x90 0x98`, among them `Ł`
   and the typographic apostrophe) into lone surrogates. Those don't fall over until a layer
   further down, at `.encode("utf-8")` inside `write_excl` — and because that call sits under

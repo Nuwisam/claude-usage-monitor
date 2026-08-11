@@ -9,10 +9,9 @@ from PIL import ImageDraw, ImageFont
 
 from . import theme
 
-# i18n-keep: these glyphs ARE the measurement, not text.
 # Probe string for measuring height: the diacritics reach up, the tails reach down.
 # Measuring by the nominal size would clip "Ń" and "ą" at 10-12 px.
-# Keep these exact glyphs: swapping them for plain English letters would silently
+# Keep these exact glyphs: swapping them for unaccented letters would silently
 # change every line height computed on the panel.
 PROBE = "ĄĘŚŹŻgjpqy"
 

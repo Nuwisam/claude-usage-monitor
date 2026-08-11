@@ -11,15 +11,14 @@ they are loaded from changed.
 Every case matches measured harness behavior, not an idea of it. The measurement methodology
 lives in the script's own docstring.
 
-i18n-keep: three things in this file stay Polish and none of them is untranslated work.
-This module is the only surviving record of a cp1250 bug, and the record is made of the
-bytes themselves:
+Three things in this file are bytes, not text. This module is the only surviving record
+of a cp1250 bug, and the record is made of those bytes:
 
   * the mojibake `'umieraÄ‡'` and the note that `Ł` is `C5 81` — what the failure LOOKED
     like. Retype either and the evidence is gone;
   * four `Z:\\projects\\...` literals in the `cwd` fixtures. A Windows drive path is what
     the hook really receives, and the cp1250 crash happened on exactly such a path;
-  * the Polish file path and shell command fed as tool input. The accented characters are
+  * the accented file path and shell command fed as tool input. Those characters are
     the input under test — replace them with ASCII and the test still passes while
     exercising nothing.
 
@@ -746,8 +745,8 @@ def test_local_mode_without_configuration(ss):
     assert ss.sent == []
 
 
-def test_polish_characters_in_detail(ss, tmp_path):
-    """Without an explicit utf-8, cp1250 blows up on a Polish path — and that is an exception
+def test_accented_characters_in_detail(ss, tmp_path):
+    """Without an explicit utf-8, cp1250 blows up on an accented path — and that is an exception
     inside a script that has no right to raise at all."""
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Edit",
                           tool_input={"file_path": r"C:\Zażółć\gęślą\jaźń.py"}))

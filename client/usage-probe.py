@@ -871,7 +871,7 @@ def write_excl(name, payload):
         return False
     try:
         # ensure_ascii=False + explicit utf-8, as in log_local: without it cp1250 blows up
-        # on a path with Polish characters in `detail`.
+        # on a path with accented characters in `detail`.
         os.write(fd, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
     except Exception:
         pass
@@ -1168,7 +1168,7 @@ def transcript_closed(data, key, records):
     # A `permission` entry key is `call_key(tool_name, tool_input, prompt_id)`, i.e. a hash
     # that the transcript does not contain. Its ingredients are there, so it is recomputed
     # with THE SAME function — not a rewritten formula, because `json.dumps` there carries
-    # `ensure_ascii=False, default=str`, and paths with Polish characters are real. The
+    # `ensure_ascii=False, default=str`, and paths with accented characters are real. The
     # ingredients were measured to be identical: `tool_input` from the hook reproduces
     # `input` from the transcript byte for byte 202/202 (Bash, Edit, Write, PowerShell, Read
     # and more). The pre-filter on the tool name is FREE and does not change the result:
@@ -1305,7 +1305,7 @@ def toast(reason, project, detail):
     carrier — Windows silently drops toasts from unregistered AppIDs.
 
     -EncodedCommand, NOT -Command: PowerShell 5.1 decodes the command line with the console
-    code page and Polish characters came out as mojibake. Base64 from UTF-16LE is immune to
+    code page and accented characters came out as mojibake. Base64 from UTF-16LE is immune to
     that and incidentally removes the quoting problem in `detail`.
     """
     if os.name != "nt":
@@ -1582,7 +1582,7 @@ def main():
 
     # The hook payload arrives in UTF-8, but `sys.stdin` in text mode decodes it with the
     # locale encoding (cp1250 here) and `errors=surrogateescape`. There were two effects,
-    # both silent: Polish characters reached the toast and the panel in doubled form, with
+    # both silent: accented characters reached the toast and the panel in doubled form, with
     # one character becoming two, and bytes with no counterpart in cp1250 (0x81 0x83 0x88 0x90 0x98 — that is,
     # among others, "L" with a stroke and the typographic apostrophe) became lone
     # surrogates, which broke `write_excl` on `.encode("utf-8")`. The block entry was then

@@ -10,12 +10,11 @@ Two families of fixtures, because two different consumers read them:
     and the layout of the file are part of the test case here: `_extract_block` walks the
     text with `text.find`, and the file has duplicate keys differing in letter case.
 
-i18n-keep: `backend/tests/fixtures/*.json` are BYTE-FROZEN and no wave of the Polish to
-English migration may touch them. They are captures of a real payload, so their Polish
-project paths and their duplicate keys differing only in letter case are the test case
-itself, not text. `_extract_block` walks these files with `text.find`, which means the
-size and the byte layout are load-bearing; editing one to look tidier changes what is
-being tested without changing any assertion.
+`backend/tests/fixtures/*.json` are BYTE-FROZEN. They are captures of a real payload, so
+their duplicate keys differing only in letter case are the test case itself, not text.
+`_extract_block` walks these files with `text.find`, which means the size and the byte
+layout are load-bearing; editing one to look tidier changes what is being tested without
+changing any assertion.
 
 Identities are scrubbed (e-mail, UUIDs, userID, machineID, referral code, project paths,
 command bodies). LEFT UNTOUCHED are `cachedUsageUtilization` and

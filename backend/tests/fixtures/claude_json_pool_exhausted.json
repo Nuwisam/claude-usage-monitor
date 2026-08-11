@@ -831,7 +831,7 @@
       },
       "lastGracefulShutdown": false,
       "lastHintSessionId": "00000000-0000-4000-8000-000000000111",
-      "lastSessionFirstPrompt": "przykladowe polecenie uzytkownika",
+      "lastSessionFirstPrompt": "example command typed by the user",
       "lastSessionModified": 1777896580178,
       "disabledMcpServers": [
         "claude.ai Example tracker"
@@ -950,7 +950,7 @@
         "frame_duration_ms_p99": 7.7780559999999666
       },
       "lastHintSessionId": "00000000-0000-4000-8000-000000000110",
-      "lastSessionFirstPrompt": "przykladowe polecenie uzytkownika",
+      "lastSessionFirstPrompt": "example command typed by the user",
       "lastSessionModified": 1778677330237
     },
     "c:/git/project-23": {

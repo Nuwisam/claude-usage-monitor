@@ -53,10 +53,9 @@ source:
      it several times over, so what stays on the glass is the TAIL of the payload,
      not its start.
 
-     i18n-keep: "DOL" is the Polish word that was actually drawn into the test
-     payload on the bench, and what the glass then showed is the whole finding.
-     Translating it would rewrite the record of a measurement rather than the
-     English around it.
+     "DOL" is the exact payload that was drawn onto the glass on the bench, and
+     what the glass then showed is the whole finding. Changing the string would
+     rewrite the record of a measurement rather than the prose around it.
 
      Measured: a 480x60 window with a payload carrying the word
      "DOL" ("bottom") along its foot showed exactly that word; a payload padded

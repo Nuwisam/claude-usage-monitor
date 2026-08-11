@@ -55,12 +55,11 @@ same thing happens to look on a desktop screen, not at what the panel draws.
 - **English on screen** — on-screen text is written in English (project rule 10 in
   `AGENTS.md`).
 - **Height is measured from the actual outline, not from the nominal size.** The probe string
-  that does the measuring (`PROBE` in `panel/panel/draw.py`) is a run of Polish diacritics and
+  that does the measuring (`PROBE` in `panel/panel/draw.py`) is a run of accented capitals and
   descenders, `ĄĘŚŹŻgjpqy` — accents that reach up, tails that reach down. Measured against the
   nominal size instead, `Ń` and `ą` clip at 10–12 px. Those glyphs are the measurement, not
-  text, which is why they are held under an `i18n-keep` sentinel even though nothing Polish
-  reaches the glass: swapping them for plain English letters would silently change every line
-  height on the panel.
+  text, and none of them reaches the glass: swapping them for unaccented letters would
+  silently change every line height on the panel.
 
 ### Palette (`panel/panel/theme.py`)
 

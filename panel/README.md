@@ -106,7 +106,7 @@ on this desk; the driver is [`panel/drivers/turing_rev_a.py`](panel/drivers/turi
 |---|---|
 | identity | `USB\VID_1A86&PID_5722\USB35INCHIPSV2`, CompatibleIds `USB\Class_02&SubClass_02&Prot_01` |
 | driver | in-box **usbser.sys** (CDC-ACM), no CH34x install on a fresh machine |
-| BusReportedDeviceDesc | `UsbMonitor`; Windows shows it as "Urządzenie szeregowe USB (COMn)" <!-- i18n-keep: verbatim OS string, compared character by character against Device Manager; a translation makes it decoration --> |
+| BusReportedDeviceDesc | `UsbMonitor`; Device Manager shows it as "USB Serial Device (COMn)", localized on a non-English Windows |
 | resolution | 320 × 480 **portrait**; our 480 × 320 layout is rotated 90° host-side |
 | pixels | RGB565 **low byte first** (the AX206 wants the other order) |
 | wire | 115200 8N1 with rtscts — **the configured baud is ignored**, 1 M and 2 M measure the same |
