@@ -50,16 +50,13 @@ Above, the end of the ladder on two accounts. On the right the weekly pool is ex
 credits have reached their ceiling — the next stop is a hard block. On the left the organization
 has switched credits off, and the tile says so, instead of showing a silent zero.
 
-<details>
-<summary>📈 And history, if you like charts</summary>
+## 📈 History
 
 ![The History view: one series across accounts, with reset boundaries and gaps marked](docs/screenshots/history.png)
 
 The last 6 hours, 24 hours, 7 or 30 days, one series at a time across every account. Gaps are
 drawn as gaps — a period with no measurements looks different from a period of no usage, and the
 legend says which is which.
-
-</details>
 
 ## ✨ Whichever screen you look at
 
