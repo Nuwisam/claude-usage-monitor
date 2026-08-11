@@ -196,6 +196,7 @@ frontend/   React 18 + Vite + TypeScript, no Tailwind and no charting library
   src/mocks/             VITE_MOCKS=1: states that cannot be triggered against a live deployment
 docs/       API.md (the contract), RUNBOOK.md (operations and diagnostics)
               PANEL-ALERT-HANDOUT.md + handout/ — the built design for the alert card
+              screenshots/ — the web UI images in README.md, rendered from VITE_MOCKS
 deploy/     Apache vhost template; the secret is substituted at deploy time, NOT in the repo
 ```
 

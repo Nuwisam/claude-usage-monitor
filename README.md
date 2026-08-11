@@ -1,6 +1,86 @@
 # Claude Usage Monitor
 
-A live view of **current Claude limits** across multiple accounts (Max and Team), with history in a database.
+**How much of your Claude limit is left — every account, every machine, on one page.**
+Before you start the big task, not halfway through it.
+
+![The Live view: two accounts, the current session and the weekly window](docs/screenshots/live.png)
+
+## ✨ What it gives you
+
+- 📊 **All your accounts side by side.** Max, Team, work, private — whichever ones you sign in
+  to. They are recognized by themselves; there is nothing to label.
+- ⏳ **The current 5-hour session and the weekly window,** each with the percentage used and the
+  time left until it resets.
+- 🪜 **What happens when a window runs out** — paid credits first, then a hard stop — shown as
+  the ladder it actually is, so you can see the next rung coming.
+- 📈 **History,** so "am I burning through this faster than usual?" has an answer.
+- 🖥️ **A small screen on your desk** (optional) showing the same thing, without a browser tab.
+- 🔔 **A nudge when Claude is stuck waiting for you** — a question, a permission, a plan to
+  accept — so a walk to the kitchen doesn't cost you twenty idle minutes.
+- 🤫 **A number you can trust.** When a reading is old or missing, it says so. It never shows a
+  confident 0%, because that is exactly the number you would act on.
+
+## 📈 History
+
+![The History view: one series across accounts, with reset boundaries and gaps marked](docs/screenshots/history.png)
+
+The last 6 hours, 24 hours, 7 or 30 days, one series at a time across every account. Gaps are
+drawn as gaps — a period with no measurements looks different from a period of no usage, and the
+legend says which is which.
+
+## 🪜 When a window runs out
+
+![The cascade after the weekly pool is exhausted: credits, then the hard block](docs/screenshots/live-credits.png)
+
+Running out of the weekly window is rarely the end — on paid plans the work continues on credits,
+up to a ceiling, and only then stops for good. The row of tiles reads left to right and marks the
+rung you are standing on, plus the amount that is left on it. If an organization switches credits
+off, that is shown too, instead of a silent zero.
+
+## 🖥️ On the desk
+
+![Two accounts on the desk panel: session, week, credits](docs/handout/bands-no-alert.png)
+
+A 480x320 USB display next to the keyboard shows the same numbers for every account, always on,
+with no browser tab and no window to raise. Supported panels, wiring and setup:
+[`panel/README.md`](panel/README.md#installation).
+
+![The panel showing two sessions waiting for a person](docs/handout/card-pair.png)
+
+And when a session is waiting for you, the panel says so — which project, what kind of question,
+and how long it has been sitting there. The design, in pictures:
+[`docs/PANEL-ALERT-HANDOUT.md`](docs/PANEL-ALERT-HANDOUT.md).
+
+## 🔒 Is this safe for my account?
+
+- **Nothing is ever sent to Anthropic's API.** The number is read from Claude Code itself, which
+  already knows it.
+- **Your login token is never used to log in anywhere.** It is not sent, not copied, and the
+  refresh mechanism — the usual way people lose an account to a tool like this — is never
+  touched. [Details](#how-the-measurement-is-taken).
+- **Asking about the limit does not spend the limit.** Measured: zero model turns, zero cost.
+  [How that works](#what-we-do-instead).
+- **Your own machine, your own server.** Nothing goes to a third party;
+  [without a server](#installing-the-client-on-a-new-machine) the probe just writes a local log.
+
+## 🚀 Try it
+
+Your own server, two commands ([the details](#server-deployment)):
+
+```bash
+cp .env.example .env      # MARIADB_*, AUTH_MODE, INGEST_TOKENS
+docker compose up -d --build
+```
+
+Then connect a machine — requirements, tokens and hooks, step by step:
+[`client/README.md`](client/README.md#installation).
+
+---
+
+The rest of this file is the engineering side: what is built, why it is built this way, and how
+to run it.
+
+## How the measurement is taken
 
 Data is collected by a probe run from a Claude Code hook **on the user's machine**. The probe
 **sends no request to `api.anthropic.com`** — the measurement is delegated to Claude Code itself
