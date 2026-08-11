@@ -271,11 +271,8 @@ pull in entries from hours earlier too.
 
 - **`blocked_debounce_sec` (2 s)** — how long a block must last before the card
   comes in. Without it, permission granted right away would give a full-screen
-  flash.
-- **`blocked_linger_sec` (10 s)** — how long the card stays after the block is
-  gone, **frozen**. Freezing matters: without it, "waiting N min" would keep
-  ticking on a prompt you already answered, and every jump of that text is a
-  full frame on the AX206.
+  flash. **There is no threshold on the way out** — the card is a pure function
+  of what is still waiting, so answering hands the screen back on the next tick.
 - **`session_alerts: false`** turns the whole feature off — the frame is then
   ignored and the panel behaves exactly as before. This is a **display** flag;
   the source is switched off separately, with the `session_status` key in

@@ -61,7 +61,7 @@ def single_instance(path=None):
 class App:
     def __init__(self, cfg, monotonic=time.monotonic):
         self.cfg = cfg
-        # An injectable clock, because `holding()` and the debounce/linger stamps read
+        # An injectable clock, because `holding()` and the debounce stamps read
         # it directly, and the tests cannot wait 300 s for the card to burn out.
         # `fmt.ServerClock` has been injected from the start — the same idiom, not a new one.
         self.monotonic = monotonic
@@ -84,7 +84,6 @@ class App:
         # increments here, so there is no state to reconcile either.
         self.alerts = []
         self._seen_at = {}          # key -> monotonic of the first sighting (debounce)
-        self._card = None           # (AlertState, linger expiry mono, or None)
         self._carded = set()        # keys that already had their flash
         self._flash_until = None
         # A latch: whether anything has been painted in this run. Without it a card put
@@ -234,20 +233,14 @@ class App:
             # the alert is the one thing on this screen that calls for getting up.
             footer = ("panel: contract mismatch"
                       if self.contract_mismatch is not None else None)
-            self._card = (render.alert_state(live, now_ms, footer, flood), None)
-        elif self._card is not None:
-            state, expiry = self._card
-            if expiry is None:
-                # Linger: the card stays a moment longer and is FROZEN. Without freezing,
-                # "waiting N min" would keep ticking on a prompt already answered, and
-                # every step of it is a full frame on the AX206.
-                self._card = (state, mono + self.cfg.blocked_linger_sec)
-            elif mono >= expiry:
-                self._card = None
-        if self._card is not None:
             if self._flash_until is not None and mono >= self._flash_until:
                 self._flash_until = None
-            return render.ScreenState(alert=self._card[0])
+            return render.ScreenState(
+                alert=render.alert_state(live, now_ms, footer, flood))
+        # The card is a pure function of `live`: nothing takeover-worthy, nothing drawn.
+        # No state to reconcile and no threshold on the way out — answering hands the
+        # screen back on this tick.
+        self._flash_until = None
 
         if self.contract_mismatch is not None:
             return render.ScreenState(message=[

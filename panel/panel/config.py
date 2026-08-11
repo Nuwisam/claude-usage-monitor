@@ -76,10 +76,6 @@ DEFAULTS = {
     # when permission is granted right away. A JUDGEMENT, not a measurement — hence
     # the configuration key.
     "blocked_debounce_sec": 2,
-    # How long the card stays after the last block is gone, FROZEN. A scene change
-    # costs a full frame on both screens, so every switch saved is a real ~1.5 s in
-    # which the panel refreshes nothing else.
-    "blocked_linger_sec": 10,
 }
 
 

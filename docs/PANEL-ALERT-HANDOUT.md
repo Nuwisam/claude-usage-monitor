@@ -219,8 +219,9 @@ drops down into the `Mode` strip. The reverse order would demote the alert to a 
 bottom of an error screen — and this is the one thing on this panel that requires you to get
 up from your desk.
 
-**7. Debounce 2 s on entry, linger 10 s on exit**, the card is **frozen** during linger.
-These are judgment calls, not measurements, and all three are keys in `panel.json`.
+**7. Debounce 2 s on entry, nothing on exit.** The card is a pure function of what is
+still waiting, so answering hands the screen back on the next tick. The debounce is a
+judgment call, not a measurement, and it is a key in `panel.json`.
 
 ---
 

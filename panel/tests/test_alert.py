@@ -79,34 +79,16 @@ def test_card_carries_project_tool_and_machine():
     assert card.title == "NEEDS PERMISSION"
 
 
-def test_empty_set_extinguishes_card_only_after_linger():
+def test_empty_set_extinguishes_card_at_once():
+    """The card is a pure function of what is still waiting, so an answered prompt hands
+    the screen back on the SAME tick — there is no threshold on the way out."""
     z = Clock()
     a = app(z)
     a.on_event("alert", stream_frame(entry()))
     z.advance(5)
     assert a.screen().alert is not None
     a.on_event("alert", stream_frame())
-    # The linger starts on the first render AFTER the set empties, not at the moment the
-    # frame arrives: what counts is the moment the scene would have switched.
-    assert a.screen().alert is not None, "linger limits the number of scene transitions"
-    z.advance(a.cfg.blocked_linger_sec + 1)
-    assert a.screen().alert is None
-
-
-def test_card_in_linger_is_frozen():
-    """Without the freeze, 'waiting N min' would tick on a prompt that has already been
-    answered, and every jump of that caption is a full frame on the AX206."""
-    z = Clock()
-    a = app(z)
-    # Chosen so that the first render sees 119 s and five seconds later 124 s.
-    a.on_event("alert", stream_frame(entry(since="2026-08-05T21:05:06Z")))
-    z.advance(5)
-    before = a.screen().alert.rows[0].waited
-    assert before == "1 min"
-    a.on_event("alert", stream_frame())
-    a.screen()                      # arming the linger
-    z.advance(5)                    # crosses the minute boundary — without the freeze "2 min"
-    assert a.screen().alert.rows[0].waited == before
+    assert a.screen().alert is None, "an answered prompt must not outlive its own tick"
 
 
 def test_window_burnout_collapses_card_to_marker():
@@ -119,9 +101,7 @@ def test_window_burnout_collapses_card_to_marker():
     # the monotonic one: otherwise the test would check something other than the real run.
     a.clock.anchor("2026-08-05T21:08:00Z")
     a.first_data_at = z.t
-    a.screen()                      # window burnt out: the card enters the linger
-    z.advance(a.cfg.blocked_linger_sec + 1)
-    screen = a.screen()
+    screen = a.screen()             # window burnt out: the card hands the screen back
     assert screen.alert is None, "after alert_takeover_sec the card must hand back the screen"
     assert screen.bands[0].alert, "but the entry lives on and must be visible as a marker"
 
@@ -181,9 +161,7 @@ def test_burnt_out_set_extinguishes_entirely():
     assert len(a.screen().alert.rows) == 2
     # The SERVER clock, because the window counts from `since`, not from the monotonic one.
     a.clock.anchor("2026-08-05T21:09:00Z")
-    a.screen()                      # window burnt out for both: the card enters the linger
-    z.advance(a.cfg.blocked_linger_sec + 1)
-    screen = a.screen()
+    screen = a.screen()             # window burnt out for both: the card goes at once
     assert screen.alert is None, "burnt-out set is extinguished entirely"
     assert screen.bands[0].alert and screen.bands[1].alert, "both entries live on as markers"
 
@@ -223,8 +201,11 @@ def test_full_frame_enters_then_fades():
 
 
 def test_flashing_does_not_return_while_card_ticks():
+    # `alert_takeover_sec` explicitly infinite: the loop below walks 5 minutes, which is
+    # exactly where the default window burns out — and a card that handed the screen
+    # back would make this test pass for the wrong reason.
     z = Clock()
-    a = app(z, alert_flash_sec=6)
+    a = app(z, alert_flash_sec=6, alert_takeover_sec="infinity")
     a.on_event("alert", stream_frame(entry()))
     z.advance(5)
     after_flash(a, z)
@@ -349,8 +330,6 @@ def test_after_card_we_do_not_return_to_holding():
     z.advance(5)
     assert a.tick() is not None
     a.on_event("alert", stream_frame())
-    a.screen()                      # arming the linger
-    z.advance(a.cfg.blocked_linger_sec + 1)
     assert not a.holding()
     screen = a.screen()
     assert screen.message, "with no usage data we say so plainly, instead of painting empty bands"
