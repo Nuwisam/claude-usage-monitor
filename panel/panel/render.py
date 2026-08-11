@@ -173,7 +173,7 @@ def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None,
 
     # The age is taken from the CONFIRMATION, not from the sample's write: dedup
     # does not write a sample when the value has not changed, so `capturedAt` is at
-    # times hours older than the last measurement (frontend/src/lib/freshness.ts:37-38).
+    # times hours older than the last measurement (frontend/src/lib/freshness.ts:43-45).
     #
     # From the OLDER of the two windows, not from whichever comes first. This label
     # is the ONLY carrier of freshness (see view.py) and it sits next to the

@@ -36,7 +36,7 @@ def ssl_context(cfg):
 
     Verification is deliberately NOT disabled. `ca_bundle` in panel.json allows
     pointing at a file of your own, in case certifi is not installed. Copied from
-    the probe (client/usage-probe.py:467) — the same pitfall, the same remedy.
+    the probe (client/usage-probe.py:591) — the same pitfall, the same remedy.
     """
     global _ssl_ctx
     if _ssl_ctx is not None:
@@ -56,7 +56,7 @@ def ssl_context(cfg):
 def parse_events(chunk_iter):
     """A byte stream -> (event, data). A frame ends with an empty line.
 
-    `data:` can appear several times in one frame — events.py:47-56 breaks
+    `data:` can appear several times in one frame — services/events.py:47-56 breaks
     multi-line JSON up that way, so joining is required, not cosmetic.
     """
     buf = b""

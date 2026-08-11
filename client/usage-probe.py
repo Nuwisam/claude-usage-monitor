@@ -405,7 +405,7 @@ def _limit_model(lim):
     the model regardless of `kind`), so `scope: "global"` would give an AttributeError in
     `merge()` — that is, before `log_local`, before the spool and before the POST. The run
     would vanish without a trace, on every following cycle, for as long as the cache has
-    that shape. The backend carries the same guard (backend/app/parsing.py:386)."""
+    that shape. The backend carries the same guard (backend/app/parsing.py:425-426)."""
     scope = lim.get("scope")
     if not isinstance(scope, dict):
         return None
@@ -1658,7 +1658,7 @@ def main():
 
     # As in post(): a local import, because this point is already past the throttle. Do NOT
     # move it up — a use before this line is an UnboundLocalError, which the `except
-    # Exception` at :1766 swallows into silence and the machine stops reporting without
+    # Exception` at :1754 swallows into silence and the machine stops reporting without
     # a single symptom.
     import socket, hashlib
 

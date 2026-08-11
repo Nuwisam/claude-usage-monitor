@@ -27,7 +27,7 @@ router = APIRouter()
 
 # Serialization of ingest WRITES within the process.
 #
-# `ingest_one` starts with a SELECT on `machines` (services/ingest.py:61) — that opens the
+# `ingest_one` starts with a SELECT on `machines` (services/ingest.py:75) — that opens the
 # transaction's read view — and then mutates that same, SINGLE row (`last_seen_at`,
 # `batches`) and inserts a child into `ingest_batches` with an FK onto it, so the insert
 # must take a lock on the parent row. MariaDB since 11.6.2 ships
@@ -43,8 +43,8 @@ router = APIRouter()
 # touch the database, and `AsyncSession` opens no transaction before the first `execute()`.
 #
 # The hot rows are not only `machines`: the same select-then-mutate shape appears in
-# `get_or_create_account` (services/ingest.py:73), `get_or_create_series` (:100),
-# `store_raw` (:134) and the `MachineAccount` pair upsert in `ingest_one`. `raw_payloads`
+# `get_or_create_account` (services/ingest.py:90), `get_or_create_series` (:117),
+# `store_raw` (:151) and the `MachineAccount` pair upsert in `ingest_one`. `raw_payloads`
 # is hot PRECISELY when nothing is happening, because the response is then byte-identical
 # and falls into the same row — one shared by all machines and all accounts. Hence a single
 # lock, covering the whole of `ingest_one` rather than just the machine part.

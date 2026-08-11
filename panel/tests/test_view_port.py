@@ -52,7 +52,7 @@ def test_no_measurement_at_all_gives_words_not_zero():
 
 
 def test_inferred_reset_has_a_tilde():
-    """The tilde tells inference apart from measurement (freshness.ts:84) — the
+    """The tilde tells inference apart from measurement (freshness.ts:69) — the
     only place where the number comes not from a measurement but from the
     server's reasoning."""
     v = view.describe_series(series(freshness="inferred_reset", utilization=0,
@@ -80,7 +80,7 @@ def test_hundred_is_the_end():
 
 def test_four_reasons_for_missing_boundary_give_four_captions():
     """resetsAt: null has several causes and merging them into one caption was a bug
-    once already (freshness.ts:105-125). The count is asserted separately, because
+    once already (freshness.ts:134-136). The count is asserted separately, because
     a set with a duplicate dedupes in silence: two captions shortened to the same
     words would give a 3-element set matching a 3-element literal, and the four
     reasons would render identically on the glass again."""
@@ -121,7 +121,7 @@ def test_no_series_does_not_blow_up():
 
 def test_hero_rests_on_session_not_on_isActive():
     """Were the hero to follow isActive, the same screen would mean something else
-    depending on the day of the week (HeroSession.tsx:20-22)."""
+    depending on the day of the week (HeroSession.tsx:21-22)."""
     week = series(seriesKey="limit:weekly_all|weekly|-|-", kind="weekly_all",
                      bucketKey="seven_day", isActive=True, utilization=99)
     session = series(isActive=False, utilization=3)
@@ -130,7 +130,7 @@ def test_hero_rests_on_session_not_on_isActive():
 
 def test_pickers_skip_duplicates():
     """We render only primary series — bucket and limit are the same number
-    reported twice (status.py:96-120)."""
+    reported twice (backend/app/services/status.py:128-156)."""
     duplicate = series(seriesKey="bucket:five_hour", primary=False, kind=None,
                       utilization=2)
     real = series(utilization=2)

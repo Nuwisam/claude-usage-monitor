@@ -90,7 +90,7 @@ class SeriesStatus(CamelModel):
     # otherwise the UI, which computes `utilization ?? rawUtilization`, would draw a
     # measured 0% at the very moment of a hard block. `raw_utilization` is NOT null: it
     # keeps the last MEASURED percent, so the reading survives with its age beside it
-    # (`services/status.py:221-269` builds exactly that).
+    # (`services/status.py:221-290` builds exactly that).
     unavailable_reason: str | None = None
     resets_at: UtcDt | None
     seconds_to_reset: int | None

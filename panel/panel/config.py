@@ -1,7 +1,7 @@
 """Panel configuration — %LOCALAPPDATA%\\claude-usage-monitor\\panel.json.
 
 The same directory as the probe's config.json, but a SEPARATE file. The stream
-token has a different scope than the ingest token (backend/app/auth.py:62-67
+token has a different scope than the ingest token (backend/app/auth.py:76-81
 rejects an ingest one on /stream), and the probe's file gets overwritten when the
 probe is updated — the panel settings must not be lost along the way.
 

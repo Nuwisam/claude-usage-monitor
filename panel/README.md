@@ -188,7 +188,7 @@ that repaint is the only way back from a silent desync.
 
 `GET /api/stream?account=<uuid>&account=<uuid>` with `Authorization: Bearer`.
 This is the **only** endpoint that accepts a token — `/api/status` is SSO-only
-(`backend/app/auth.py:54-89`), so the panel has nowhere to poll from and does
+(`backend/app/routers/read.py:37-39`), so the panel has nowhere to poll from and does
 not need to: every `account` frame carries the full `AccountStatus` card, so a
 lost frame is harmless.
 

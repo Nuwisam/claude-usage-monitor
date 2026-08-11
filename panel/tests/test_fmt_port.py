@@ -12,12 +12,12 @@ from panel import fmt
 
 
 @pytest.mark.parametrize("secs,want", [
-    (2 * 86400 + 4 * 3600, "2 d 4 h"),      # time.ts:60
-    (3 * 3600 + 5 * 60, "3 h 05 min"),      # time.ts:61 — leading zero in the minutes
-    (12 * 60 + 34, "12 min 34 s"),          # time.ts:62 — leading zero in the seconds
+    (2 * 86400 + 4 * 3600, "2 d 4 h"),      # time.ts:140
+    (3 * 3600 + 5 * 60, "3 h 05 min"),      # time.ts:141 — leading zero in the minutes
+    (12 * 60 + 34, "12 min 34 s"),          # time.ts:142 — leading zero in the seconds
     (3600, "1 h 00 min"),
     (59, "0 min 59 s"),
-    (0, "past reset"),                      # time.ts:56
+    (0, "past reset"),                      # time.ts:136
     (-5, "past reset"),
 ])
 def test_countdown(secs, want):
@@ -25,7 +25,7 @@ def test_countdown(secs, want):
 
 
 def test_countdown_without_a_target():
-    # time.ts:54 — no boundary is NOT the same thing as a boundary in the past.
+    # time.ts:134 — no boundary is NOT the same thing as a boundary in the past.
     assert fmt.countdown(None, 0.0) == "no reset"
 
 
@@ -40,9 +40,9 @@ def test_parse_utc_does_not_blow_up_on_a_non_string(junk):
 
 @pytest.mark.parametrize("secs,want", [
     (0, "0 s ago"),
-    (3, "3 s ago"),                         # time.ts:68
+    (3, "3 s ago"),                         # time.ts:153
     (59, "59 s ago"),
-    (60, "1 min ago"),                      # time.ts:70
+    (60, "1 min ago"),                      # time.ts:155
     (5 * 60, "5 min ago"),
     (3600 + 25 * 60, "1 h 25 min ago"),     # time.ts:157
     (-10, "0 s ago"),                       # a negative age is clipped to zero
@@ -92,7 +92,7 @@ def test_money_does_not_go_through_float():
     (None, 0.0), (-5, 0.0), (0, 0.0), (42, 42.0), (100, 100.0), (250, 100.0),
 ])
 def test_clamp_pct(value, want):
-    # format.ts:46 — the bar must not run off the track or dip below zero.
+    # format.ts:47-50 — the bar must not run off the track or dip below zero.
     assert fmt.clamp_pct(value) == want
 
 

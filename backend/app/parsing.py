@@ -197,7 +197,7 @@ def known_same_reset_window(a: datetime | None, b: datetime | None, eps_sec: flo
     minute — except that the upper bound is set not by the probe's frequency but by its
     silence: when the client goes quiet right after the write, the wrong value holds until
     `freshness()` degrades it, that is until `CLIENT_SILENT_SEC` (6 h by default,
-    `app/config.py:38`), and for that whole time it is served as `live`/`stale` — as
+    `app/config.py:75`), and for that whole time it is served as `live`/`stale` — as
     a value and not as ignorance. A frozen state lies for exactly as long, and on top of
     that has no way out of it: for `spend:org` and `extra:usage` a boundary will NEVER
     arrive. The sample reaches the database in both variants, so neither loses history. The

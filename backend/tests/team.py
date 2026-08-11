@@ -64,7 +64,7 @@ CLAUDE_JSON_STATES = [
 ]
 
 # The account from the same files, mapped onto the fields the probe assembles
-# (client/usage-probe.py:571). Team, because `spend` is a binding limit only on Team.
+# (client/usage-probe.py:1666). Team, because `spend` is a binding limit only on Team.
 ACCOUNT_TEAM_REAL = {
     "uuid": "00000000-0000-4000-8000-000000000001",
     "email": "usage-monitor@example.test",
