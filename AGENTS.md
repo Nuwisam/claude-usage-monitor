@@ -140,7 +140,6 @@ carries an `i18n-keep:` note at its site saying why** — so do not "finish the 
   splits its count rather than renaming it.
 - `panel/README.md` — one verbatim Windows device description, compared character by
   character against Device Manager.
-- The glossary table below, which is Polish by definition.
 
 Three earlier versions of this paragraph listed unfinished work by naming individual strings,
 and each time the strings were translated out from under it — the note became the false
@@ -158,64 +157,38 @@ with `strftime` and **ignores** `tzinfo`, so a `+02:00` offset would shift the w
 hours while still returning HTTP 200 and a correctly-shaped response. Both types sit side by side
 in `app/schemas.py`.
 
-## Glossary
+## Terminology
 
-| Polish | English |
-|---|---|
-| okno | window |
-| pula | pool |
-| sufit | ceiling |
-| seria | series |
-| próbka | sample |
-| pomiar | measurement |
-| odczyt | reading |
-| świeżość | freshness |
-| kaskada | cascade |
-| szczebel | rung |
-| miernik | meter |
-| wycofany | withdrawn |
-| licznik | Decide by referent. **meter** only for the usage meter an organization can withdraw — the thing `meter_withdrawn` names, that goes dark, works, tells the truth or has a threshold. Otherwise the ordinary English word for the referent: **counter** for a tally that increments (`seen_count`, a loop or retry counter), **count** for a plain number of things, **countdown** for time running down. Test: if "withdrawn" could not be said of it, it is not a meter. |
-| blokada | block |
-| zgoda | permission (the concept, matching the `permission` reason key). The panel's `SHORT` display value is `ALLOW`: measured 39 px against `AlertList.REASON_W = 58`, where `PERMISSION` is 66 px and `APPROVAL` 59 px and both overflow. |
-| kredyty | credits |
-| nadwyżka | overage |
-| reset | reset |
-| granica resetu | reset boundary |
-| sonda | probe |
-| sygnalizator | signaller |
-| ramka | frame (stream frame vs display frame — qualify when ambiguous) |
-| pas / pasy | band / bands |
-| pasmo | Decide by referent, like `licznik`. **banner** for the panel's strip across the top of a card — the thing that is drawn. **band** when the word is doing the ordinary in-band / out-of-band job: data carried inside the payload itself, as against a signal arriving on a side channel (`spend.disabled_reason`, the client cache). Test: if "out of" could be said of it, it is a band. Six sites in the backend, the probe and the frontend use it that way, and "in-banner data" is not English. |
-| karta | card |
-| pasek | bar |
-| tor | track |
-| klatka | frame (display) |
-| zalana | flooded |
-| znacznik | marker |
-| tusz | ink |
-| układ | layout |
-| makieta | mockup |
-| stempel | stamp |
-| dziura | gap |
-| brama / bramka | gate |
-| zrzut | dump |
-| ścieżka gorąca | hot path |
-| zasada | rule |
-| pułapka | pitfall |
-| etykieta | label |
-| stopka | footer |
-| maszyna | machine |
-| konto | account |
-| awaria | failure |
-| kontrakt | contract |
-| wykres | chart |
+Rule 10 fixes the vocabulary. Four of those words are easy to reach for in the wrong place,
+so each one carries the test that settles it.
+
+**meter vs counter vs count vs countdown.** A **meter** is only the usage meter an organization
+can withdraw — the thing `meter_withdrawn` names, that goes dark, works, tells the truth, has a
+threshold. For anything else use the ordinary word: **counter** for a tally that increments
+(`seen_count`, a loop or retry counter), **count** for a plain number of things, **countdown**
+for time running down. The test: if "withdrawn" could not be said of it, it is not a meter.
+
+**banner vs band.** A **banner** is the panel's strip across the top of a card — the thing that
+is drawn. **Band** is the ordinary in-band / out-of-band sense: data carried inside the payload
+itself, as against a signal arriving on a side channel (`spend.disabled_reason`, the client
+cache). The test: if "out of" could be said of it, it is a band. Six sites in the backend, the
+probe and the frontend use it that way, and "in-banner data" is not English.
+
+**`ALLOW` on the panel is a width constraint, not a synonym.** The concept is **permission**,
+matching the `permission` reason key; the panel's `SHORT` display value is `ALLOW` because that
+is what fits: measured 39 px against `AlertList.REASON_W = 58`, where `PERMISSION` is 66 px and
+`APPROVAL` 59 px and both overflow. Any longer string silently runs off the alert list — measure
+before you change it.
+
+**frame, qualified.** A stream frame and a display frame are different things; say which one you
+mean wherever the surrounding text does not.
 
 ## Locale
 
 | Item | Rule |
 |---|---|
-| Numeric date | `26.07` — unchanged |
-| Clock | 24 h — unchanged |
+| Numeric date | day first, dotted — `26.07` |
+| Clock | 24 h |
 | Decimal separator | a **dot**, in prose and in the formatters alike |
 | Time preposition | `at`, `yesterday at`, `on Wed. at`; the bare numeric-date form takes no preposition |
 | `DAYS` | Sun. Mon. Tue. Wed. Thu. Fri. Sat. |

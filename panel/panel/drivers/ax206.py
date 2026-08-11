@@ -20,7 +20,7 @@ Deliberately ONLY set-property and blit are here. The flash commands (0xCB, SPI
 erase and write) are not in this file and must not be — those are the ones that
 can kill a panel.
 
-Three properties of this display model, measured, that appear in no reference
+Seven properties of this display model, measured, that appear in no reference
 source:
 
   1. The geometry query command (`0xCD .. byte5=2`) is UNRELIABLE: under the same
