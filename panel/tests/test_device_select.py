@@ -1,7 +1,7 @@
 """Device selection: what is allowed, what is not, and what has to be loud.
 
 This whole file guards one rule from the header of device.py: the client never
-reaches for "the first one free". Every case in which the indication is uncertain
+reaches for "the first one available". Every case in which the match is uncertain
 has to end in DeviceNotFound — because a silent swap of the target (another program
 taking the screen over at the moment this one restarts) is a failure that cannot be
 tied to its cause from the outside.
@@ -69,7 +69,7 @@ def test_missing_requested_port_path_is_an_error_not_a_substitution():
     ts = targets(((3, 4), 1), ((3, 2), 1))
     with pytest.raises(DeviceNotFound) as e:
         device.select(ts, {"port_path": "5.1"})
-    # The message has to list what is visible — without that the only diagnosis is "absent".
+    # The message has to list what is visible — without that the only diagnosis is "not found".
     assert "3.4" in str(e.value) and "3.2" in str(e.value)
 
 

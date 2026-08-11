@@ -4,7 +4,7 @@ A probe measurement glues together values from two places — the `claude -p "/u
 (percentages of the main windows only) and the Claude Code cache (everything, including
 `spend` and `extra_usage`). The sources have DIFFERENT AGES: a dump may be up to 900 s old,
 the cache up to 3600 s. As long as both rode on one stamp taken from the dump, `spend` and
-`extra_usage` were being rejuvenated by that entire difference.
+`extra_usage` were being made to look fresher by that entire difference.
 
 This is not cosmetics. The backend decides by that stamp which reading is CURRENT
 (`newest`, services/ingest.py), and the monotonicity guard requires a known window boundary
@@ -142,7 +142,7 @@ def test_probe_key_matches_probe_keys(probe):
 
 
 def test_probe_key_does_not_slug_and_does_not_know_surface():
-    """Three properties whose breakage topples nothing — it only switches the mechanism off."""
+    """Three properties whose violation breaks nothing — it only switches the mechanism off."""
     u = {"limits": [{"kind": "weekly_scoped", "group": "weekly", "percent": 3,
                      "scope": {"model": {"display_name": "Fable"},
                                "surface": {"display_name": "Cowork"}}}],

@@ -64,7 +64,7 @@ In pixels, this rule is carried by the **reading's age label**, not a separate d
 track. The UI computes the value as `utilization ?? rawUtilization` — meaning that under
 `unknown` it shows the **last MEASURED** percentage, never zero and never a word standing in for
 a known number — and the label next to it says what that number is worth:
-"confirmed Wed. at 11:58 · 3 d 4 h ago". `live`, `stale` and `unknown` therefore look
+"confirmed on Wed. at 11:58 · 3 d 4 h ago". `live`, `stale` and `unknown` therefore look
 **identical**; a separate drawing is reserved for `inferred_reset` (an inference, not a
 measurement) and for a series that was **never** measured at all — there an empty track would
 read as zero. It is the same model on both sides of the desk: `frontend/src/lib/freshness.ts`
@@ -327,7 +327,7 @@ unanswered.
   cost two accidental calls at ~$0.10 each.
 - **The hook payload is UTF-8, but `sys.stdin` decodes it with the locale encoding.** In the
   hook process, measured `sys.stdin.encoding = cp1250`, `errors = surrogateescape` — meaning
-  `sys.stdin.read()` silently corrupts Polish characters (two characters become one: `ć` →
+  `sys.stdin.read()` silently corrupts Polish characters (one character becomes two: `ć` →
   `Ä‡`), and turns bytes with no cp1250 counterpart (`0x81 0x83 0x88 0x90 0x98`, among them `Ł`
   and the typographic apostrophe) into lone surrogates. Those don't fall over until a layer
   further down, at `.encode("utf-8")` inside `write_excl` — and because that call sits under

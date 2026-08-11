@@ -7,7 +7,7 @@ the MACHINE, not the account — exactly as with ingest.
 How this endpoint differs from `/ingest`, and why that is the right call:
 
   * It does NOT touch the database. No session, no transaction, no `_WRITE_LOCK` — the
-    state goes into a dictionary in process memory. A block is momentary by definition:
+    state goes into a dictionary in process memory. A block is ephemeral by definition:
     it dies the moment someone clicks "yes". A table would mean migrations and a row
     lifecycle for something that is meant to leave no trace behind.
   * It does not serialize writes. There is nothing to serialize: every POST REPLACES its
@@ -77,12 +77,12 @@ async def session_alert(
         except ValidationError:
             # A single broken entry must not wipe the machine's whole set — that would
             # mean a formatting error silencing the alert.
-            logger.warning("session-alert: machine {} sent an unacceptable entry",
+            logger.warning("session-alert: machine {} sent an invalid entry",
                            machine)
 
     set_alerts(machine, alerts)
     reached = broker.publish_all(alert_frame(now=utcnow()))
-    logger.info("session-alert: {} — {} entry(s), {} subscriber(s)",
+    logger.info("session-alert: {} — {} entries, {} subscribers",
                 machine, len(alerts), reached)
     return SessionAlertResult(ok=True, machine=machine, accepted=len(alerts),
                               subscribers=reached)

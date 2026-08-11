@@ -208,7 +208,7 @@ def _find_gaps(from_: datetime, to: datetime, batch_times: list[datetime],
 async def history(
     account: str = Query(..., description="account_uuid"),
     series_id: int = Query(..., alias="seriesId"),
-    # NaiveUtcDt, not datetime: the browser sends `toISOString()`, i.e. a time WITH A ZONE,
+    # NaiveUtcDt, not datetime: the browser sends `toISOString()`, i.e. a time WITH A TIMEZONE,
     # while the database and `utcnow()` are naive. A plain `datetime` lets that through and
     # only blows up at the subtraction, several layers further on.
     from_: NaiveUtcDt | None = Query(None, alias="from"),

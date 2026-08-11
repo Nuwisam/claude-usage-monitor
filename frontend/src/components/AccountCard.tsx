@@ -11,9 +11,9 @@ interface Props {
   nowMs: number;
 }
 
-/** One account's column. The plan (orgType, rateLimitTier, seatTier) sits at every account,
- *  because 40% on Max 20x and 40% on a Team seat are different amounts — which is also why
- *  we nowhere sum or average percentages across accounts. */
+/** One account's column. The plan (orgType, rateLimitTier, seatTier) is shown next to every
+ *  account, because 40% on Max 20x and 40% on a Team seat are different amounts — which is also
+ *  why we never sum or average percentages across accounts. */
 export function AccountCard({ a, nowMs }: Props) {
   const hero = pickSession(a.series);
   // `primary` only — the API reports some limits twice (bucket + an entry in limits[]),
@@ -23,7 +23,7 @@ export function AccountCard({ a, nowMs }: Props) {
     .sort((x, y) => x.sortOrder - y.sortOrder || x.seriesKey.localeCompare(y.seriesKey));
   // Looked up in the FULL list, not in `rest`: this series is exactly what the filter above
   // suppresses. Its row was a duplicate, but its flags are the only source of credit state in
-  // the UI — so instead of going on screen they go into the explanation at the spend row.
+  // the UI — so instead of going on screen they go into the explanation next to the spend row.
   const eu = a.series.find((s) => s.source === "extra_usage");
 
   return (
@@ -56,7 +56,7 @@ export function AccountCard({ a, nowMs }: Props) {
         <HeroSession s={hero} nowMs={nowMs} />
       ) : (
         <div className="empty-slot">
-          no series has had a value yet — the account reports, but there is nothing to show
+          no series has had a value yet — the account is reporting, but there is nothing to show
         </div>
       )}
 

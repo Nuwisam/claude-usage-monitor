@@ -8,7 +8,7 @@ Three decisions that are not obvious:
    that surface closed and is cheaper anyway: one frame instead of a full multi-account
    response plus, under AUTH_MODE=verify, a round-trip to the identity service.
 
-2. THE KEY IS `account_uuid`, NEVER THE EMAIL. One address really does point at several
+2. THE KEY IS `account_uuid`, NEVER THE EMAIL. One email address really does point at several
    accounts (Pro and a Team seat under the same address), and `Account.email` is
    overwritten on every ingest from the payload. Addressing by email would mean the set of
    accounts under a subscription changes without the subscriber knowing — silently.
@@ -79,13 +79,13 @@ def bye_frame(reason: str) -> str:
 
 # --------------------------------------------------------------------------- alerts
 # Sessions that have stalled and are waiting for a human. IN-PROCESS, no database — the
-# state is momentary by definition, and a table would mean a migration and a row lifecycle
+# state is ephemeral by definition, and a table would mean a migration and a row lifecycle
 # for something that goes out the moment somebody clicks "yes".
 #
 # NOTE, a process restart is NOT transparent here, and a sentence claiming otherwise used
 # to sit in this spot. The map goes to zero, but the probe does not know that: it compares
-# its own stamp against its OWN state directory, and those two agree, so it has no reason to
-# send anything. A live block is therefore not announced again — not until the next CHANGE
+# its own timestamp against its OWN state directory, and those two agree, so it has no reason
+# to send anything. A live block is therefore not announced again — not until the next CHANGE
 # of the set on that machine. To fix it, the server would have to tell the probe what it
 # holds (e.g. in the reply to the measurement POST, which goes out every minute anyway) —
 # until that exists, this is a known limitation.
@@ -114,7 +114,7 @@ def _aware(v: datetime) -> datetime:
 
 def current_alerts(*, now: datetime) -> list[SessionAlert]:
     """The set from every machine, oldest first. An entry without `since` gets through:
-    a missing stamp means 'no idea how long', not 'expired' — and it lands at the
+    a missing timestamp means 'no idea how long', not 'expired' — and it lands at the
     end, because order is to be decided by age, not by the absence of knowledge of it."""
     ref = _aware(now)
     out: list[SessionAlert] = []
@@ -220,7 +220,7 @@ class Broker:
         Deliberately NOT a second subscription axis. The alternative (index by machine,
         subscribe the panel to machines) was designed and dropped: it rested on the
         premise that routing by account would leak project names to OTHER subscribers,
-        and that premise is false here. `ALLOWED_EMAILS` holds one address, sso.py
+        and that premise is false here. `ALLOWED_EMAILS` holds one email address, sso.py
         rejects every other one with 403 even if the proxy lets it through, and
         `STREAM_TOKENS` holds a single entry labelled `panel`. There is no second
         person for anything to leak to.

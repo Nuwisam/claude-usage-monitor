@@ -68,7 +68,7 @@ def cmd_list(args):
     if total > 1:
         # The port chain comes from the same enumeration as the handle, so nothing
         # here is guessed. `--identify` exists only so you can see WITH YOUR EYES
-        # which screen on the desk is which - no read can settle that.
+        # which screen on the desk is which - no reading resolves that.
         print("\nOnly your eyes can tell which screen on the desk is which:")
         for name in drivers.known():
             for t in device.list_targets(name, opts):
@@ -246,8 +246,8 @@ def build_parser():
     ap.add_argument("--port-path", dest="port_path",
                     help="force the device on this port chain, e.g. 3.4")
     ap.add_argument("--rotate", type=int, choices=C.ROTATIONS,
-                    help="how the screen hangs: 180 = upside down (default "
-                         "from panel.json)")
+                    help="how the screen is mounted: 180 = upside down "
+                         "(default from panel.json)")
     return ap
 
 

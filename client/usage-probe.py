@@ -5,7 +5,7 @@ TWO FUNCTIONS, ONE PROCESS — and that is measured, not aesthetic. The signalle
 be a separate script (`client/session-status.py`), so 9 of its 10 events started a SECOND
 CPython next to the one that was starting for the probe anyway. Measurement (100 runs per
 variant, interleaved, median): folding the signaller code into this process costs 2.7 ms
-(95% CI 1.9-3.2), a separate process 41.9 ms (41.7-42.3). Over a day, at ~21 000 events:
+(95% CI 1.9-3.2), a separate process 41.9 ms (41.7-42.3). Over a day, at ~21,000 events:
 +57 s against +890 s. The old justification for the split ("+0.294 ms for every added
 line") was overstated ~71-fold — really 0.0041 ms/line.
 
@@ -18,8 +18,8 @@ Does NOT call api.anthropic.com. Instead it asks Claude Code itself to measure
 SAFETY RULES — do not break them while extending:
   1. The probe makes NO request to api.anthropic.com. The only party calling
      /api/oauth/usage is Claude Code, over its own channel, with its own token, which
-     it refreshes itself. That removes at once: use of the OAuth token by a foreign
-     tool (forbidden by the ToS), User-Agent impersonation and the risk of a ban.
+     it refreshes itself. That removes in one stroke: use of the OAuth token by a
+     third-party tool (forbidden by the ToS), User-Agent impersonation and the risk of a ban.
   2. .credentials.json is opened READ-ONLY and ONLY for plan metadata.
      accessToken is neither taken from it nor used for anything.
   3. NEVER call the token endpoint (grant_type=refresh_token).
@@ -152,7 +152,7 @@ def _find(name, in_claude_dir=False):
 
 
 def _extract_block(text, key):
-    """Cuts out the balanced {...} block after a key. Immune to duplicate keys differing
+    """Extracts the balanced {...} block after a key. Immune to duplicate keys differing
     only in letter case (the same path spelled with the drive letter in both cases), on which
     whole-file parsers fail — ~/.claude.json REALLY does have such keys, json.load() over the
     whole file trips on them.
@@ -185,7 +185,7 @@ def _extract_block(text, key):
 
 
 def _extract_scalar(text, key):
-    """Cuts out the SCALAR value after a key — string, number, bool or null.
+    """Extracts the SCALAR value after a key — string, number, bool or null.
 
     A sibling of `_extract_block`, which only handles `{...}`. `cachedExtraUsageDisabledReason`
     sits at the top level as a bare string or null, so that function cannot see it.
@@ -283,7 +283,7 @@ def spawn_refresh(cfg):
     the cachedUsageUtilization cache still refreshes (and the merge depends on it).
 
     --model haiku is a safety net, idle on the happy path: /usage returns
-    shouldQuery=false, so no model moves at all (measured: num_turns=0, cost 0, time
+    shouldQuery=false, so no model is invoked at all (measured: num_turns=0, cost 0, time
     unchanged). It matters only when the argument misses the local command — then a paid
     turn runs, which without this flag would go to the model from settings.json.
     The probe will reject such a dump anyway on num_turns>0, but the cost has already been
@@ -291,7 +291,7 @@ def spawn_refresh(cfg):
     withdrawn.
 
     --strict-mcp-config --mcp-config {"mcpServers":{}} cuts off the MCP boot — the probe
-    does not use it, and it is a dozen-odd node/npx processes per run."""
+    does not use it, and it is a dozen or so node/npx processes per run."""
     exe = find_claude(cfg)
     if not exe:
         return "brak-claude-w-path"
@@ -301,7 +301,7 @@ def spawn_refresh(cfg):
     kw = {}
     if os.name == "nt":
         # CREATE_NO_WINDOW (hidden console, inherited by grandchildren) | NEW_PROCESS_GROUP
-        # (no Ctrl+C from the parent). Do NOT add DETACHED_PROCESS (0x8) — it beats
+        # (no Ctrl+C from the parent). Do NOT add DETACHED_PROCESS (0x8) — it overrides
         # CREATE_NO_WINDOW, and grandchildren then allocate their own, visible console.
         kw["creationflags"] = 0x08000000 | 0x00000200
     else:
@@ -329,7 +329,7 @@ def spawn_refresh(cfg):
 
 # [^:\n] and not [^:] — a negated class matches the newline too, so without excluding
 # \n the title chews through the header and the blank lines up to a colon on the NEXT line.
-# The effect is sly: short inputs parse fine, real output loses the first reading.
+# The effect is insidious: short inputs parse fine, real output loses the first reading.
 _PCT_RE = re.compile(r"^(?P<title>\S[^:\n]*):\s+(?P<pct>\d+)%\s+used", re.M)
 
 
@@ -401,7 +401,7 @@ def dump_outdated(fresh_at, cache_at):
     window is free. History additionally keeps a drop inside a single window, which
     `window_start_index` reads as a reset.
 
-    In the normal direction that same reset ends well: the dump gives ~1%, the boundary from
+    In the normal direction that same reset is harmless: the dump gives ~1%, the boundary from
     the cache is expired, `sanitize` zeroes it and reports `reset-w-toku`.
 
     The cost of rejecting is ZERO: the cache value stays, and it is newer — and incidentally
@@ -505,7 +505,7 @@ def sanitize(usage, covered, now):
       * the series got a fresh percent  -> the percent is true, only the reset time is
         stale. We zero resets_at; the next cache write (<=5 min) supplies a new one.
       * the series got NO fresh value   -> the percent comes from the expired window too.
-        Publishing a former 95% as current would be a gross error (really it is ~0%), so
+        Publishing a former 95% as current would be a serious error (really it is ~0%), so
         the whole series is thrown out of this cycle.
 
     Returns a list of events for diagnostics — silence while discarding data is worse than
@@ -673,16 +673,16 @@ def _iso(epoch):
 #     the answers in, 1326 -> 1649 B), so a hash of tool_input cannot be the only key.
 #     Those two tools are keyed by the `tool_use_id` from PreToolUse.
 #   * NOTHING that ends a call other than by normal execution generates an event:
-#     refusal by button, Esc on the prompt and Esc while running — 5/5 of the cases end
+#     denial by button, Esc on the prompt and Esc while running — 5/5 of the cases end
 #     at PreToolUse + PermissionRequest and nothing more. `PermissionDenied` never fired,
 #     `is_interrupt: true` turned out to be unreachable. That is why sweeping by the
 #     session_id prefix is MANDATORY, not precautionary.
 #   * ...but in the TRANSCRIPT such an ending leaves a `tool_result` — measured on
-#     2.1.223 three times, with three different contents (refusal by button, Esc on the
+#     2.1.223 three times, with three different contents (denial by button, Esc on the
 #     prompt, closing the window with a question left hanging). Hence the second way out:
 #     `closed_by_transcript`, the only one that clears the alert of a session that FELL
-#     SILENT after a refusal. Details at that function.
-#   * `Stop` does NOT fire on an interrupted turn, and a refusal ends the turn precisely
+#     SILENT after a denial. Details at that function.
+#   * `Stop` does NOT fire on an interrupted turn, and a denial ends the turn precisely
 #     as an interrupt. That is why `UserPromptSubmit` comes first in the sweep list.
 #   * `PostToolUse` is not guaranteed (Edit on a plan file: 0/6 closed, on other files
 #     4/4). `PostToolBatch.tool_calls[]` closes those.
@@ -702,7 +702,7 @@ CLOSING_EVENTS = ("PostToolUse", "PostToolUseFailure")
 SWEEP_EVENTS = ("UserPromptSubmit", "Stop", "SessionEnd")
 
 # Fields needed LOCALLY ONLY, for closing from the transcript. `snapshot()` strips them:
-# `transcript_path` carries the name of a person's home directory, and `prompt_id` has no
+# `transcript_path` carries the user's home-directory path, and `prompt_id` has no
 # recipient in `SessionAlert`.
 LOCAL_FIELDS = ("transcript_path", "prompt_id", "registry_seen")
 
@@ -758,9 +758,9 @@ def _slug(path):
 def project_name(cwd, transcript_path):
     """The project name — from the transcript directory, NOT from `basename(cwd)`.
 
-    Measured: 38 of 73 sessions report more than one `cwd` (within a single session at
-    once ...\\claude-usage-monitor, ...\\backend, ...\\frontend, ...\\frontend\\src — the
-    header would show "src"), and 27 of 51 distinct `cwd` values are
+    Measured: 38 of 73 sessions report more than one `cwd` (within a single session,
+    simultaneously ...\\claude-usage-monitor, ...\\backend, ...\\frontend, ...\\frontend\\src
+    — the header would show "src"), and 27 of 51 distinct `cwd` values are
     `...\\.claude\\worktrees\\agent-a<hex>`.
 
     "Walk up to .git" is wrong too: a worktree root has `.git` as a FILE, so the walk-up
@@ -834,7 +834,7 @@ def key_of(name):
 def entries():
     """All entries: [(file_name, mtime)]. `scandir`, NEVER `os.stat(path)`.
 
-    Measured against a reader in a loop: `os.stat(path)` collides in 35% of cases under
+    Measured against a reader in a loop: `os.stat(path)` fails in 35% of cases under
     maximum load, `scandir` + `DirEntry.stat()` in 0% — the latter is served from the
     directory enumeration record and opens nothing.
     """
@@ -865,7 +865,7 @@ def read_entry(name):
 def write_excl(name, payload):
     """A write through O_CREAT|O_EXCL. Returns True when the file was CREATED just now.
 
-    Measured: 0 hard failures over 10 978 attempts against a reader in a loop.
+    Measured: 0 hard failures over 10,978 attempts against a reader in a loop.
     The "temp + os.replace" variant is out, because CPython opens without
     FILE_SHARE_DELETE, so a reader's handle blocks `replace` and `remove` (reproduced:
     WinError 5 / 32). O_EXCL incidentally preserves `since` for free and WITHOUT a read:
@@ -909,10 +909,10 @@ def drop(name):
 
 
 def sweep_ttl(ttl_s, now):
-    """The garbage boundary. It deletes, it NEVER hides — when an alert TAKES OVER the
-    screen is decided by the panel (`alert_takeover_sec`), not by this threshold. But the
-    takeover window belongs there to the set, so an old entry comes back onto the card with
-    every new block and only this threshold ends its life. The value comes from a manually
+    """The expiry cutoff. It deletes, it NEVER hides — when an alert TAKES OVER the
+    screen is decided by the panel (`alert_takeover_sec`), not by this threshold. But
+    there the takeover window belongs to the set, so an old entry comes back onto the card
+    with every new block and only this threshold ends its life. The value comes from a manually
     edited config.json, so garbage means the default, not an exception.
 
     It does not publish itself and does not need to: `alert_dispatch` calls it right before
@@ -940,7 +940,7 @@ def sweep_ttl(ttl_s, now):
 #     not register at all (measured: 18 s of life, zero records). Hence `registry_seen`.
 #
 # FORBIDDEN: never `os.kill(pid, 0)` — on Windows it maps to `TerminateProcess`, i.e. the
-# probe would kill Claude Code sessions, in code that, as a rule, never raises.
+# probe would kill Claude Code sessions, in code that by design never raises.
 # Liveness is decided by the PRESENCE of a record and nothing else. The harness checks
 # `procStart` itself, so pid recycling is not ours to watch either.
 
@@ -948,9 +948,9 @@ def sweep_ttl(ttl_s, now):
 def registry_dir():
     """`$CLAUDE_CONFIG_DIR/sessions` or `~/.claude/sessions`.
 
-    When the variable is set, `~` is NOT a fallback: a foreign configuration directory means
-    foreign `sessionId` values, and those would be used to DELETE entries. Hence not `_find`
-    — it returns files only and carries exactly that fallback.
+    When the variable is set, `~` is NOT a fallback: a third-party config dir means
+    `sessionId` values that belong to someone else, and those would be used to DELETE
+    entries. Hence not `_find` — it returns files only and carries exactly that fallback.
     """
     cfg = os.environ.get("CLAUDE_CONFIG_DIR")
     if cfg:
@@ -965,8 +965,8 @@ def live_sessions():
     """The set of `sessionId` values from the registry, or None when the set may be PARTIAL.
 
     None means "unknown" and NEVER means "empty" — that is AGENTS.md rule 4 carried onto this set.
-    A directory read only halfway would shorten the live list and delete foreign entries
-    wholesale, i.e. clear LIVE blocks. Hence one exception on any record invalidates the
+    A directory read only halfway would shorten the live list and delete other sessions'
+    entries wholesale, i.e. clear LIVE blocks. Hence one exception on any record invalidates the
     WHOLE run.
 
     A record is exclusively a `<digits>.json` file — the harness filters the same way (it
@@ -1019,7 +1019,7 @@ def entry_session(name):
 
 def registry_dead(name, live):
     """Whether this entry's session is no longer alive. A name outside the scheme is NOT
-    dead — it is foreign."""
+    dead — it belongs to someone else."""
     sid = entry_session(name)
     return bool(sid) and sid not in live
 
@@ -1037,14 +1037,14 @@ def registry_seen(session_id):
 
 
 # --------------------------------------------------- closing from the transcript
-# A refusal and Esc generate NO hook event at all (measured 5/5), but they DO WRITE a
+# A denial and Esc generate NO hook event at all (measured 5/5), but they DO WRITE a
 # `tool_result` into the transcript — measured three times, with three different contents:
-# refusal by button, Esc on the prompt ("The user doesn't want to proceed...") and closing
+# denial by button, Esc on the prompt ("The user doesn't want to proceed...") and closing
 # the window with a question left hanging ("Tool permission request failed: AbortError...").
 # That is why `is_error` is NOT a condition here, and the contents must not be matched by
 # text: every `tool_result` means "resolved".
 #
-# This branch is the only mechanism that clears an alert after a refusal in a session that
+# This branch is the only mechanism that clears an alert after a denial in a session that
 # THEN fell silent (`Stop` does not fire on an interrupted turn) — and it does so from the
 # sweep of ANY session, because it walks the whole state directory, not its own prefix.
 
@@ -1105,8 +1105,8 @@ def tail_records(path):
 def _blocks(rec, rec_type, block_type):
     """`block_type` blocks from a record of type `rec_type`. STRUCTURAL matching.
 
-    Measured: `tool_use` occurs exclusively in `assistant` records (43 597/43 597), and
-    `tool_result` exclusively in `user` ones (43 475/43 475). Substring matching is
+    Measured: `tool_use` occurs exclusively in `assistant` records (43,597/43,597), and
+    `tool_result` exclusively in `user` ones (43,475/43,475). Substring matching is
     forbidden — the entry key always sits in the tail, in its own `tool_use` record, so a
     substring would clear every LIVE block on the first sweep.
     """
@@ -1139,7 +1139,7 @@ def _resolved_ids(records, prompt_id, since):
     Condition 1: `promptId` must be from this turn. That field is ONLY on `tool_result`
     (7695/7695), `tool_use` does not have it — hence this function's whole roundabout route.
     Condition 2: the resolution must be LATER than entry into the block. `prompt_id` spans
-    a whole human turn (measured 5-12 calls, 89-199 s), so an identical retry within the
+    an entire user turn (measured 5-12 calls, 89-199 s), so an identical retry within the
     same turn is real and condition 1 does not catch it.
 
     This filter goes FIRST, before any hash, and that is a decision about cost, not about
@@ -1197,10 +1197,10 @@ def transcript_closed(data, key, records):
     if match is None:
         return False
 
-    # Condition 3: if a SECOND, byte-identical call stood in the tail after this one, then
+    # Condition 3: if a SECOND, byte-identical call appears in the tail after this one, then
     # that one is the live block and the entry must not be removed — both have the same
     # `call_key`, so the hash alone cannot tell them apart. Measured: 0.24% of calls have
-    # such a twin within the 32 KB window, and the scenario "refusal, Claude repeats an
+    # such a twin within the 32 KB window, and the scenario "denial, Claude repeats an
     # identical call" occurred 22 times in the corpus.
     i, b = match
     for later_use in tool_uses[i + 1:]:
@@ -1347,7 +1347,7 @@ def toast(reason, project, detail):
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             # CREATE_NO_WINDOW | NEW_PROCESS_GROUP — as in spawn_refresh. Do NOT add
-            # DETACHED_PROCESS: it beats CREATE_NO_WINDOW and the console flashes.
+            # DETACHED_PROCESS: it overrides CREATE_NO_WINDOW and the console flashes.
             creationflags=0x08000000 | 0x00000200, close_fds=True)
     except Exception:
         pass
@@ -1412,8 +1412,8 @@ def enter(cfg, hook, reason, key):
 
 
 def _close_keys(hook, call):
-    """Both key candidates for one call. The exit does not have to know which mode created
-    the entry — deletion is idempotent, so a miss costs nothing."""
+    """Both key candidates for one call. The closing event does not have to know which
+    mode created the entry — deletion is idempotent, so a miss costs nothing."""
     out = []
     tuid = call.get("tool_use_id")
     if tuid:
@@ -1448,19 +1448,19 @@ def sweep_session(cfg, hook):
     """Sweeping by the `<session_id>__` prefix.
 
     MANDATORY, not precautionary: it is the only mechanism that clears an alert after a
-    refusal and after an interrupt, because neither of them generates an event of its own.
+    denial and after an interrupt, because neither of them generates an event of its own.
     `UserPromptSubmit` is the most important one in this list, because `Stop` does not fire
     on an interrupted turn.
 
     `SessionEnd` sweeps its OWN session_id only: it was measured to arrive ~once a minute
-    with the identifier of the `claude -p` child fired by this very script, so a global
+    with the identifier of the `claude -p` child spawned by this very script, so a global
     sweep would wipe alerts every minute.
 
     This loop also looks at entries of OTHER sessions, but it deletes them on one of two
     PROOFS, never on resemblance: either the session has no record in the harness registry
     (`registry_dead`), or its own transcript already carries a resolution
     (`closed_by_transcript`). Without this, an entry of a session that fell silent after a
-    refusal has no collector: that is the failure this came from.
+    denial has no collector: that is the failure this came from.
 
     The rule based on matching `cwd` (`gc_cwd`) has been REMOVED. It deleted on project
     resemblance alone, so a new card in a project could clear the LIVE block of a
@@ -1504,9 +1504,9 @@ def sweep_session(cfg, hook):
                 # WAS in the registry.
                 drop(name)
                 continue
-        # A foreign entry of a live session, but its own transcript may already carry a
-        # resolution — and then only this run can remove it, because that session may fire
-        # nothing more.
+        # Another session's entry, of a live session, but its own transcript may already
+        # carry a resolution — and then only this run can remove it, because that session
+        # may fire nothing more.
         if _safe(closed_by_transcript, name, data, tails):
             drop(name)
     if held_back and hold_reason:
@@ -1573,7 +1573,7 @@ def alert_dispatch(cfg, hook):
 
     if event == "PermissionDenied":
         # Registered for the whole measurement and never fired once — no rule may rest
-        # on it. Wired in because it costs nothing and will catch classifier refusals.
+        # on it. Wired in because it costs nothing and will catch classifier denials.
         return leave(cfg, hook)
 
     if event in SWEEP_EVENTS or event == "SessionStart":
@@ -1594,11 +1594,11 @@ def main():
 
     # The hook payload arrives in UTF-8, but `sys.stdin` in text mode decodes it with the
     # locale encoding (cp1250 here) and `errors=surrogateescape`. There were two effects,
-    # both silent: Polish characters reached the toast and the panel doubled up, with one
-    # character becoming two, and bytes with no counterpart in cp1250 (0x81 0x83 0x88 0x90 0x98 — that is,
+    # both silent: Polish characters reached the toast and the panel in doubled form, with
+    # one character becoming two, and bytes with no counterpart in cp1250 (0x81 0x83 0x88 0x90 0x98 — that is,
     # among others, "L" with a stroke and the typographic apostrophe) became lone
     # surrogates, which broke `write_excl` on `.encode("utf-8")`. The block entry was then
-    # created EMPTY, so the alert reached nowhere while the key was already taken. The rest
+    # created EMPTY, so the alert went nowhere while the key was already taken. The rest
     # of the path has explicit utf-8, so it faithfully carried whatever entered here — one
     # place ruined all of them.
     # A `lambda`, so that `_safe` also shields the attribute access (stdin can be None).
@@ -1738,7 +1738,7 @@ def main():
     #
     # Set just before sending and written ALSO into `record`, which goes to the spool: for
     # a spooled entry `sent_at` comes from the moment of the failed attempt, so the age
-    # falls out correctly on its own, with nothing to recompute on the client side.
+    # comes out right on its own, with nothing to recompute on the client side.
     record["measurement"]["sent_at"] = _iso(time.time())
 
     payload = dict(record)

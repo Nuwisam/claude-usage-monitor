@@ -21,7 +21,7 @@ class Clock:
 
 
 def cfg(**kw):
-    # The flash is off by default: the card tests are to check the card, not what comes
+    # The flash is off by default: the card tests check the card, not what comes
     # before it. The flash tests switch it on explicitly.
     d = {"stream_token": "t", "account_1": {"uuid": "account-a"},
          "account_2": {"uuid": "account-b"}, "alert_flash_sec": 0}
@@ -63,7 +63,7 @@ def test_card_enters_after_debounce():
     z = Clock()
     a = app(z)
     a.on_event("alert", stream_frame(entry()))
-    assert a.screen().alert is None, "debounce should suppress the flash on an immediate approval"
+    assert a.screen().alert is None, "debounce should suppress the card on an immediate approval"
     z.advance(a.cfg.blocked_debounce_sec)
     assert a.screen().alert is not None
 
@@ -268,7 +268,7 @@ def test_infinity_flashes_for_the_cards_whole_life():
 ])
 def test_seconds(raw, expected):
     """The values come from a hand-edited panel.json and go into a COMPARISON —
-    a bare string tips the tick over with a TypeError. Junk is to mean the default."""
+    a bare string crashes the tick with a TypeError. Junk must fall back to the default."""
     assert app_mod.seconds(raw) == expected
 
 
@@ -396,7 +396,7 @@ def test_unmatched_alert_lands_on_top_band():
 
 
 def test_reason_does_not_push_title_past_band():
-    """The reason takes its room out of the TITLE's budget instead of being glued on past
+    """The reason takes its room out of the TITLE's budget instead of being tacked on outside
     the band.
 
     Checked on the worst case: a long name, the clock, the link marker and the plan badge
@@ -420,7 +420,7 @@ def test_reason_does_not_push_title_past_band():
         # The columns right of the band must stay background — nothing ran past the margin.
         for x in range(b.x1 + 1, 480):
             for y in range(b.header[1], b.header[3]):
-                assert px[x, y] == theme.BG, "something ran past the band in column %d" % x
+                assert px[x, y] == theme.BG, "something spilled outside the band in column %d" % x
         # The end of the TITLE, not the end of the header: the title is set left, and the
         # reason, the badge and the clock right, so there is a gap between them. We look for
         # the first gap wider than the spacing between letters.
@@ -493,7 +493,7 @@ def test_transition_to_card_fits_under_full_frame_threshold():
 
 
 def test_marker_alone_is_cheap():
-    """The marker has the right to light up and go out often — it has to cost next to nothing.
+    """The marker is allowed to light up and go out often — it has to cost next to nothing.
 
     The threshold is looser than for the triangle (2%), because the bar runs through the
     band's WHOLE height and the account name changes color along with it: the left column of
@@ -566,7 +566,7 @@ def test_list_shows_three_but_counts_all():
 
 
 def test_banner_shows_the_oldest_wait_while_the_top_row_shows_the_newest():
-    """The first row is the NEWEST block, while the hour in the banner is the start of the
+    """The first row is the NEWEST block, while the time in the banner is the start of the
     OLDEST wait on the screen. Those are two different things and they have to diverge."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
     state = render.alert_state(status.parse_frame(stream_frame(
@@ -660,7 +660,7 @@ def test_banner_and_strip_ink_sits_where_the_mockup_says():
 @pytest.mark.parametrize("flooded,color", [(False, "NEUTRAL_900"), (True, "ACCENT")])
 def test_rail_is_present_in_both_frames_of_every_layout(count, flooded, color):
     """The rail is not a property of the full frame: it always sits below the banner, and
-    flooding only repaints it. A bar appearing out of nothing would be a stronger movement
+    flooding only repaints it. A bar appearing out of nowhere would be a stronger movement
     than a change of color, and outside the `alert_flash_sec` window the card would be left
     with no left edge.
 

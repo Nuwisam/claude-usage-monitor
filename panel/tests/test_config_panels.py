@@ -104,7 +104,7 @@ def test_two_entries_without_selectors_are_not_flagged():
     assert not any("the same device" in p for p in ps)
 
 
-@pytest.mark.parametrize("value", ["jasno", None, float("inf"), float("nan"), 9])
+@pytest.mark.parametrize("value", ["bright", None, float("inf"), float("nan"), 9])
 def test_bad_brightness_is_a_problem_not_an_exception(value):
     ps = problems(panels=[{"backend": "ax206", "port_path": "3.4",
                            "brightness": value}])

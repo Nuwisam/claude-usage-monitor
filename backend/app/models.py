@@ -26,7 +26,7 @@ class Base(DeclarativeBase):
     pass
 
 
-# Variants instead of dialect types used directly — thanks to that the models can also be
+# Variants instead of dialect types used directly — a choice that also lets the models be
 # loaded under SQLite (tests), while on MariaDB they get DATETIME(6) with microseconds.
 DT6 = DateTime().with_variant(mysql.DATETIME(fsp=6), "mysql")
 LONGTEXT = Text().with_variant(mysql.LONGTEXT, "mysql")
@@ -211,9 +211,9 @@ class LimitSample(Base):
     # The moment of measurement in SERVER time: `min(client_captured_at + offset, received_at)`.
     captured_at: Mapped[datetime] = _dt(nullable=False)
     # The same moment in CLIENT time, before the offset. Not a duplicate: since server-side
-    # dating, `captured_at` is a function of the REQUEST, so a repeat of the same spooled entry
-    # in another request has a different `captured_at`. The idempotency guard needs a part that
-    # is a function of the entry itself — and that is exactly this column.
+    # timestamping, `captured_at` is a function of the REQUEST, so a repeat of the same spooled
+    # entry in another request has a different `captured_at`. The idempotency guard needs a part
+    # that is a function of the entry itself — and that is exactly this column.
     client_captured_at: Mapped[datetime | None] = _dt()
     batch_id: Mapped[int] = mapped_column(ForeignKey("ingest_batches.id"), nullable=False)
 
@@ -250,7 +250,7 @@ class LimitSample(Base):
 
 
 class SeriesState(Base):
-    """The hot row per (account, series). Thanks to it /api/status reads a dozen-odd rows
+    """The hot row per (account, series), which lets /api/status read a dozen-odd rows
     instead of a groupwise-max over the whole fact table. A cache — rebuildable from limit_samples."""
     __tablename__ = "series_state"
 

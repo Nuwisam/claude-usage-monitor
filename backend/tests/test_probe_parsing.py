@@ -1,6 +1,6 @@
 """Tests of the client probe (client/usage-probe.py).
 
-The probe is the only code in the project running in the path of the user's work, and at
+The probe is the only code in the project running on the critical path, and at
 the same time it NEVER raises — so every defect in it is silent by definition. Hence the
 tests here, even though this is not backend code: it is the only place anything checks it.
 

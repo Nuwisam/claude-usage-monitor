@@ -119,7 +119,7 @@ you switch accounts through `/login`, and `settings.json` is shared — a static
 assign half the samples to the wrong account and silently poison both histories.
 
 **A blocked session is a signal, not a datum.** When Claude is waiting on your approval, your
-reply, or acceptance of a plan, the turn simply stands still — and if you have stepped away from
+reply, or acceptance of a plan, the turn simply stalls — and if you have stepped away from
 the desk, nothing tells you. The probe then raises a toast locally and sends an alert to the panel. It
 travels through the backend, because **the session may be running on a remote machine while the
 panel sits locally**, but **it never reaches the database**: the block clears the moment you

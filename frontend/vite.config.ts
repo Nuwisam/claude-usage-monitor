@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// The application hangs under a prefix (/claude-usage/), and Apache STRIPS that prefix — the
+// The application is served under a prefix (/claude-usage/), and Apache STRIPS that prefix — the
 // backend sees only /api/... and /assets/... That is why `base` must be the public path: the
 // asset addresses in index.html are absolute and Apache maps them back to the container root.
 //

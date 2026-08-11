@@ -3,7 +3,7 @@
 The card the desk panel shows when a Claude Code session has stalled and is waiting on a
 person. This document describes **what is built**: four layouts driven by the block count,
 the motion layer, and the state after folding away. An earlier draft — cobbled together
-from the band vocabulary, to test the mechanics — does not exist.
+from the band vocabulary, to test the mechanics — was not kept.
 
 The reference is not a description, only images: `docs/handout/*.png`, rendered by the panel
 and pushed through its own quantization, that is, **exactly what the glass will show**.
@@ -53,7 +53,14 @@ same thing happens to look on a desktop screen, not at what the panel draws.
 - **Icons are drawn as vectors, never with an icon font.** At 11 px a font glyph turns into a
   blob; `draw.clock_glyph` is the precedent for that.
 - **English on screen** — on-screen text is written in English (project rule 10 in
-  `AGENTS.md`). Height is measured from the actual outline, not from the nominal size.
+  `AGENTS.md`).
+- **Height is measured from the actual outline, not from the nominal size.** The probe string
+  that does the measuring (`PROBE` in `panel/panel/draw.py`) is a run of Polish diacritics and
+  descenders, `ĄĘŚŹŻgjpqy` — accents that reach up, tails that reach down. Measured against the
+  nominal size instead, `Ń` and `ą` clip at 10–12 px. Those glyphs are the measurement, not
+  text, which is why they are held under an `i18n-keep` sentinel even though nothing Polish
+  reaches the glass: swapping them for plain English letters would silently change every line
+  height on the panel.
 
 ### Palette (`panel/panel/theme.py`)
 
@@ -113,9 +120,11 @@ showing are the ones you haven't seen yet.
 `since` — rows go youngest first, so the first of them is by definition the newest, and the
 banner says how long all of this has already been going on.
 
-With many blocks the banner reads `WAITING · 3`, not "3 waiting" or "3 are waiting": the
-count sits after the noun precisely so nothing has to agree with it — a bare label reads
-fine for any count, one or fifty.
+With many blocks the banner reads `WAITING · 3`, not "3 waiting". The banner keeps a fixed
+vocabulary: one word, then a separate counter after the dot. Nothing about the wording depends
+on the number, so there is no phrase to build around it and no second form to render — the
+word stays put, only the digit changes, and the banner reads identically at one block and at
+fifty. It also keeps the caption's width predictable, which is what a 480 px banner needs.
 
 ### Entry fields
 
@@ -124,7 +133,7 @@ Full contract in [`API.md` § 3.2](API.md). All of them are used:
 | Field | Where on the card |
 |---|---|
 | `reason` | banner heading (1 block) and the reason word in the list; **an unknown value is legal** and gives "CLAUDE IS WAITING" / "waiting" |
-| `project` | the project **root** name — hero of layouts 1a/1b, column in the list |
+| `project` | the project **root** name — hero in layouts 1 and 2, column in the list |
 | `tool` | row under the name (not in layout 4+, where only the machine remains) |
 | `machine` | same row; a session can run remotely, this says where to go |
 | `detail` | `Detail` tile (2 lines), one line in layout 2, footer in layout 3 |
@@ -204,8 +213,9 @@ contents change. This state is visible longer than the card itself.
 **5. The marker fits in the band without moving the layout.** The 4 px bar sits inside the
 margin field (`PAD_X` 14) and has the band's **full height**, regardless of how many rows
 are inside — an account with credits has four rows instead of three, and the band is just as
-tall all the same. The reason takes up 10 px of caps on the line with the plan name and
-takes its room out of the title's own budget, and the account name switches to `ACCENT_100`.
+tall all the same. The reason takes up 10 px of caps on the line with the plan name, laid out
+inward from the right edge and out of the title's own budget, and the account name switches
+to `ACCENT_100`.
 
 **6. The card beats everything, including the "Contract mismatch" card.** The latter then
 drops down into the `Mode` strip. The reverse order would demote the alert to a row at the
@@ -235,8 +245,8 @@ These are judgment calls, not measurements, and all three are keys in `panel.jso
   string goes through `text_tracked` (letter spacing counts toward the width).
 - A step down in size instead of truncation, when text doesn't fit: `F_PROJECT` 34 px →
   26 px.
-- Right-to-left cursor in the banner header — elements take their room out from the right,
-  and the title takes what's left.
+- Right-to-left cursor in the banner header — elements are laid out inward from the right
+  edge, and the title takes what's left.
 - Three text sizes and nothing in between: 10 px caps-only labels, 11 px secondary data,
   12 px and up for content. Caps labels carry `letter-spacing` (`draw.text_tracked`).
 - The `Detail` tile wraps at font 12 across 420 px, two lines at most (`AlertSolo`,
@@ -251,5 +261,5 @@ These are judgment calls, not measurements, and all three are keys in `panel.jso
 `panel/panel/layout.py` → `AlertSolo`, `AlertPair`, `AlertList`, `AlertMany` (geometry and
 font sizes) and `panel/panel/render.py` → `Renderer._alert*` (drawing). A new field from the
 frame goes into `status.Blocked`, `render.AlertRow` and `render.alert_state`. Transport, the
-state machine, debounce, burning down the window and the marker stand on their own and are
-tested.
+state machine, debounce, burning down the window and the marker are separate concerns, and
+each is tested.

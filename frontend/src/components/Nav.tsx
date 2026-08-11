@@ -22,7 +22,7 @@ function every(ms: number): string {
 export function Nav({ contractVersion, updatedAtMs, nowMs, stalled, stream }: Props) {
   const mismatch = contractVersion !== undefined && contractVersion !== CONTRACT_VERSION;
   // Name outright where the data comes from. "live" means the measurement shows at once;
-  // with a broken stream it is honester to show the polling rate than to fake a push.
+  // with a broken stream it is more honest to show the polling rate than to fake a push.
   const cadence =
     stream === "live"
       ? `live · check every ${every(STATUS_REFETCH_LIVE_MS)}`
@@ -50,7 +50,7 @@ export function Nav({ contractVersion, updatedAtMs, nowMs, stalled, stream }: Pr
           {mismatch ? ` ≠ v${CONTRACT_VERSION}` : ""}
         </span>
         {/* The whole caption in ONE span: `.live-dot` is a flex with `gap`, so splitting it
-            into siblings would push the spacing between words apart. Narrow leaves just
+            into siblings would widen the spacing between words. Narrow leaves just
             "3 s ago" (mockup 2b) — @media hides the rest. */}
         <span className="live-dot" data-stalled={stalled} data-stream={stream}>
           <span>

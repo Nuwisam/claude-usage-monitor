@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
 # Schema and API browsers are disabled. The reverse proxy passes the whole container root
 # through, so `/openapi.json` and `/docs` would be reachable WITHOUT authorization — the gate
 # sits on the endpoint dependencies, not on those routes. They would then hand the full set of
-# paths, field names and error shapes to anyone who guesses the address. docs/API.md describes
+# paths, field names and error shapes to anyone who guesses the URL. docs/API.md describes
 # the contract.
 app = FastAPI(
     title="Claude Usage Monitor",
@@ -113,7 +113,7 @@ if STATIC_DIR.is_dir():
         """
         # An unknown /api path MUST stay an API error. The routers are mounted higher up, but
         # it is this function that catches everything they did not match — without this
-        # condition a typo in an endpoint address would hand back HTTP 200 and an HTML page
+        # condition a typo in an endpoint path would hand back HTTP 200 and an HTML page
         # instead of a 404, and the client (or the probe) would try to parse that as JSON.
         if full_path == "api" or full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail={"reason": "not-found"})

@@ -291,7 +291,7 @@ def test_an_impossible_angle_backs_off_instead_of_dying(clock, caplog, monkeypat
 
 def test_failures_log_once_per_changed_message(clock, caplog):
     """A display held by another program can be held for hours; a line per second
-    would drown the log."""
+    would flood the log."""
     link = link_mod.PanelLink(spec(), cfg())
     calls = []
 

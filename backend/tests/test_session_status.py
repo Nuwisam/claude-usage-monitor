@@ -1,7 +1,7 @@
 """Tests for the blocked-session signaller — the "alert" section of client/usage-probe.py.
 
 Here rather than in `client/`, for the same reason as `test_probe_parsing.py`: this is code
-running in the working path that NEVER raises — meaning every one of its bugs is silent by
+running on the critical path that NEVER raises — meaning every one of its bugs is silent by
 definition, and this is the only place where anything checks it at all.
 
 The signaller was a separate script until measurement showed that folding it into the probe
@@ -710,7 +710,7 @@ def test_unchanged_set_generates_no_posts(ss):
 
 
 def test_empty_directory_and_empty_marker_stay_silent(ss):
-    """The commonest run on a machine with no block: nothing to reconcile and nothing flies."""
+    """The commonest run on a machine with no block: nothing to reconcile and nothing goes out."""
     for _ in range(5):
         ss.alert_dispatch(CFG, hook("Stop"))
         ss.alert_dispatch(CFG, hook("UserPromptSubmit"))
@@ -956,7 +956,7 @@ def test_recursion_guard_cuts_alert_too(ss, monkeypatch):
 def test_hook_stdin_is_read_as_utf8(ss, monkeypatch):
     """The hook payload is UTF-8, but `sys.stdin` in text mode decoded it with the locale
     encoding — on screen and in the toast it came out as 'umieraÄ‡' instead of
-    'umierac' with its diacritics. The assertion goes through `snapshot()`, because that
+    'umierać' with its diacritics. The assertion goes through `snapshot()`, because that
     one has an explicit utf-8; a bare `open()` would read a correct file as cp1250 and
     paint the test red on code that is fine."""
     assert _run_probe(ss, monkeypatch,
@@ -969,7 +969,7 @@ def test_stdin_with_byte_outside_cp1250_does_not_lose_alert(ss, monkeypatch):
     """The harder mode of the same failure, and it is the one that hurts more. cp1250 has
     no equivalent for 0x81/0x83/0x88/0x90/0x98, and `sys.stdin` runs with
     `errors=surrogateescape` — so 'Ł' (C5 81) did not come out mangled on screen, it
-    became a lone surrogate instead. That surrogate toppled `write_excl` at
+    became a lone surrogate instead. That surrogate broke `write_excl` at
     `.encode("utf-8")` ("surrogates not allowed"), and that call sits inside
     `except Exception: pass`: the entry file was created EMPTY. The result: the toast
     fires, `read_entry` does not parse, `snapshot()` skips it, the alert never reaches

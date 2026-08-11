@@ -103,7 +103,7 @@ async def test_withdrawal_does_not_erase_series_last_known_value(db):
     st = await _state(db, SPEND)
     assert st.last_utilization is None, "a missing measurement is stored as missing, not as 0"
     assert st.last_extra["disabled_reason"] == "org_level_disabled_until"
-    # A sample MUST be created — otherwise the history lies that the value held unchanged.
+    # A sample MUST be created — otherwise the history would claim the value held unchanged.
     assert await _samples(db, SPEND) == 2
 
 

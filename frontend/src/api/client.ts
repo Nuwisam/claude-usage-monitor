@@ -28,15 +28,15 @@ function reasonOf(body: unknown): string | null {
 }
 
 /** A promise that never resolves — React Query freezes instead of flashing an error
- *  while the page is being left. */
+ *  while the page is navigating away. */
 function leaveTo(url: string): Promise<never> {
   window.location.assign(url);
   return new Promise<never>(() => {});
 }
 
-/** A 401 with a login address = redirect. A 401 without one = an error on the spot.
+/** A 401 with a login address = redirect. A 401 without one = an error in place.
  *
- *  We guess no fallback address. The backend knows whether it sits behind anything
+ *  We do not guess a fallback address. The backend knows whether it sits behind anything
  *  that logs users in, and the UI does not — sending the user by default to some typical
  *  path ends in a 404 or somebody else's login page and looks like an app failure. */
 async function handle401(body: unknown): Promise<never> {
@@ -55,7 +55,7 @@ async function getJson<T>(path: string): Promise<T> {
   if (res.ok) return (await res.json()) as T;
 
   const body = await res.json().catch(() => null);
-  // Only a 401 navigates — 403/429/503 on the spot, otherwise an SSO failure gives a redirect loop.
+  // Only a 401 navigates — 403/429/503 in place, otherwise an SSO failure gives a redirect loop.
   if (res.status === 401) return handle401(body);
   throw new ApiError(res.status, reasonOf(body));
 }

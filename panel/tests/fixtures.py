@@ -1,7 +1,8 @@
 """Test scenes in the shape of the contract.
 
-The demonstration data is the same as in the mockup (the text/x-dc block at the end
-of "Ekran 3.5 cala.dc.html"), so that the render can be compared with the design 1:1.
+The demonstration data is the same as in the 3.5-inch screen mockup (the text/x-dc
+block at the end of it; the mockup is not tracked here), so the render can be
+compared with the design 1:1.
 States that a live run cannot be made to produce are here just as they are
 in frontend/src/mocks — because otherwise nobody would ever see them before a failure.
 """

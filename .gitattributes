@@ -1,4 +1,4 @@
-# The same working directory is sometimes seen AT ONCE by two systems: Windows
+# The same working directory is sometimes seen AT THE SAME TIME by two systems: Windows
 # (core.autocrlf=true) and Linux. So the same file is run by /bin/sh on the host and by Git
 # Bash on Windows. Without forcing LF, a checkout on the Windows side would insert CRLF, and
 # the host would answer "bad interpreter: No such file or directory".

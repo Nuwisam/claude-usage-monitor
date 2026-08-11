@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # a startup error.
     auth_mode: Literal["none", "header", "verify"] = Field(..., alias="AUTH_MODE")
 
-    # `header`: the proxy has already authenticated and passes the address on. Allowed only
+    # `header`: the proxy has already authenticated and passes the email address on. Allowed only
     # behind a proxy that STRIPS this header from incoming requests — otherwise anyone calls
     # themselves whoever they like.
     auth_email_header: str = Field("X-Forwarded-Email", alias="AUTH_EMAIL_HEADER")
@@ -35,16 +35,16 @@ class Settings(BaseSettings):
     auth_verified_at_field: str = Field("", alias="AUTH_VERIFIED_AT_FIELD")
     auth_redirect_field: str = Field("", alias="AUTH_REDIRECT_FIELD")
 
-    # Login address handed back to the browser on a 401, when the identity service gave none
+    # Login URL handed back to the browser on a 401, when the identity service gave none
     # itself (typically: it answers with an HTML page, not with JSON). `{rd}` is replaced by
-    # the encoded return address. Empty = there is nowhere to send anyone back to, and the UI
+    # the encoded return URL. Empty = there is nowhere to send anyone back to, and the UI
     # says exactly that.
     auth_login_url: str = Field("", alias="AUTH_LOGIN_URL")
 
     # Comma-separated list. An empty set = deny all (fail-safe). Does not apply to
-    # `AUTH_MODE=none`, where there is simply no address at all.
+    # `AUTH_MODE=none`, where there is simply no email address at all.
     allowed_emails_raw: str = Field("", alias="ALLOWED_EMAILS")
-    # Builds the return address for `{rd}`. The same origin the application is served from.
+    # Builds the return URL for `{rd}`. The same origin the application is served from.
     public_origin: str = Field("http://localhost:8080", alias="PUBLIC_ORIGIN")
     app_base_path: str = Field("/claude-usage", alias="APP_BASE_PATH")
 
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     ingest_tokens_raw: str = Field("", alias="INGEST_TOKENS")
     max_ingest_body_bytes: int = Field(262144, alias="MAX_INGEST_BODY_BYTES")
     max_backlog_entries: int = Field(200, alias="MAX_BACKLOG_ENTRIES")
-    # Threshold for the `clock_skew` EVENT, nothing more. Dating rests on the `sent_at - ts`
+    # Threshold for the `clock_skew` EVENT, nothing more. Timestamping rests on the `sent_at - ts`
     # difference within the client's own clock, so drift against the server does not break it
     # and there is no reason to reject anything on account of it.
     #
@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     sample_heartbeat_sec: int = Field(300, alias="SAMPLE_HEARTBEAT_SEC")
     monotonic_eps: float = Field(0.5, alias="MONOTONIC_EPS")
     # Up to what `resets_at` difference we call it the SAME window. The boundary reported by
-    # Anthropic sways by ~2 s; the shortest window is 5 h. See parsing.same_reset_window.
+    # Anthropic wobbles by ~2 s; the shortest window is 5 h. See parsing.same_reset_window.
     reset_window_eps_sec: int = Field(300, alias="RESET_WINDOW_EPS_SEC")
 
     # --- Freshness ---

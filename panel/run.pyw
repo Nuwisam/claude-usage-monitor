@@ -63,10 +63,10 @@ def _card(lines):
             value = entry.get(key)
             if isinstance(value, (str, int)) and not isinstance(value, bool):
                 clean[key] = value
-        # `rotate` STAYS, unlike brightness: a screen hung upside down would get the
-        # error card upside down, that is unreadable — and that is precisely the one
-        # thing this function is there to show. Safe, because we let through only two
-        # known values; anything else means 0 and a visible card, not dark glass.
+        # `rotate` STAYS, unlike brightness: a screen mounted upside down would get
+        # the error card upside down, that is unreadable — and that is precisely the
+        # one thing this function is there to show. Safe, because we let through only
+        # two known values; anything else means 0 and a visible card, not dark glass.
         if entry.get("rotate") in C.ROTATIONS:
             clean["rotate"] = entry["rotate"]
         entries.append(clean)

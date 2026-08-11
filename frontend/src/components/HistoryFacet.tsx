@@ -63,7 +63,7 @@ export function HistoryFacet({ account, series, from, to, nowMs }: Props) {
             ))}
             {q.data && q.data.points.length === 0 && (
               <span className="facet-note">
-                no samples in this range — the data only grows while you work
+                no samples in this range — the data only accumulates while you are working
               </span>
             )}
           </div>

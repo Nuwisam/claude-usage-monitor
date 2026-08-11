@@ -23,7 +23,7 @@ def test_bands_divide_screen_without_overlap():
 
 def test_credits_do_not_overlap_week():
     """The credits row is glued to the bottom of the band. Were the band too short,
-    it would run onto the week countdown and nobody would notice that on a PNG."""
+    it would overlap the week countdown and nobody would notice that on a PNG."""
     for band in L.Layout(480, 320).bands:
         assert band.fits, "credits overlap week"
 
@@ -47,7 +47,7 @@ def test_number_column_and_bar_column_do_not_overlap():
 
 def test_three_digit_value_fits_in_column():
     """That is exactly why the mockup drops from 42 to 34 px at 100%. Without it
-    the number would push the column apart and the bars would stop starting level."""
+    the number would force the column wider and the bars would stop starting level."""
     f_big = draw.font(L.F_SES_NUM)
     f_tight = draw.font(L.F_SES_NUM_TIGHT)
     f_pct = draw.font(L.F_SES_PCT)
@@ -248,7 +248,7 @@ def test_withdrawn_credits_still_get_drawn():
 ])
 def test_wrap_lines_does_not_exceed_limits(text, lines):
     """`detail` is sometimes a sentence, and the tile has two lines and a width of
-    420 px. Neither of those may depend on the content."""
+    420 px. Neither of those must depend on the content."""
     f = draw.font(12)
     out = draw.wrap_lines(text, f, 420, 2)
     assert len(out) == lines
@@ -264,7 +264,8 @@ def test_wrap_lines_truncates_last_line_with_ellipsis():
 
 
 def test_wrap_lines_survives_word_longer_than_line():
-    """Regression: without this one long word either vanished or looped the function."""
+    """Regression: without this one long word either vanished or sent the function into
+    an endless loop."""
     f = draw.font(12)
     out = draw.wrap_lines("a" * 400, f, 100, 2)
     assert len(out) == 1 and draw.text_width(out[0], f) <= 100

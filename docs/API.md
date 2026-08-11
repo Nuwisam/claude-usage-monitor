@@ -231,7 +231,7 @@ the account. Off switch: `"session_status": false` in `config.json`.
 
 **A session can run on a remote machine while the panel sits locally** — which is why events
 go through the backend as a proxy. But **they are not in the database**: they live only in
-process memory. A block goes out the moment someone clicks "yes", so a table would mean a
+process memory. A block clears the moment someone clicks "yes", so a table would mean a
 migration and a row lifecycle for a state that is meant to leave no trace at all.
 
 **A backend restart clears the map, and alerts do NOT come back on their own** — this used to
@@ -295,7 +295,7 @@ it by construction: `useLiveStream.ts` registers five named listeners and **has 
 `onmessage`**.
 
 This path **must** be covered by the `X-Ingest-Key` edge filter in Apache, exactly like
-`/ingest` — without it, it stands open to scanners and defends itself with the Bearer alone.
+`/ingest` — without it, it is wide open to scanners and defends itself with the Bearer alone.
 
 ---
 
@@ -344,8 +344,8 @@ invented number. The word "unknown" and the dashed track stay **only** for a ser
 **never** been measured (`utilization` and `rawUtilization` both `null`) — there an empty
 track would read as zero, and zero is not allowed.
 
-The same sentence stands behind `unavailableReason`, and **in both directions**. The phantom
-is `percent: 0` **from the withdrawal payload** — not a value measured earlier. That is why
+The same sentence is the reason for how `unavailableReason` is handled, and **in both
+directions**. The phantom is `percent: 0` **from the withdrawal payload** — not a value measured earlier. That is why
 with a withdrawn meter `utilization` is `null` (there is no current figure), but
 `rawUtilization` **stays**: it is the last MEASURED percent and the only thing known about
 usage. Deleting it would be the same mistake as rendering zero, just from the other side — the
@@ -354,8 +354,8 @@ user loses a figure we genuinely have.
 The whole row then describes **that measurement**: `rawUtilization`, the amounts in `extra`
 (`used`/`limit` from before the block, since the withdrawal payload zeroes them) and
 `capturedAt`/`confirmedAt`/`valueSince` pointing at the moment this number was last confirmed.
-The row looks exactly like a normal one — the UI writes "confirmed on Wed. at 13:39 · 2 d ago",
-not "confirmed just now".
+The row looks exactly like a normal one — the UI writes
+"confirmed on Wed. at 13:39 · 2 d 5 h ago", not "confirmed just now".
 
 The dashed track and the words "no meter" stay only when there has **never** been a
 measurement — there is still nothing to draw there.
@@ -382,8 +382,8 @@ state**, not a missing implementation.
 
 ### Sample freshness ≠ number freshness
 
-`capturedAt` is the moment **we** observed the value. The label reads "observed 14:23",
-**not** "as of 14:23". That is why the caption says "confirmed", and is computed from
+`capturedAt` is the moment **we** observed the value, not the moment the value became true.
+The caption never speaks in those terms: it says "confirmed", and it is computed from
 `confirmedAt`.
 
 This moment is computed by the **server**: `min(client_time + offset, receipt_time)`, where
@@ -433,8 +433,8 @@ views of **the same pool** of credits, not two limits — so `extra:usage` gets 
 and `duplicateOf: "spend:org"`. Pairing by data would never catch them, because `spend.percent`
 arrives rounded to a whole number (93) while `extra_usage.utilization` carries full precision
 (92.656). `spend` wins, because it has amounts in a money type and `severity`; `extra:usage`
-has neither `resetsAt`, nor `severity`, nor amounts, so as a row it had nothing to distinguish
-itself with.
+has neither `resetsAt`, nor `severity`, nor amounts, so as a row it has nothing to set it
+apart.
 
 **Turned off does not mean unneeded.** `extra:usage` stays in the response and is the **only**
 place you see `spend_limit_reached`, `user_disabled` (you turned it off, not the
@@ -519,7 +519,8 @@ rung, that one gets `isCurrent` — and the UI writes "unknown" there, it does n
 does. The same rule applies in `spend.extra`: `{"amount_minor": 0, "currency": "USD",
 "exponent": 2}`.
 
-The same goes for **ranges**: twenty hours of client silence is the norm here, so a gap's
+**The same rule — a bare hour lies once the day is in doubt — governs ranges**: twenty hours
+of client silence is the norm here, so a gap's
 caption regularly crosses midnight and `21:57–17:49` reads like time travel. When the ends
 fall on different days, both sides get a date: `26.07 21:57 – 27.07 17:49`.
 
@@ -532,7 +533,7 @@ fall on different days, both sides get a date: `26.07 21:57 – 27.07 17:49`.
 A chart that paints both the same way lies in exactly the place this tool must not lie. With
 this data source, **missing data is information**, not a chart bug.
 
-**`resets_at` SWAYS — never compare it for equality.** Measured: 49 samples in 3 h, one
+**`resets_at` WOBBLES — never compare it for equality.** Measured: 49 samples in 3 h, one
 session window, values from `00:59:59.014384` to `01:00:00.982268`. Anthropic adds its own
 response's microseconds and a small second-level drift on top. A real reset shifts the
 boundary by a **whole window** (5 h or 7 days), so the two are told apart with a tolerance,
@@ -703,8 +704,8 @@ current interface rests on:
 | Question | Decision |
 |---|---|
 | Number of screens | **Two: Live and History.** Accounts/Machines and Diagnostics stay with `curl` |
-| Hierarchy of the Live view | **Session 5 h is always in the foreground.** `isActive` does NOT reorder the hierarchy — it is a thin line and the word `binding` next to the series that is limiting you |
-| Visualization | Horizontal track + number. The four freshness states get **four different track drawings**, not just a different color |
+| Hierarchy of the Live view | **Session 5 h is always in the foreground.** `isActive` does NOT reorder the hierarchy — it is a thin line and the word `binds` next to the series that is limiting you (`binds now` in the hero) |
+| Visualization | Horizontal track + number — **one drawing for the freshness states**, with the age of the reading carried by the caption beside it. Only `inferred_reset` and a never-measured series look different (§ 4) |
 | Palette | Nocturne (structure) + **the warm Claude palette** (`--color-accent: #d97757` on `#1c1b19`) |
 | Chart library | None — the chart is its own SVG, `viewBox 0 0 1000 200` |
 | Widths | One layout in two: the full window (accounts as columns) and a narrow column |

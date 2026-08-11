@@ -7,7 +7,7 @@ probe is updated — the panel settings must not be lost along the way.
 
 The accounts are two NAMED fields, not a list. Layout 4a has exactly two bands, so
 the shape of the configuration is the shape of the screen here: a third account
-cannot be added by inattention, it takes a deliberate decision about which two
+cannot be added by accident, it takes a deliberate decision about which two
 you watch.
 """
 import json
@@ -400,7 +400,7 @@ class Config:
 
         A bare `int(self.brightness)` in the body of validate() was a pitfall. This
         function promises to return a list of problems, and with
-        `"brightness": "jasno"` in panel.json a ValueError came out of it instead.
+        `"brightness": "bright"` in panel.json a ValueError came out of it instead.
         The excepthook is installed by then, so instead of one sentence about what
         to fix there was a traceback and a task restart every minute — under
         pythonw, with no console to show it to anyone.

@@ -45,7 +45,7 @@ export function describeSeries(
   const confirmed = parseUtc(s.confirmedAt ?? s.capturedAt);
   const stable = parseUtc(s.valueSince);
   const suffix = extraNote ? ` · ${extraNote}` : "";
-  // A 2 min threshold, otherwise "unchanged since" would hang on every row. After "since" the
+  // A 2 min threshold, otherwise "unchanged since" would show on every row. After "since" the
   // preposition does not change, so a bare `stamp()` goes in.
   const held =
     stable && confirmed && confirmed.getTime() - stable.getTime() >= 120_000

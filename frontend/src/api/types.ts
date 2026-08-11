@@ -146,7 +146,7 @@ export interface HistoryPoint {
   n: number;
 }
 
-/** client_silent — you were not working; no_samples — the client reported, but with no samples
+/** client_silent — the client sent nothing; no_samples — the client reported, but with no samples
  *  for THIS series, i.e. a failure. Two shadings; merging them turns a failure into a plain break. */
 export type GapKind = "client_silent" | "no_samples";
 

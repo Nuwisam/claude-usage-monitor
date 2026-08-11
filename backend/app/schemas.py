@@ -1,7 +1,7 @@
 """DTOs. camelCase on the outside, snake_case on the inside.
 
 TIME ON THE WIRE IS ALWAYS UTC WITH AN OFFSET (`...Z`) — see `UtcDt`. The database columns
-are naive and stay that way; the zone is attached at serialization only.
+are naive and stay that way; the timezone is attached at serialization only.
 """
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ def _utc_iso(v: datetime) -> str:
     """Naive UTC -> ISO-8601 with 'Z'.
 
     Without this the browser SILENTLY reads "2026-07-26T19:07:37" as local time and the
-    countdown shifts by the zone offset — the number looks right and is wrong. The whole
-    project defends itself against false confidence, and a zoneless stamp is its pure form.
+    countdown shifts by the timezone offset — the number looks right and is wrong. The whole
+    project defends itself against false confidence, and a timezone-less timestamp is its pure form.
     """
     if v.tzinfo is None:
         v = v.replace(tzinfo=timezone.utc)
@@ -36,9 +36,9 @@ UtcDt = Annotated[datetime, PlainSerializer(_utc_iso, return_type=str)]
 def _naive_utc(v: datetime) -> datetime:
     """ISO-8601 from the wire -> naive UTC. The input mirror of `UtcDt`.
 
-    Once the output got a zone (contract v2), the browser started SENDING BACK time with a
-    'Z' — `Date.toISOString()`. Pydantic turns that into a datetime WITH A ZONE, while the
-    whole backend (columns, `utcnow()`, samples) is naive. Without this conversion /history
+    Once the output got a timezone (contract v2), the browser started SENDING BACK time with
+    a 'Z' — `Date.toISOString()`. Pydantic turns that into a datetime WITH A TIMEZONE, while
+    the whole backend (columns, `utcnow()`, samples) is naive. Without this conversion /history
     blows up on the subtraction "can't subtract offset-naive and offset-aware datetimes".
 
     Worse is what cannot be seen: the MySQL driver formats a datetime with `strftime` and
@@ -196,7 +196,7 @@ class PingFrame(CamelModel):
     server_now: UtcDt
 
 
-# A Claude Code session that has stopped and is waiting for a human. A MOMENTARY state: it
+# A Claude Code session that has stopped and is waiting for a human. An EPHEMERAL state: it
 # lives only in the process memory, it is not in the database and leaves no history.
 #
 # All the descriptive fields are optional ON PURPOSE. This is the only shape in this

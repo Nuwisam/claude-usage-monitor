@@ -290,10 +290,10 @@ function withEdgeCases(accounts: AccountStatus[]): AccountStatus[] {
       fresh: "stale" }),
   );
   // Age in DAYS: full track with the last measurement and "confirmed on ... at HH:MM · 3 d 4 h ago".
-  // On top of that a `valueSince` days old with the same confirmation — the value stood still
+  // On top of that a `valueSince` days old with the same confirmation — the value did not change
   // because nobody worked, so "unchanged since" has to carry a day too.
   max.series.push(
-    series(10, { key: "bucket:seven_day_haiku", label: "Week — Haiku", source: "bucket",
+    series(10, { key: "bucket:seven_day_haiku", label: "Seven day haiku", source: "bucket",
       sort: 100, bucket: "seven_day_haiku", u: null, raw: 42, resetMin: 4300,
       capturedMin: -4560, sinceMin: -8880, fresh: "unknown" }),
   );
@@ -371,7 +371,7 @@ function creditsStates(): AccountStatus[] {
     // current reading. The withdrawal payload carries `percent: 0`, `used: 0.00` and
     // `limit: null` — had that filled the row, the screen would promise the whole free limit
     // at the moment of a hard block.
-    account("0000wyco", "organization ceiling", {
+    account("0000gone", "organization ceiling", {
       key: "spend:org", label: "Spend limit (your pool)", source: "spend", sort: 30,
       u: null, raw: 100, resetMin: null, capturedMin: -3120, fresh: "live",
       severity: "critical", reason: "org_level_disabled_until",
@@ -401,7 +401,7 @@ function creditsStates(): AccountStatus[] {
     ]),
     // EXHAUSTED OWN POOL: the meter WORKS and tells the truth — 100% at 300.04 / 300.00 EUR.
     // Here the number has to stay; hiding it would lose the only correct value there is.
-    account("1111pula", "own pool", {
+    account("1111pool", "own pool", {
       key: "spend:org", label: "Spend limit (your pool)", source: "spend", sort: 30,
       u: 100, resetMin: null, capturedMin: -0.4, fresh: "live", severity: "critical",
       delta: 1,
@@ -409,7 +409,7 @@ function creditsStates(): AccountStatus[] {
                used: { amount_minor: 30004, currency: "EUR", exponent: 2 },
                limit: { amount_minor: 30000, currency: "EUR", exponent: 2 } },
     }, {
-      // The meter WORKS, so the "?" shows full precision next to a bar standing at 100.
+      // The meter WORKS, so the "?" shows full precision next to a bar at 100.
       // `spend_limit_reached` stays `false` — that is how the real payload of an exhausted
       // OWN pool looks (backend/tests/team.py), because that flag speaks of the org ceiling.
       key: "extra:usage", label: "Extra credits", source: "extra_usage", sort: 40,
@@ -459,10 +459,10 @@ function afterReset(): AccountStatus[] {
     acc("0000zero", "after reset", { ...session, u: 0, resetMin: null, capturedMin: -0.3,
       fresh: "live", delta: null }),
     // `reset-in-progress`: the probe zeroed a stale boundary, usage is already growing.
-    acc("1111toku", "reset in progress", { ...session, u: 3, resetMin: null, capturedMin: -0.3,
+    acc("1111prog", "reset in progress", { ...session, u: 3, resetMin: null, capturedMin: -0.3,
       fresh: "live", delta: 3, deltaFromMin: -6 }),
     // The boundary has passed and the client was silent — the countdown has nothing to count.
-    acc("2222poza", "past the boundary", { ...session, u: 0, raw: 18, resetMin: -3, capturedMin: -310,
+    acc("2222past", "past the boundary", { ...session, u: 0, raw: 18, resetMin: -3, capturedMin: -310,
       fresh: "inferred_reset", delta: null }),
   ];
 }

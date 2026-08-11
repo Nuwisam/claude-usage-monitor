@@ -174,7 +174,7 @@ def test_full_frame_only_drivers_get_the_other_surface():
                       surface.FullFrameSurface)
 
 
-def test_a_canvas_that_does_not_divide_by_the_tile_degrades_loudly():
+def test_a_canvas_that_is_not_divisible_by_the_tile_degrades_loudly():
     said = []
     s = surface.for_caps(caps(native=(300, 481)), log=said.append)
     assert isinstance(s, surface.FullFrameSurface)

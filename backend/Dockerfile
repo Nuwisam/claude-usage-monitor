@@ -13,8 +13,8 @@ WORKDIR /ui
 
 COPY frontend/package.json frontend/package-lock.json* ./
 # Do NOT add --omit=optional: rollup carries native binaries (e.g. @rollup/rollup-linux-x64-musl)
-# as optionalDependencies, and without them the build will not run.
-# Long timeouts are necessary — npm regularly drops on the first attempt from some networks.
+# as optionalDependencies, and without them the build fails.
+# Long timeouts are necessary — npm regularly fails on the first attempt from some networks.
 RUN npm install --no-audit --no-fund --fetch-timeout=600000 --fetch-retries=5
 
 COPY frontend/ ./
@@ -38,7 +38,7 @@ COPY backend/alembic ./alembic
 COPY backend/app ./app
 COPY backend/entrypoint.sh ./
 
-# UI statics. The backend mounts /assets and serves index.html as the SPA fallback (app/main.py).
+# Static UI assets. The backend mounts /assets and serves index.html as the SPA fallback (app/main.py).
 COPY --from=ui /ui/dist ./static
 
 RUN chmod +x entrypoint.sh

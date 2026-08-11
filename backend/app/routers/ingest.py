@@ -108,7 +108,7 @@ async def ingest(
 ) -> IngestResult:
     # TIME ANCHOR — the first statement, before the body is read and before `_ingest_tx`.
     # `ingest_one` already runs under `_WRITE_LOCK`; taking the anchor there would mean a
-    # request that waited out someone else's backlog dates its measurements too fresh by
+    # request that waited out someone else's backlog timestamps its measurements too fresh by
     # the wait, and each backlog entry gets its own, different anchor. One per whole request.
     arrived_at = utcnow()
 

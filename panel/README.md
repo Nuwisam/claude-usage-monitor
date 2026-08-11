@@ -62,9 +62,9 @@ be looked up in the Windows registry and matched to the handle by ordering.
 Measured on this module, same 307 200 B blit: test card (dark) 354 ms, full
 black 356 ms, bands of saturated colors 514 ms. The target layout is dark, so
 ~355 ms is what applies. Synthetic tests with saturated bands measure the worst
-case — and they are exactly what made us briefly believe in a regression that
-never existed, after the migration (libusb-win32 gave 503–533 ms on the same
-bands).
+case — and they are exactly what made us briefly think there was a regression
+that never existed, after the migration (libusb-win32 gave 503–533 ms on the
+same bands).
 
 **Draws full frames only.** The rectangle in the blit command is not an area to
 redraw — it sets a *drawing window* that the firmware pours the whole stream
@@ -137,10 +137,10 @@ around:
   tick loop — and with it *the other screen*, silently, with the scheduled task
   seeing a live process and never restarting it.
 
-`RESET` (101) is never sent (unmeasured, and a firmware mid-payload would eat it
-as pixels). `SET_ORIENTATION` (121) is never sent either: rotation is host-side
-and measured, and without acknowledgement a coordinate-space mistake would show
-up as a scrambled screen rather than an error.
+`RESET` (101) is never sent (unmeasured, and firmware in the middle of a payload
+would eat it as pixels). `SET_ORIENTATION` (121) is never sent either: rotation
+is host-side and measured, and without acknowledgement a coordinate-space
+mistake would show up as a scrambled screen rather than an error.
 
 **Identity is the port chain, same as the AX206.** pyserial reports `1-8.4`; we
 keep `8.4` and drop the bus for exactly the reason `Hub_#` was dropped before.
@@ -242,7 +242,7 @@ The presentation is two-stage, and that is a decision, not a phase:
    band** that reported the block; the account name turns `ACCENT_100`, and the
    reason appears in capitals on the line with the plan name. The bar sits in
    the margin area, so the band's layout does not shift by a pixel, and it has
-   the band's full height. The state stops being *takeover*, it does not stop
+   the band's full height. The state stops being *takeover*; it does not stop
    being *true* — usage comes back on screen, and the fact that something is
    waiting is still visible.
    **There is no red in the project**: all the signalling runs on the accent
@@ -285,7 +285,7 @@ An alert **with no match** to any configured account lands on the **top**
 band. The rule is deliberately simple: a static machine → band mapping would
 drift out of sync after the first `/login`, and switching accounts is routine
 here. The account comes from `oauthAccount.accountUuid` read on the machine
-running the session — rule 7 of the project.
+running the session — rule 7 in `AGENTS.md`.
 
 The waiting time is **coarse-grained** ("a moment" / "4 min" / "1 h 05 min" /
 "2 d 3 h"), and that is not a matter of taste: the AX206 cannot do partial
@@ -381,10 +381,10 @@ overwritten when it is updated.
 }
 ```
 
-**`rotate` says how the screen hangs**, in degrees counter-clockwise, **added
-on top of the rotation the driver applies anyway** (`turing-rev-a` has its own
-90°, so `180` gives 270°). Only **`0` or `180`** are allowed — a quarter turn
-would need a portrait 320×480 layout, and only one 3:2 layout is drawn;
+**`rotate` says how the screen is mounted**, in degrees counter-clockwise,
+**added on top of the rotation the driver applies anyway** (`turing-rev-a` has
+its own 90°, so `180` gives 270°). Only **`0` or `180`** are allowed — a quarter
+turn would need a portrait 320×480 layout, and only one 3:2 layout is drawn;
 changing the angle alone would give either scaling (this layout is hairline
 strokes, it would not survive that) or a payload whose length does not fit the
 rectangle. Omitted means `0`. To check without changing the file:
@@ -457,7 +457,7 @@ panel every week.
 
 | symptom | where to look |
 |---|---|
-| panel black / stale content | `panel.log`; is the task running; is another program not holding the module |
+| panel black / stale content | `panel.log`; is the task running; is another program holding the module |
 | "panel held by another process" | another program or a second instance of the client |
 | `missed_csw` rising | we sent the wrong byte count — a bug in the code, not in the hardware (AX206 only; the serial screen confirms nothing) |
 | serial screen: colors swapped, image "shifted" | byte drift after a torn write. A full repaint does **not** fix this — unplug and replug the screen |

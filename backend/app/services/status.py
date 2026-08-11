@@ -247,7 +247,7 @@ async def build_account_status(
         confirmed = st.last_confirmed_at or st.last_captured_at
         captured, value_since = st.last_captured_at, st.value_since
         if measured:
-            # The stamps describe the NUMBER that appears in the row. That number was last
+            # The timestamps describe the NUMBER that appears in the row. That number was last
             # confirmed before the meter was withdrawn and nobody has confirmed it since —
             # after that the only thing confirmed was that there is no measurement. Leaving
             # a fresh `confirmed_at` here would mean "measured a moment ago" and would be

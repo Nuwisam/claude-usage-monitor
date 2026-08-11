@@ -1,4 +1,4 @@
-"""Diagnostic endpoints — a regression on migration `0002_cli_source` knocking them over.
+"""Diagnostic endpoints — a regression on migration `0002_cli_source` breaking them.
 
 Version 3 of the probe sends no request at all to Anthropic, so the migration dropped the
 columns describing the HTTP response (`http_status`, `request_id`, `rl_status`) and

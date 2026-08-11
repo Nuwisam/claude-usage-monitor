@@ -105,9 +105,9 @@ def test_parse_utc_without_a_zone_assumes_utc():
     assert fmt.parse_utc("not a date") is None
 
 
-def test_hours_are_local():
+def test_times_are_local():
     """time.ts:31 uses getHours(), that is the browser's zone. The panel does the same:
-    'reset at 20:00' has to agree with the watch on a wrist, not with UTC."""
+    'reset at 20:00' has to agree with the watch on your wrist, not with UTC."""
     d = fmt.parse_utc("2026-07-26T18:00:00Z")
     assert fmt.hm(d) == fmt.hm(fmt.to_local(d))
     assert fmt.hm(None) == "—"
@@ -125,14 +125,14 @@ def test_at_stamp_has_the_same_rungs_as_the_web():
     """Port of atStamp() (time.ts:94-106). Tz-agnostically: we check the SHAPE of the
     string, because the hour itself depends on the machine's zone.
 
-    The bare hour of a reset five days out lies — it does not say which day."""
-    assert _at(0).startswith("at "), "today: the bare hour with a preposition"
+    The bare time of a reset five days out lies — it does not say which day."""
+    assert _at(0).startswith("at "), "today: the bare time with a preposition"
     assert _at(-1).startswith("yesterday at ")
     assert _at(1).startswith("tomorrow at ")
     for days in (-6, -2, 2, 6):
         first, second = _at(days).split()[:2]
         assert first == "on", "the preposition is INSIDE the stamp"
-        assert second in fmt.DAYS, "the day abbreviation exactly as in the web"
+        assert second in fmt.DAYS, "the day abbreviation exactly as on the web"
     # 7 days out is the same abbreviation again, so from there on it is dates; a numeric
     # date takes no preposition, so there is none there.
     far = _at(30)

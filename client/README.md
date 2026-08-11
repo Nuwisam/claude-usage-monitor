@@ -8,7 +8,7 @@ from disk, and sends the monitor only that result.
 
 Version 2 of the probe called `GET /api/oauth/usage` with its own OAuth token from
 `.credentials.json`, impersonating `User-Agent: claude-code/…` (without that you land in the
-aggressive 429 bucket). Anthropic's terms say without exception that OAuth tokens from
+aggressive 429 bucket). Anthropic's terms make no exception: OAuth tokens from
 Free/Pro/Max accounts must not be used *"in any other product, tool, or service"* — there is
 no loophole there for read-only use.
 
@@ -72,7 +72,7 @@ Consequence: **alerts require the probe.** There is no longer a separate script 
 that wants notifications without limit measurement.
 
 This is the **source**: `backend/tests/test_probe_parsing.py` loads it by a fixed path, and
-this is where changes land. Every copy handed out to machines is a **release** and **may be
+this is where changes land. Every copy issued to machines is a **release** and **may be
 older** than HEAD — that is correct, because publication is meant to be a decision, not a side
 effect of a push; an automatic sync would push a work-in-progress version to remote machines.
 
@@ -82,7 +82,7 @@ the bump, two different probes are indistinguishable.
 
 ## Installation
 
-The instructions are complete: from an empty machine to a confirmed measurement in the monitor.
+The instructions are complete: from a bare machine to a confirmed measurement in the monitor.
 The order of the steps matters — we check the secrets **before** touching `settings.json`, so
 that a failed installation leaves the file untouched.
 
@@ -146,8 +146,8 @@ The probe derives the data directory from `%LOCALAPPDATA%` / `~/.local/state` at
 **not** from its own location — so it doesn't matter where the script itself lives.
 
 Without `config.json` the probe runs in **local-only mode**: it measures and logs, sends
-nothing. That is a legal state, not a failure. The blocked-session signaller (step 7) is then
-still **on** and raises toasts on Windows — only the send goes silent. `"session_status": false`
+nothing. That is a valid state, not a failure. The blocked-session signaller (step 7) is then
+still **on** and pops toasts on Windows — only the send goes silent. `"session_status": false`
 turns it off.
 
 ### 3. Handshake — we check the secrets before touching `settings.json`
@@ -170,12 +170,12 @@ curl -s -o /tmp/hs.txt -w '%{http_code}' -X POST "$INGEST_URL" \
 
 **Until you get a 200, don't install the hooks.**
 
-### 4. At the hooks' path we put a redirect, not a copy
+### 4. The hooks path holds a redirect, not a copy
 
 The path
 `%LOCALAPPDATA%\claude-usage-monitor\usage-probe.py` (Windows) or
 `~/.local/state/claude-usage-monitor/usage-probe.py` (Linux, macOS) is the **contract** —
-every entry in `settings.json` points at it. What sits there is a dozen-odd lines of Python
+every entry in `settings.json` points at it. What sits there is a dozen or so lines of Python
 that run the real probe from `SRC`. This is the **entire content of the file**, not an excerpt:
 
 ```python
@@ -206,7 +206,7 @@ The original plan was a symbolic link there, but Windows refuses to create one w
 mode or administrator rights (`Administrator privilege required`) — the redirect does the same
 thing without any privileges, and identically on a remote machine. The only thing that differs
 between them is **`SRC`**: here, the project repo; on a remote machine, the directory the copy
-was handed out to. The probe finds itself via `%LOCALAPPDATA%`, not via `__file__`, so the
+was issued to. The probe finds itself via `%LOCALAPPDATA%`, not via `__file__`, so the
 redirect changes nothing for it.
 
 Cost, broken down into components, because one number for the whole run always lies (median of
@@ -221,7 +221,7 @@ Cost, broken down into components, because one number for the whole run always l
 | a full run that ends at the throttle | 46.9 ms |
 | a detached `claude -p "/usage"` | ~3.4 s |
 
-The redirect isn't free, then, but it is still dwarfed by the cost the whole design is
+The redirect isn't free, but it is still dwarfed by the cost the whole design is
 about: the probe **does not wait** for `claude`, so that ~3.4 s never enters the run. A remote
 machine reads `SRC` from a local disk and doesn't even pay that 11 ms.
 
@@ -302,7 +302,7 @@ section "Turning off collection".
 ### 7. Blocked-session signaller
 
 The probe also detects the moment Claude Code has stopped and is **waiting for you**: a request
-for permission to use a tool, `AskUserQuestion`, `ExitPlanMode`. It then raises a toast on this
+for permission to use a tool, `AskUserQuestion`, `ExitPlanMode`. It then pops a toast on this
 machine and sends an alert to the monitor, so the panel on the desktop shows a card and a marker
 next to the account.
 
@@ -342,7 +342,7 @@ mechanism can be told apart from an absence of work.
   whatever is currently pending**: on the first event it deletes the entries and sends one
   empty set, so the marker on the panel disappears right away, not after a full day.
 - Without **`alert_url`** the signaller works **locally only**: it writes state files and
-  raises the toast, sends nothing. That is a legal state and, incidentally, an emergency
+  pops the toast, sends nothing. That is a valid state and, incidentally, an emergency
   channel — the toast still arrives even when the server is down.
 - **`"toast": false`** disables just the notification; alerts to the panel keep going.
 

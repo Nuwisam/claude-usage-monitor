@@ -78,7 +78,7 @@ async def get_or_create_machine(db: AsyncSession, name: str, client: dict,
         db.add(m)
         await db.flush()
     m.host = client.get("host") or m.host
-    # Script version ONLY from the current record. Backlog entries lie in the spool for hours
+    # Script version ONLY from the current record. Backlog entries sit in the spool for hours
     # or days and carry a pre-update version — taken here they would move this field back.
     if not is_backlog:
         m.script_version = client.get("script_version") or m.script_version
@@ -167,7 +167,7 @@ async def store_raw(db: AsyncSession, usage: Any) -> tuple[RawPayload, str]:
 
 def measured_at(ts: datetime | None, offset: timedelta,
                 arrived_at: datetime) -> datetime | None:
-    """SERVER-SIDE DATING. The client gives the age, the server dates `received_at - age`.
+    """SERVER-SIDE TIMESTAMPING. The client gives the age; the timestamp is `received_at - age`.
 
         offset      = arrived_at - sent_at            (once per request)
         measured_at = min(ts + offset, arrived_at)
@@ -194,9 +194,9 @@ def measured_at(ts: datetime | None, offset: timedelta,
 def request_offset(payload: dict, arrived_at: datetime) -> timedelta:
     """`arrived_at - measurement.sent_at` — one per whole request, from the OUTER record.
 
-    Backlog entries lie in the same envelope, so their age (`sent_at - ts`, in the client's
+    Backlog entries ride in the same envelope, so their age (`sent_at - ts`, in the client's
     OWN clock) is corrected by the same amount; their own `sent_at` they use only for the
-    check "the measurement did not arise after it was sent".
+    check "the measurement was not taken after it was sent".
 
     Here, and not in the handler, so that the tests compute the offset THE SAME WAY the real
     path does — otherwise a divergence between them would show up only live."""
@@ -222,7 +222,7 @@ async def _write_observation(
         # (account_id, series_id, client_captured_at), only an ordinary index.
         #
         # The key: (account, series, client_captured_at, machine, payload sha256).
-        #   - `client_captured_at`, and NOT `captured_at`: since dating moved to the server
+        #   - `client_captured_at`, and NOT `captured_at`: since timestamping moved to the server
         #     side, `captured_at` is a function of the REQUEST (it holds the `offset` computed
         #     from that request's `arrived_at`), so a replay of the same entry in another
         #     request gets a different value and the guard would not see it. The raw client
@@ -305,7 +305,7 @@ async def _write_observation(
 
     if st is not None and st.last_captured_at is not None:
         prev_u = float(st.last_utilization) if st.last_utilization is not None else None
-        # WITH TOLERANCE, not on equality: the window boundary reported by Anthropic sways by
+        # WITH TOLERANCE, not on equality: the window boundary reported by Anthropic wobbles by
         # ~2 s, so a literal comparison was always false and silently switched off both the
         # dedup and the monotonicity guard below.
         #
@@ -395,7 +395,7 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
 
     `arrived_at` is the TIME ANCHOR: the moment the request was received, taken in the handler
     BEFORE the write lock. It must not be computed here — `ingest_one` already runs under
-    `_WRITE_LOCK`, so a request that waited out somebody else's backlog would date the
+    `_WRITE_LOCK`, so a request that waited out somebody else's backlog would timestamp the
     measurements that much too fresh, and every backlog entry would get its own, different
     anchor. The default is there for the tests alone.
 
@@ -513,9 +513,9 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         x for x in raw_covered if isinstance(x, str)
     ) if isinstance(raw_covered, list) else frozenset()
 
-    # THE MEASUREMENT COULD NOT HAVE ARISEN AFTER IT WAS SENT. If it did, the client clock
-    # moved back between the write and the send and this entry's dating is uncertain — and the
-    # expansion shows this is exactly the clamping condition (`ts + offset > arrived_at` <=>
+    # THE MEASUREMENT CANNOT HAVE BEEN TAKEN AFTER IT WAS SENT. If it was, the client clock
+    # moved back between the write and the send and this entry's timestamp is uncertain — and
+    # the expansion shows this is exactly the clamping condition (`ts + offset > arrived_at` <=>
     # `ts > sent_at`), so the entry would land on `arrived_at`, pass `newest` and overwrite
     # the state with an old measurement. We reject the whole thing; the raw payload is already
     # in the database (rule 6), the entry goes to `accepted` so the probe truncates the spool.
@@ -533,9 +533,9 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         return {"samples_written": 0, "batch_id": batch.id, "ok": False,
                 "account_uuid": account.account_uuid}
 
-    # DIAGNOSTICS, with no effect on the write. The dating rests on the difference
+    # DIAGNOSTICS, with no effect on the write. The timestamping rests on the difference
     # `sent_at - ts`, which is within a single clock — a divergence against the server no
-    # longer spoils it.
+    # longer corrupts it.
     if abs(offset.total_seconds()) > settings.clock_skew_tolerance_sec:
         await _event(db, level="warn", event_type="clock_skew", account_id=account.id,
                      batch_id=batch.id,

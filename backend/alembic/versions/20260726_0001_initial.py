@@ -30,7 +30,7 @@ def upgrade() -> None:
         "accounts",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
         # The natural key is the account UUID, NOT the label from configuration — because on
-        # one machine accounts are switched via /login and a static label would drift apart.
+        # one machine accounts are switched via /login and a static label would go out of sync.
         sa.Column("account_uuid", sa.String(64), nullable=False, unique=True),
         sa.Column("label", sa.String(100)),
         sa.Column("email", sa.String(255)),
@@ -76,7 +76,7 @@ def upgrade() -> None:
     )
 
     # An open set of series. Step 0 showed 17 top-level keys, 5 of them unknown —
-    # a new bucket at Anthropic is to add a row, not to require a migration.
+    # a new bucket at Anthropic should add a row, not require a migration.
     op.create_table(
         "usage_series",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
@@ -164,7 +164,7 @@ def upgrade() -> None:
     op.create_index("ix_samples_batch", "limit_samples", ["batch_id"])
     op.create_index("ix_samples_time", "limit_samples", ["captured_at"])
 
-    # Cache of the hot state — thanks to it /api/status reads a dozen or so rows.
+    # Cache of the hot state, so /api/status reads a dozen or so rows.
     op.create_table(
         "series_state",
         sa.Column("account_id", sa.Integer, sa.ForeignKey("accounts.id"), primary_key=True),

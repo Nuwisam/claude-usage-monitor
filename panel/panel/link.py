@@ -207,9 +207,9 @@ class PanelLink:
             return False
 
         if first:
-            # ONE line per open, not per frame. "panel: otwarty" only says we hold a
-            # handle, and a silent screen behind an open handle looks exactly like
-            # correct operation in the log.
+            # ONE line per open, not per frame. "%s: opened (brightness %s)" only
+            # says we hold a handle, and a silent screen behind an open handle
+            # looks exactly like correct operation in the log.
             ms = (time.monotonic() - t0) * 1000
             if caps.acked:
                 log().info("%s: first frame after opening (status=%s, %.0f ms)",

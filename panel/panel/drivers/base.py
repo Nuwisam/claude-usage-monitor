@@ -95,12 +95,12 @@ class Caps:
         self.bytes_per_sec = bytes_per_sec  # measured, used for write timeouts
 
     def rotated(self, extra):
-        """These capabilities as seen by a panel MOUNTED `extra` degrees round.
+        """These capabilities as seen by a panel MOUNTED `extra` degrees around.
 
         `rotate` here means two different things composed into one number: how the
         logical canvas maps onto this model's framebuffer (the driver's business)
-        and how the glass hangs on the wall (the owner's). Composing them here
-        rather than in every reader keeps `caps.rotate` the single value that
+        and how the glass is mounted on the desk (the owner's). Composing them
+        here rather than in every reader keeps `caps.rotate` the single value that
         surface.py, link.py and the CLI already trust.
 
         Only half turns. A quarter turn would swap `native` and demand a portrait

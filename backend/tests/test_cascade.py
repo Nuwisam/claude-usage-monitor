@@ -19,7 +19,7 @@ REAL = json.loads((Path(__file__).parent / "fixtures" / "usage_max.json").read_t
 
 
 def facts_from_payload(payload) -> list[SeriesFacts]:
-    """The same road the running system walks: parse_usage -> facts about series."""
+    """The same path the running system takes: parse_usage -> facts about series."""
     return [SeriesFacts(series_key=o.series_key, source=o.source, kind=o.kind,
                         bucket_key=o.bucket_key, utilization=o.utilization,
                         is_active=o.is_active, extra=o.extra,
@@ -83,7 +83,7 @@ def test_team_credit_amounts_in_minor_units_without_flattening():
 
 
 def test_exhausted_pool_slides_to_hard_block_despite_spend_limit_reached_false():
-    """Exhausting the OWN pool lights no flag at all: `spend_limit_reached` stood at
+    """Exhausting the OWN pool lights no flag at all: `spend_limit_reached` was
     `false` with used 300.04 / limit 300.00 EUR. The only thing that detects this state is
     comparing the amounts — which is why the `_exhausted` branch has its own test here, so
     that a cleanup does not make it disappear as 'dead code'."""
@@ -97,7 +97,7 @@ def test_exhausted_pool_slides_to_hard_block_despite_spend_limit_reached_false()
     assert current(rungs) == HARD_BLOCK
 
 
-def test_usage_over_limit_does_not_upend_cascade_or_amounts():
+def test_usage_over_limit_does_not_break_cascade_or_amounts():
     """300.04 EUR out of 300.00 is overage, not an error. The amounts must not be clipped
     or negative, and the percentage stays at 100 — Anthropic clips it there too."""
     c = by_key(build_cascade(facts_from_payload(usage(USAGE_POOL_EXHAUSTED))))
@@ -140,7 +140,7 @@ def test_cascade_on_withdrawn_meter_does_not_promise_a_way_out():
 
 
 def test_withdrawn_credits_are_skipped_even_without_spend_limit_reached_flag():
-    """`spend_limit_reached` is sometimes `true` on withdrawal, but leaning on it is
+    """`spend_limit_reached` is sometimes `true` on withdrawal, but relying on it is
     guesswork: with the own pool exhausted it reads `false`. Sliding down to the hard
     block has to follow from the rung being SWITCHED OFF, not from the flag."""
     p = usage(USAGE_WITHDRAWN)
@@ -207,7 +207,7 @@ def test_bucket_replaces_missing_entry_from_limits():
 
 
 def test_reason_without_enabled_flag_is_still_off_not_unknown():
-    """When the block arrives trimmed — the reason is there, the `enabled` flag is not —
+    """When the block arrives truncated — the reason is there, the `enabled` flag is not —
     the reason alone has to be enough. Without that the cascade would say 'we do not know
     whether you have credits' at the moment Anthropic wrote plainly why you do not."""
     facts = [SeriesFacts(series_key="spend:org", source="spend", utilization=None,

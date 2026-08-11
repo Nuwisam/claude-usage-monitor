@@ -4,8 +4,8 @@ Three modes, selected by AUTH_MODE:
 
   `none`   — no gate. Sensible only when the service is not reachable from the network:
              a loopback port or a trusted LAN segment. ALLOWED_EMAILS does not apply here,
-             because there is no address to be had from anywhere.
-  `header` — the reverse proxy has already authenticated and supplies the address in a
+             because there is no email address to be had from anywhere.
+  `header` — the reverse proxy has already authenticated and supplies the email address in a
              header (AUTH_EMAIL_HEADER). Permitted only behind a proxy that STRIPS that
              header from incoming requests; otherwise anyone calls themselves whatever
              they like.
@@ -28,7 +28,7 @@ from loguru import logger
 
 from app.config import settings
 
-#: The identity in `none` mode. Not an address, and deliberately not address-shaped — if it
+#: The identity in `none` mode. Not an email address, and deliberately not email-shaped — if it
 #: ever lands in the allowlist or in a log, it must be visible at once that nobody logged in.
 ANONYMOUS = "anonymous"
 
@@ -40,7 +40,7 @@ class CurrentUser:
 
 
 def _login_url() -> str | None:
-    """The login address, or None when there is nowhere to send the user back to.
+    """The login URL, or None when there is nowhere to send the user back to.
 
     None is a fully valid result: an installation without external login has no page that
     would be worth redirecting to, and sending the user off to some default somewhere is
@@ -62,14 +62,14 @@ def _not_authenticated(redirect: str | None = None) -> HTTPException:
 
 
 def _authorize(email: str | None, verified_at: str | None) -> CurrentUser:
-    """Shared tail for `header` and `verify`: the address is known, now ask whether it is allowed."""
+    """Shared tail for `header` and `verify`: the email is known, now ask whether it is allowed."""
     if not email:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"reason": "missing-email"},
         )
     if email.lower() not in settings.allowed_emails:
-        logger.warning("Denied access for an address outside the allowlist: {}", email)
+        logger.warning("Denied access to an email outside the allowlist: {}", email)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"reason": "email-not-allowed"},
@@ -141,7 +141,7 @@ async def require_authorized_user(request: Request) -> CurrentUser:
     if settings.auth_mode == "header":
         email = request.headers.get(settings.auth_email_header, "").strip()
         if not email:
-            # A missing header means "not logged in", not "bad address" — the proxy simply
+            # A missing header means "not logged in", not "bad email address" — the proxy simply
             # did not let anyone through.
             raise _not_authenticated()
         return _authorize(email, None)

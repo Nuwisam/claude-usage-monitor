@@ -66,7 +66,7 @@ def test_a_failing_panel_does_not_stop_the_others():
     assert len(alive.frames) == 1
 
 
-def test_holding_draws_on_nobody():
+def test_holding_draws_to_nobody():
     """Before the first data the previous run's image is better than anything we
     could draw, on every screen alike."""
     a = FakeLink("a")

@@ -35,9 +35,9 @@ function valueOf(r: CascadeRung): string {
     }
     case "credits": {
       const amountsForRung = amounts(r);
-      // Amounts beat the state: when we know them, the rung shows NUMBERS, without a word
-      // of commentary and without a strikethrough. The withdrawal reason belongs to the
-      // hard block — that is the rung which changed because of it.
+      // Amounts take precedence over the state: when we know them, the rung shows NUMBERS,
+      // without a word of commentary and without a strikethrough. The withdrawal reason
+      // belongs to the hard block — that is the rung which changed because of it.
       if (amountsForRung) return amountsForRung;
       if (r.state === "off") return "off";
       return pct(r.utilization) ?? "on";
@@ -59,7 +59,7 @@ export function Cascade({ rungs }: { rungs: CascadeRung[] }) {
       {rungs.map((r) => (
         // `data-plain` takes the strikethrough off an `off` rung that nevertheless shows
         // NUMBERS. A strikethrough says "this no longer works" and next to the word "off" it
-        // is fine; dragged through amounts it would read as "these amounts are untrue".
+        // is fine; struck through amounts it would read as "these amounts are untrue".
         <div key={r.key} className="rung" data-state={r.state}
              data-plain={r.state === "off" && amounts(r) ? "1" : undefined}>
           <span className="rung-label">{LABELS[r.key]}</span>

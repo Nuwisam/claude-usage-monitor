@@ -9,8 +9,8 @@ over to WinUSB is unnecessary and would break those tools.
 There is one reason for the change of library: `libusb_get_port_numbers()` reports
 the PORT CHAIN from the very handle being opened. The legacy 0.1 API from
 libusb-win32 reported no topology at all (`bus-0`, `devnum=0`), so the module had
-to be looked up in the Windows registry and matched to the other by order — that
-is, guessed. Details in the header of device.py.
+to be looked up in the Windows registry and matched to the handle by ordering —
+that is, guessed. Details in the header of device.py.
 
 Protocol after dpf-ax (hackfin/dreamlayers): the vendor SCSI command 0xCD wrapped
 in a CBW/CSW pair of the USB Bulk-Only Mass Storage transport, EP 0x01 OUT /
@@ -51,7 +51,14 @@ source:
 
      The consequence for a window smaller than the screen: a full frame goes into
      it several times over, so what stays on the glass is the TAIL of the payload,
-     not its start. Measured: a 480x60 window with a payload carrying the word
+     not its start.
+
+     i18n-keep: "DOL" is the Polish word that was actually drawn into the test
+     payload on the bench, and what the glass then showed is the whole finding.
+     Translating it would rewrite the record of a measurement rather than the
+     English around it.
+
+     Measured: a 480x60 window with a payload carrying the word
      "DOL" ("bottom") along its foot showed exactly that word; a payload padded
      with zeros gave a BLACK window. The earlier "black frames" were exactly this
      effect, not a failure to draw.

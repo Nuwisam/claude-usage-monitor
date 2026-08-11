@@ -88,7 +88,7 @@ def test_schema_and_api_browsers_are_disabled(client, path):
     set of paths, field names and error shapes to anyone without a session.
 
     The assertion looks at the CONTENT, not at the response code: the SPA catch-all returns
-    index.html with code 200, so `status_code != 200` would attest to nothing here.
+    index.html with code 200, so `status_code != 200` would prove nothing here.
     """
     r = client.get(path)
     assert "openapi" not in r.text

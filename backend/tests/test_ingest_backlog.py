@@ -86,7 +86,7 @@ async def test_entry_that_is_not_an_object_is_counted(api, db):
     p["backlog"] = ["not-an-object", payload(captured_at=now - timedelta(minutes=5))]
     r = await post(api, p)
     assert r.status_code == 200
-    # 2, not 1: position 0 can never be written, so the count admits to it anyway.
+    # 2, not 1: position 0 can never be written, so the count accounts for it anyway.
     assert r.json()["backlogAccepted"] == 2
 
 

@@ -1,4 +1,4 @@
-"""Server-side dating of measurements: the client gives the age, the server dates.
+"""Server-side timestamping of measurements: the client gives the age, the server timestamps.
 
 Revision ID: 0003_server_dating
 Revises: 0002_cli_source
@@ -6,14 +6,14 @@ Create Date: 2026-08-03
 
 A probe measurement is made of TWO sources of different age — the `claude -p "/usage"` dump
 and the Claude Code cache — but it rode on ONE timestamp, taken from the dump. `spend` and
-`extra_usage` come exclusively from the cache, so they were rejuvenated by the whole age
+`extra_usage` come exclusively from the cache, so they appeared fresher by the full age
 difference (up to an hour). The backend decides by that timestamp which reading is current,
 so with two machines on one account the one with the older cache but the fresher dump rolled
 back the state of exactly those two series — the only ones that NEVER have a window boundary,
 and therefore the only ones without a monotonicity guard.
 
 From this version on the probe sends `measurement.sent_at` and `measurement.fresh_at`, and the
-server dates `min(ts + (arrived_at - sent_at), arrived_at)`. The schema follows with two columns:
+server timestamps `min(ts + (arrived_at - sent_at), arrived_at)`. The schema follows with two columns:
 
 1. limit_samples.client_captured_at — the raw client time for THIS observation, before the
    offset. Forced by the backlog idempotency guard: `captured_at` is now a function of the

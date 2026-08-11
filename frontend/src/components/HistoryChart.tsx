@@ -266,7 +266,7 @@ export function HistoryChart({ points, resets, gaps, from, to, uid }: Props) {
  *
  *  We align through `Date` to LOCAL boundaries, not by arithmetic on `ms`: that one lands on
  *  whole UTC hours, so in a half-hour zone every tick would read ":30".
- *  It settles the clock change on the way — a day with a change has 23 or 25 hours. */
+ *  It also handles the DST change — a day with a change has 23 or 25 hours. */
 function xTicks(fromMs: number, spanMs: number) {
   const hours = spanMs / 3_600_000;
   const stepH = hours <= 8 ? 1 : hours <= 30 ? 3 : hours <= 200 ? 24 : 24 * 5;

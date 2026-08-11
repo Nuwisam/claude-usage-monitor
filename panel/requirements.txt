@@ -16,10 +16,10 @@ Pillow==12.1.0
 #
 # Why libusb-win32 was not kept: its 0.1 API does not report topology
 # (bus-0, devnum=0), so the module had to be looked up in the Windows registry and matched
-# one to the other by ordering. `libusb_get_port_numbers()` gives the port chain
+# to the handle by ordering. `libusb_get_port_numbers()` gives the port chain
 # straight from the handle being opened. Details in the panel/device.py header.
 libusb==1.0.29.post7
-# certifi is a CA store — refreshing it is to be a decision, not a side effect.
+# certifi is a CA store — refreshing it must be a decision, not a side effect.
 # Bump it deliberately, once it stops trusting your server's certificate chain.
 certifi==2026.7.22
 # pyserial drives the SECOND screen (Turing rev A on a CH340). The version is pinned

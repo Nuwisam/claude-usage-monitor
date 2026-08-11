@@ -1,7 +1,7 @@
 """GET /api/stream — SSE carrying account cards the client subscribed to.
 
 Subscription is BY `account_uuid` ONLY. The email does not appear in this contract at all,
-neither as a parameter nor as a matching key: one address really does point at several
+neither as a parameter nor as a matching key: one email address really does point at several
 accounts, and `Account.email` is overwritten on every ingest — addressing by it would mean
 the set of accounts under a subscription changes without the subscriber knowing (rule 7).
 

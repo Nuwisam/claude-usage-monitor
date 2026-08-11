@@ -1,4 +1,4 @@
-"""Measurement source: the CLI instead of an own HTTP request; freshness split from change.
+"""Measurement source: the CLI instead of its own HTTP request; freshness split from change.
 
 Revision ID: 0002_cli_source
 Revises: 0001_initial
@@ -50,8 +50,8 @@ def upgrade() -> None:
     # --- 1. freshness vs change of value ------------------------------------------
     op.add_column("series_state", sa.Column("last_confirmed_at", DT, nullable=True))
     op.add_column("series_state", sa.Column("value_since", DT, nullable=True))
-    # For data from before this change both meanings are identical — there is nothing from
-    # which to reconstruct the moment the value actually settled, so what is known is taken.
+    # For data from before this change both meanings are identical — nothing in the old schema
+    # records the moment the value actually settled, so the best available value is used.
     op.execute("UPDATE series_state SET last_confirmed_at = last_captured_at, "
                "value_since = last_captured_at")
 
@@ -82,7 +82,7 @@ def downgrade() -> None:
     op.add_column("ingest_batches", sa.Column("rl_status", sa.String(32)))
     op.add_column("ingest_batches", sa.Column("request_id", sa.String(64)))
     op.add_column("ingest_batches", sa.Column("http_status", sa.Integer))
-    # The data from these columns cannot be recovered — the return restores shape, not content.
+    # The data from these columns cannot be recovered — the downgrade restores shape, not content.
 
     op.drop_column("ingest_batches", "fresh_age_s")
     op.drop_column("ingest_batches", "cache_age_s")

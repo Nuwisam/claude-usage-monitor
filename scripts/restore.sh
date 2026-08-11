@@ -1,5 +1,5 @@
 #!/bin/sh
-# Restore of the database from a dump.  Usage:  scripts/restore.sh backups/claude_usage_YYYY….sql.gz
+# Restores the database from a dump.  Usage:  scripts/restore.sh backups/claude_usage_YYYY….sql.gz
 #
 # BY DEFAULT it restores into the SCRATCH database, not the production one — because a backup
 # that has never been restored is not a backup, and restoring onto production "just to check"

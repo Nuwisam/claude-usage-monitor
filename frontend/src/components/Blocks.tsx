@@ -11,7 +11,7 @@ export function LoadingBlock() {
 /** Errors are shown IN PLACE. Only `handle401` redirects, and only when the backend gives
  *  a login address.
  *
- *  403 (address outside the allowlist) and 503 (identity service unreachable) pointed at the
+ *  403 (email outside the allowlist) and 503 (identity service unreachable) pointed at the
  *  login would loop: the login sends a signed-in user back, the backend refuses again. */
 export function ErrorBlock({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   const api = error instanceof ApiError ? error : null;
@@ -28,19 +28,19 @@ export function ErrorBlock({ error, onRetry }: { error: unknown; onRetry?: () =>
       case 403:
         return [
           "Your address is not on the list",
-          "Authentication succeeded, but the backend does not admit this address. Add it to ALLOWED_EMAILS in .env and bring the container up.",
+          "Authentication succeeded, but the backend does not allow this address. Add it to ALLOWED_EMAILS in .env and restart the container.",
         ];
       case "sso-unreachable":
       case "sso-unavailable":
       case 503:
         return [
           "The session cannot be confirmed",
-          "The backend does not reach the identity service from AUTH_VERIFY_URL. Check that the address is correct and that the backend has a network route to it.",
+          "The backend cannot reach the identity service at AUTH_VERIFY_URL. Check that the address is correct and that the backend has a network route to it.",
         ];
       default:
         return [
           "The data could not be read",
-          api ? `The backend answered ${api.status}${api.reason ? ` (${api.reason})` : ""}.` : String(error),
+          api ? `The backend returned ${api.status}${api.reason ? ` (${api.reason})` : ""}.` : String(error),
         ];
     }
   })();

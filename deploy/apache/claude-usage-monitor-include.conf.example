@@ -10,7 +10,7 @@
 #   apachectl configtest && systemctl reload apache2
 #
 # The order of the rules matters — the more specific one first.
-# ProxyPass is used with an explicit path (not <Location>), so as NOT to cut the prefix.
+# ProxyPass is used with an explicit path (not <Location>), so the prefix is NOT stripped.
 # A pattern to follow for further services on the same vhost.
 
 # --- Ingest: machine-to-machine traffic, no SSO ----------------------------
@@ -26,7 +26,7 @@ ProxyPass        /claude-usage/api/ingest http://claude_usage_monitor_backend:80
 ProxyPassReverse /claude-usage/api/ingest http://claude_usage_monitor_backend:8000/api/ingest
 
 # --- Session alerts: same kind of traffic as ingest, same pair of layers ---
-# Without this block the path is publicly reachable and defends itself with the Bearer alone —
+# Without this block the path is publicly reachable and is protected by the Bearer token alone —
 # meaning scanners hammer their way through to Python. The edge filter is just as mandatory
 # here as on ingest, because the endpoint is called by the same client with the same secret.
 <Location /claude-usage/api/session-alert>
@@ -41,12 +41,12 @@ ProxyPassReverse /claude-usage/api/session-alert http://claude_usage_monitor_bac
 # MUST come BEFORE the /claude-usage/api rule, otherwise the generic one captures the stream.
 #
 # The missing X-Ingest-Key edge filter is deliberate: the browser calls this endpoint too
-# (EventSource adds no header). It defends itself — 401 before anything touches the database.
+# (EventSource adds no header). It is self-protecting — 401 before anything touches the database.
 #
 # `no-gzip` matters more here than `flushpackets`: the compression filter buffers the stream
-# relentlessly and shows up as frames arriving in clumps every few dozen seconds.
+# relentlessly and shows up as frames arriving in clumps every 30-60 seconds.
 # `timeout=` overrides ProxyTimeout for this worker; a ping every 15 s keeps the connection
-# from falling silent anyway, but the limit is to be above STREAM_MAX_LIFETIME_SEC.
+# from falling silent anyway, but the limit must be above STREAM_MAX_LIFETIME_SEC.
 <Location /claude-usage/api/stream>
     SetEnv proxy-sendchunked 1
     SetEnv no-gzip 1
@@ -66,7 +66,7 @@ RequestHeader set X-Forwarded-Proto "https"
 RequestHeader set X-Forwarded-Port "443"
 
 # --- UI ---------------------------------------------------------------------
-# The statics are served by THE SAME backend (FastAPI mounts /assets and serves index.html
+# The static files are served by THE SAME backend (FastAPI mounts /assets and serves index.html
 # as the SPA fallback) — there is no separate nginx container. Two reasons: a host may have its
 # Docker address pools exhausted, and the nginx + auth_request variant carries a known pitfall
 # in which `$scheme` inside the container is http and `$request_uri` comes without the prefix,

@@ -118,7 +118,7 @@ To turn on the automatic run, add one line to a weekly cron:
 
 First installation on a new machine: [`client/README.md`](../client/README.md#installation).
 
-**You copy nothing**, if the path under the hooks holds a redirection that runs
+**Nothing needs copying** if the path under the hooks holds a redirection that runs
 `client/usage-probe.py` straight from the repo — then an edit takes effect on the next run and
 nothing needs restarting, because the hook reads the script and `config.json` on every run.
 Just remember that **the first run does not measure**: the probe does not wait for
@@ -139,8 +139,8 @@ Rename-Item "$env:LOCALAPPDATA\claude-usage-monitor\config.json" config.json.off
 **Removing `PostToolUse` and `Stop` is not enough** — after merging with the signaller the
 probe hangs off twelve events (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
 `PostToolUseFailure`, `PostToolBatch`, `SubagentStop`, `Stop`, `Notification[idle_prompt]`,
-`PermissionRequest`, `PermissionDenied`, `SessionEnd`), and after removing two of them it still
-fires off the remaining ten.
+`PermissionRequest`, `PermissionDenied`, `SessionEnd`), and after removing two of them it is
+still triggered by the remaining ten.
 
 **Renaming `config.json` does not silence the toasts.** The blocked-session signaller by
 default works even without configuration: it writes state files and raises Windows
@@ -151,8 +151,9 @@ measurement:
 # in config.json:  "session_status": false
 ```
 
-Turning it off also **kills whatever is currently hanging** — on the first event it clears the
-entries and sends one empty set, so the marker disappears from the panel at once, not after a day.
+Turning it off also **clears whatever is currently outstanding** — on the first event it drops
+the entries and sends one empty set, so the marker disappears from the panel at once, not after
+a day.
 
 On the server side, revoking a single machine means removing its entry from `INGEST_TOKENS`
 in `.env` + `docker compose up -d`. **Not `restart`** — `INGEST_TOKENS` is read when the
@@ -211,8 +212,9 @@ python -m panel --once                 # one frame of real data, then exit
 ```
 
 `install-task.ps1` is idempotent: it stops the previous instance (waiting for the **process to
-die**, not for the task's state — otherwise the new one walks into a taken `panel.lock` and
-quietly exits, and the old code keeps drawing), registers the task, **starts it**, and waits
+die**, not for the task's state — otherwise the new one runs into a `panel.lock` that is still
+held and quietly exits, and the old code keeps drawing), registers the task, **starts it**, and
+waits
 until the log shows `first frame after opening`. Registration alone starts nothing: the trigger
 is on logon, so an installation on an already logged-on session would leave the screen dark
 with no trace of why. When you see `PANEL BUSY` instead of confirmation, another program holds
@@ -225,7 +227,7 @@ Accounts are two named fields (`account_1`, `account_2`), not a list — the scr
 exactly two bands.
 
 **The handle to the module is exclusive: either the panel or the other program.** As long as
-there is one display, the other program has to stand down. Once a second one is added, both
+there is one display, the other program has to give it up. Once a second one is added, both
 programs run side by side, but then **each has to be pinned to a specific unit** — both share
 the same serial number `WCH32` (a firmware constant), and Windows derives both the instance ID
 and the `ContainerID` from it, so those values will also be identical. Only the port chain from

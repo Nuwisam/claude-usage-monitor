@@ -103,7 +103,7 @@ export function History() {
 
       {active === null ? (
         <div className="state-block">
-          <h4>There is no series yet</h4>
+          <h4>No series yet</h4>
           <p>History appears after the first measurement.</p>
         </div>
       ) : (

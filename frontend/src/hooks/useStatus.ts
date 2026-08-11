@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { fetchStatus } from "../api/client";
 import { serverOffsetMs } from "../lib/time";
 
-/** /status every 15 s — the pace from the handout. The data grows only while you are working
+/** /status every 15 s — the pace from the handout. The data only accumulates while you are working
  *  anyway; asking more often buys nothing, and every request passes the authorization gate. */
 export const STATUS_REFETCH_MS = 15_000;
 

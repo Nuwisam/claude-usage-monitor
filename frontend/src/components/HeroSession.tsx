@@ -6,7 +6,7 @@ import { describeSeries, resetNote } from "../lib/freshness";
 import { parseUtc } from "../lib/time";
 import { UtilBar } from "./UtilBar";
 
-/** The 5 h window to the front. The `limits[]` entry before the bucket, because it carries
+/** The 5 h window goes first. The `limits[]` entry before the bucket, because it carries
  *  `isActive` and `severity`. No condition reads the key's content — rule 5 from AGENTS.md. */
 export function pickSession(series: SeriesStatus[]): SeriesStatus | null {
   const primary = series.filter((s) => s.primary);
@@ -18,7 +18,7 @@ export function pickSession(series: SeriesStatus[]): SeriesStatus | null {
   );
 }
 
-/** The hero is pinned to the 5 h session for good. Were it to jump after `isActive`, the same
+/** The hero is pinned to the 5 h session for good. Were it to jump to follow `isActive`, the same
  *  screen would mean something different depending on the day of the week. */
 export function HeroSession({ s, nowMs }: { s: SeriesStatus; nowMs: number }) {
   const v = describeSeries(s, nowMs);

@@ -1,7 +1,7 @@
 """The client loop — what it does with the SCREEN before it knows anything.
 
 The panel holds its last frame with no host attached, so the image from the previous
-run is the starting state of every start-up, not a blank sheet. This file guards the
+run is the starting state of every start-up, not a blank slate. This file guards the
 one rule that follows from it: until we have data or a certain reason to paint over
 the screen, we do not touch it at all.
 """
@@ -24,7 +24,7 @@ def test_before_first_data_we_do_not_touch_the_screen():
     assert a.tick() is None, "tick must not build or send a frame"
 
 
-def test_first_data_opens_drawing():
+def test_first_data_lets_us_draw():
     a = app_mod.App(cfg())
     a.first_data_at = 1.0
     assert not a.holding()

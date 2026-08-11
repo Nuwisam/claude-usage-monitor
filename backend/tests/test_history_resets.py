@@ -40,7 +40,7 @@ def test_empty_history_has_no_boundaries():
 
 
 def test_window_boundary_jitter_is_not_a_reset():
-    """The boundary Anthropic reports rocks about inside ONE window. A real measurement:
+    """The boundary Anthropic reports wobbles within ONE window. A real measurement:
     49 samples over 3 h gave values from `00:59:59.014384` to `01:00:00.982268` — under
     2 seconds of spread, crossing a minute boundary.
 

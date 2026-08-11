@@ -228,7 +228,7 @@ async def test_captured_at_in_the_future_is_clamped(db):
     """A payload WITHOUT `sent_at` (a probe below v5): the offset is zero, so the client's
     stamp goes through untouched — except that it cannot be newer than the moment it
     arrived. Previously the server time was substituted; the effect is the same, but only
-    by accident, because that same substitution ALSO rejuvenated stamps 400 s in the past."""
+    by accident, because that same substitution ALSO made stamps 400 s in the past look fresher."""
     arrived = utcnow().replace(microsecond=0)
     await ingest_one(db, machine_name="desktop", arrived_at=arrived,
                      payload=payload(captured_at=arrived + timedelta(seconds=400)))

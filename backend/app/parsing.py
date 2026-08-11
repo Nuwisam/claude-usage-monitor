@@ -193,7 +193,7 @@ def known_same_reset_window(a: datetime | None, b: datetime | None, eps_sec: flo
     have released it.
 
     The asymmetry of the costs is unambiguous, but not as cheap as it looks. Accepting a
-    stale reading spoils the state until the NEXT measurement of that series — usually a
+    stale reading corrupts the state until the NEXT measurement of that series — usually a
     minute — except that the upper bound is set not by the probe's frequency but by its
     silence: when the client goes quiet right after the write, the wrong value holds until
     `freshness()` degrades it, that is until `CLIENT_SILENT_SEC` (6 h by default,
@@ -281,7 +281,7 @@ def meter_withdrawn(block: Any) -> str | None:
     if not isinstance(enabled, bool):
         enabled = block.get("is_enabled")
     if enabled is True:
-        # There is a reason, but the gate stands open — the meter works and its number holds.
+        # There is a reason, but the gate is open — the meter works and its number holds.
         return None
     return reason
 
@@ -349,7 +349,7 @@ def probe_key(o: Observation) -> str | None:
     This is NOT a `series_series_key`: the probe knows neither `group` nor `surface` nor the
     slugging, and it builds the key out of what it has at hand in `usage` (see `_limit_key`
     in client/usage-probe.py). A divergence here is SILENT — the sets would never match,
-    `covered_by_fresh` would never light up and the dating would quietly fall back to the
+    `covered_by_fresh` would never light up and the timestamping would quietly fall back to the
     state from before this change. Hence: NO `_slug` (the probe sends a raw `display_name`)
     and NO `surface` (`merge` matches on `kind`+`model`, so two limits differing only in
     surface really are both covered).

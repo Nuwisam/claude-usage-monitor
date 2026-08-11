@@ -29,7 +29,7 @@ services:
 
   claude_usage_monitor_backend:
     # The context is the repo directory, not ./backend — the `ui` stage in the Dockerfile
-    # builds frontend/. Without it COPY frontend/... sees no sources. .dockerignore keeps
+    # builds frontend/. Without it COPY frontend/... finds no sources. .dockerignore keeps
     # the context small.
     build:
       context: .
@@ -42,8 +42,8 @@ services:
       DATABASE_URL: mysql+aiomysql://${MARIADB_USER}:${MARIADB_PASSWORD}@claude_usage_monitor_mariadb:3306/${MARIADB_DATABASE}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TZ: UTC
-      # No default value — deliberately. An unset AUTH_MODE stops the container at
-      # startup instead of deciding for the installer whether the data is to be open.
+      # Deliberately no default value. An unset AUTH_MODE stops the container at
+      # startup instead of deciding for the installer whether the data should be open.
       AUTH_MODE: ${AUTH_MODE}
       ALLOWED_EMAILS: ${ALLOWED_EMAILS}
       AUTH_EMAIL_HEADER: ${AUTH_EMAIL_HEADER:-X-Forwarded-Email}
@@ -74,11 +74,11 @@ services:
       - claude-usage-monitor_internal
       - claude-usage-monitor_edge
     # On the LOOPBACK by default: a local installation works right away at
-    # http://127.0.0.1:8080/claude-usage/, and at the same time nothing goes out to the world
-    # until a proxy with TLS and a login is put in front of it.
+    # http://127.0.0.1:8080/claude-usage/, and at the same time nothing is exposed to the
+    # internet until a proxy with TLS and a login is put in front of it.
     #
     # Behind a reverse proxy publishing the port is unnecessary — the proxy reaches the
-    # container over the Docker network. It can be taken away ONLY through `ports: !reset []`
+    # container over the Docker network. It can be removed ONLY with `ports: !reset []`
     # in docker-compose.override.yml (Compose >= 2.24). `BACKEND_BIND=` is not enough: `:-`
     # fires on an empty value too, so the port comes back to the default.
     ports:

@@ -1,9 +1,9 @@
 """Drawing frame 4a.
 
-The renderer draws ONE logical canvas and knows about no display at all: not the
-byte order, not the rotation, not whether the screen can take a rectangle. The
-frame is built whole every time (~10 ms); what of it reaches the glass, and in
-what form, is settled by the panel layer (panel/surface.py + driver).
+The renderer draws ONE logical canvas and knows nothing about any display: not
+the byte order, not the rotation, not whether the screen can take a rectangle.
+The frame is built whole every time (~10 ms); what of it reaches the glass, and
+in what form, is settled by the panel layer (panel/surface.py + driver).
 """
 from PIL import Image
 

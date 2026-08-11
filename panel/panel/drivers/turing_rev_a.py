@@ -1,4 +1,4 @@
-"""Turing Smart Screen rev A over a USB serial port (VID 1A86 / PID 5722).
+r"""Turing Smart Screen rev A over a USB serial port (VID 1A86 / PID 5722).
 
 Measured on this display model, because none of it is documented:
 
@@ -41,10 +41,10 @@ That last point shapes the whole driver. Two consequences worth stating:
      derived from the measured throughput.
 
 RESET (101) is deliberately not used: unmeasured, and it cannot help anyway,
-because a firmware mid-payload would eat its bytes as pixels. SET_ORIENTATION
-(121) is deliberately not used either: rotation host-side is measured to work,
-and with no acknowledgement a coordinate-space mistake would show up as a
-scrambled screen rather than an error.
+because firmware in the middle of a payload would eat its bytes as pixels.
+SET_ORIENTATION (121) is deliberately not used either: rotation host-side is
+measured to work, and with no acknowledgement a coordinate-space mistake would
+show up as a scrambled screen rather than an error.
 """
 import time
 
@@ -199,7 +199,7 @@ class Turing:
             if isinstance(e.__cause__, PermissionError) or "Access is denied" in str(e):
                 # The same words the AX206 path uses for a module held by another
                 # program, because the installer greps for exactly this phrase and
-                # the advice ("stop that program, we retry by ourselves") is the
+                # the advice ("stop that program, we retry on our own") is the
                 # same. A COM holder is worse than a USB one: it is invisible in
                 # Device Manager.
                 raise DriverError("%s: panel held by another process (%s)"

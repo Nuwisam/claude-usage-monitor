@@ -176,7 +176,7 @@ async def test_overflowing_queue_gives_lag_and_next_frame_restores_state(monkeyp
     from app.schemas import SessionAlert
 
     monkeypatch.setattr(settings, "stream_queue_max", 2)
-    sub = broker.subscribe(frozenset(["dowolne"]), "panel")
+    sub = broker.subscribe(frozenset(["any-account"]), "panel")
     try:
         for i in range(6):
             set_alerts("desktop", [SessionAlert(**entry(key="k%d" % i,

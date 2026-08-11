@@ -158,7 +158,7 @@ def test_real_payload_has_17_keys():
 
 def test_detects_buckets_absent_from_the_documentation():
     """Five keys were neither in the validator inside the binary nor in the reference repo.
-    The parser must take them without blinking — that is the whole point of an open series
+    The parser must take them without complaint — that is the whole point of an open series
     set."""
     r = parse_usage(REAL)
     for new_key in ("amber_ladder", "iguana_necktie", "nimbus_quill",

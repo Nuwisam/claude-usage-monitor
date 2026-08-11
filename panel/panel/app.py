@@ -110,13 +110,13 @@ class App:
             version = payload.get("contractVersion")
             if version != model.CONTRACT_VERSION:
                 self.contract_mismatch = version
-                log().error("contract v%s, panel knows v%s", version,
+                log().error("contract v%s, panel has v%s", version,
                             model.CONTRACT_VERSION)
             else:
                 self.contract_mismatch = None
             self.unknown_uuids = set(payload.get("unknown") or [])
             if self.unknown_uuids:
-                log().warning("server does not know accounts: %s",
+                log().warning("server does not know these accounts: %s",
                               ", ".join(sorted(self.unknown_uuids)))
             self.link_state = "live"
             log().info("hello: subscription %s, ping %ss, lifetime %ss",
@@ -209,7 +209,7 @@ class App:
             if takeover_sec > 0 and (b.since is None
                                      or (now_ms - fmt.ms(b.since)) / 1000.0 < takeover_sec):
                 any_fresh = True
-        # the state stopped being TAKEOVER-WORTHY, it did not stop being true
+        # the state stopped being TAKEOVER-WORTHY; it did not stop being true
         return debounced if any_fresh else []
 
     def screen(self):
@@ -252,8 +252,8 @@ class App:
         if self.contract_mismatch is not None:
             return render.ScreenState(message=[
                 "Contract mismatch",
-                "server reports v%s, panel knows v%s" % (self.contract_mismatch,
-                                                         model.CONTRACT_VERSION),
+                "server reports v%s, panel has v%s" % (self.contract_mismatch,
+                                                       model.CONTRACT_VERSION),
                 "update the panel client",
             ])
 

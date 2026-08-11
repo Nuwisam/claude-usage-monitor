@@ -119,7 +119,7 @@ def build_cascade(facts: list[SeriesFacts]) -> list[CascadeRung]:
     )
 
     # --- hard block -------------------------------------------------------
-    # When credits work, the block stands at the spend limit. When not — right after the weekly.
+    # When credits work, the block sits at the spend limit. When not — right after the weekly.
     if enabled is None:
         hard = CascadeRung(key=HARD_BLOCK, state=UNKNOWN)
     elif enabled:

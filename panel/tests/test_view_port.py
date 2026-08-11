@@ -105,7 +105,7 @@ def test_reset_in_the_future_has_countdown_and_time():
 
 def test_week_gets_day_of_week():
     """A reset 6 days out: the bare time lies, because it does not say which day.
-    `at_stamp` decides that, the same one as in the web — the preposition is
+    `at_stamp` decides that, the same one as on the web — the preposition is
     inside the stamp."""
     _, at = view.reset_note(series(resetsAt="2026-08-01T16:00:00Z", utilization=30),
                             NOW)
@@ -119,7 +119,7 @@ def test_no_series_does_not_blow_up():
 
 # --- series pickers ---------------------------------------------------------
 
-def test_hero_stands_on_session_not_on_isActive():
+def test_hero_rests_on_session_not_on_isActive():
     """Were the hero to follow isActive, the same screen would mean something else
     depending on the day of the week (HeroSession.tsx:20-22)."""
     week = series(seriesKey="limit:weekly_all|weekly|-|-", kind="weekly_all",
@@ -185,7 +185,7 @@ def test_withdrawn_credits_show_amounts_instead_of_disappearing():
                                         "usedMinor": 30004, "limitMinor": 30000,
                                         "currency": "EUR", "exponent": 2}))
     assert (c.used, c.limit, c.currency) == ("300.04", "300.00", "EUR")
-    assert c.bar_pct == 100.0, "an overage must not push the bar apart"
+    assert c.bar_pct == 100.0, "an overage must not force the bar past its track"
     assert c.state == "off", "the state stays `off` — the amounts do not change it"
 
 

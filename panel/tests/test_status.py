@@ -31,11 +31,11 @@ def test_typical_frame():
 def test_corrupt_entry_does_not_kill_the_rest():
     out = status.parse_frame(frame(entry(key="a"), "this is not an object", None,
                                    {"reason": "permission"}, entry(key="b")))
-    assert [b.key for b in out] == ["a", "b"], "an entry without a key cannot be dismissed"
+    assert [b.key for b in out] == ["a", "b"], "a corrupt entry must not take the good ones with it"
 
 
 def test_unknown_reason_is_not_an_error():
-    """The writer may be newer than the panel. 'CLAUDE IS WAITING' is true in every
+    """The sender may be newer than the panel. 'CLAUDE IS WAITING' is true in every
     such case; an empty screen is not."""
     out = status.parse_frame(frame(entry(reason="something-new")))
     assert out[0].title == status.UNKNOWN
@@ -58,7 +58,7 @@ def test_garbage_instead_of_frame():
         assert status.parse_frame(junk) == []
 
 
-def test_order_by_youngest_regardless_of_reason():
+def test_order_by_newest_regardless_of_reason():
     """The reason has no bearing on the order — age alone decides.
 
     The card cuts itself to three rows, and every block was already shown solo when it
@@ -95,7 +95,7 @@ def test_missing_machine_is_not_an_error():
     assert out[0].tool == "Bash" and out[0].machine is None
 
 
-def test_mode_and_subagent_enter_the_strip():
+def test_mode_and_subagent_reach_the_strip():
     """`permissionMode` and `agentType` have been in the contract from the start
     (docs/API.md § 3.2) and they are what answers 'why is it asking at all'."""
     out = status.parse_frame(frame(entry(permissionMode="plan",
