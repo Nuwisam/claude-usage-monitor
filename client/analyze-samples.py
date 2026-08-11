@@ -37,6 +37,13 @@ def meas(r):
     return m if isinstance(m, dict) else {}
 
 
+def tof(r):
+    """The timestamp of an entry. Entries older than probe version 3 lack `t` — such an entry
+    drops out of the time arithmetic, but stays in the counts and in the account inventory."""
+    t = r.get("t")
+    return t if isinstance(t, (int, float)) else None
+
+
 def iso_to_epoch(v):
     if isinstance(v, (int, float)):
         return float(v)
@@ -75,11 +82,13 @@ def main():
         print("File empty.")
         return 1
 
-    span = recs[-1]["t"] - recs[0]["t"]
+    stamps = [t for t in map(tof, recs) if t is not None]
+    span = stamps[-1] - stamps[0] if stamps else 0.0
     ok = [r for r in recs if r.get("ok")]
     print("=" * 76)
     print("SAMPLES: %d   successful: %d   period: %s - %s (%.1f min)"
-          % (len(recs), len(ok), ts(recs[0]["t"]), ts(recs[-1]["t"]), span / 60))
+          % (len(recs), len(ok),
+             ts(stamps[0]) if stamps else "?", ts(stamps[-1]) if stamps else "?", span / 60))
     print("=" * 76)
 
     # ---- C. measurement provenance ----------------------------------------
@@ -129,11 +138,11 @@ def main():
         if xs:
             print("    %-16s p50=%s  p95=%s  max=%s" % (name, pctile(xs, .5),
                                                         pctile(xs, .95), max(xs)))
-    gaps = [recs[i]["t"] - recs[i-1]["t"] for i in range(1, len(recs))]
+    gaps = [stamps[i] - stamps[i-1] for i in range(1, len(stamps))]
     if gaps:
         print("    gaps between writes: min=%.0f s  p50=%.0f s  (throttle works if min >= throttle)"
               % (min(gaps), pctile(gaps, .5)))
-        print("    rate: %.1f calls/hour" % (3600.0 * len(recs) / span if span > 0 else 0))
+        print("    rate: %.1f calls/hour" % (3600.0 * len(stamps) / span if span > 0 else 0))
 
     # ---- D. buckets --------------------------------------------------------
     print("\n[D] top-level keys in the response")
@@ -154,16 +163,17 @@ def main():
     series = defaultdict(list)
     for r in ok:
         u = r.get("usage") or {}
-        if not isinstance(u, dict):
+        t = tof(r)
+        if not isinstance(u, dict) or t is None:
             continue
         for k, v in u.items():
             if isinstance(v, dict) and "utilization" in v:
-                series["bucket:%s" % k].append((r["t"], v.get("utilization"), v.get("resets_at")))
+                series["bucket:%s" % k].append((t, v.get("utilization"), v.get("resets_at")))
         for l in (u.get("limits") or []):
             sc = l.get("scope") or {}
             mdl = ((sc.get("model") or {}).get("display_name")) if sc else None
             name = "limit:%s%s" % (l.get("kind"), "/" + mdl if mdl else "")
-            series[name].append((r["t"], l.get("percent"), l.get("resets_at")))
+            series[name].append((t, l.get("percent"), l.get("resets_at")))
 
     for key in sorted(series):
         pts = [p for p in series[key] if p[1] is not None]
@@ -217,20 +227,21 @@ def main():
     accs = OrderedDict()
     for r in recs:
         a = r.get("account")
-        if a and a.get("accountUuid"):
-            accs.setdefault(a["accountUuid"], a)
+        if a and a.get("uuid"):
+            accs.setdefault(a["uuid"], a)
     for uuid, a in accs.items():
         print("    %s  %-28s org=%-14s seat=%-9s tier=%s"
-              % (uuid[:8], a.get("emailAddress"), a.get("organizationType"),
-                 a.get("seatTier"), a.get("organizationRateLimitTier")))
+              % (uuid[:8], a.get("email"), a.get("org_type"),
+                 a.get("seat_tier"), a.get("org_rate_limit_tier")))
     sw, prev = [], None
     for r in recs:
-        u = (r.get("account") or {}).get("accountUuid")
+        u = (r.get("account") or {}).get("uuid")
         if u and prev and u != prev:
-            sw.append((r["t"], prev, u))
+            sw.append((tof(r), prev, u))
         if u:
             prev = u
-    print("    account switches: %d %s" % (len(sw), [ts(t) for t, _, _ in sw] if sw else ""))
+    print("    account switches: %d %s"
+          % (len(sw), [ts(t) if t is not None else "?" for t, _, _ in sw] if sw else ""))
     print("\n" + "=" * 76)
     return 0
 
