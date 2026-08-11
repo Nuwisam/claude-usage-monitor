@@ -201,7 +201,7 @@ def test_account_without_credits_does_not_get_a_zero_row():
     c = view.credits(model.CascadeRung({"key": "credits", "state": "off",
                                         "usedMinor": 0, "currency": "USD",
                                         "exponent": 2}))
-    assert c.used is None, "half a pair of amounts is not a pair"
+    assert c.used is None, "half a pair of amounts is not amounts"
 
 
 def test_credits_without_limit_do_not_divide_by_zero():

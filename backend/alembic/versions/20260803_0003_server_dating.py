@@ -13,7 +13,7 @@ back the state of exactly those two series — the only ones that NEVER have a w
 and therefore the only ones without a monotonicity guard.
 
 From this version on the probe sends `measurement.sent_at` and `measurement.fresh_at`, and the
-server timestamps `min(ts + (arrived_at - sent_at), arrived_at)`. The schema follows suit with two columns:
+server timestamps `min(ts + (arrived_at - sent_at), arrived_at)`. The schema follows with two columns:
 
 1. limit_samples.client_captured_at — the raw client time for THIS observation, before the
    offset. Forced by the backlog idempotency guard: `captured_at` is now a function of the

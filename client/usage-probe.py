@@ -1457,7 +1457,7 @@ def sweep_session(cfg, hook):
     sweep would wipe alerts every minute.
 
     This loop also looks at entries of OTHER sessions, but it deletes them on one of two
-    PROOFS, never on resemblance alone: either the session has no record in the harness registry
+    PROOFS, never on resemblance: either the session has no record in the harness registry
     (`registry_dead`), or its own transcript already carries a resolution
     (`closed_by_transcript`). Without this, an entry of a session that fell silent after a
     denial has no collector: that is the failure this came from.

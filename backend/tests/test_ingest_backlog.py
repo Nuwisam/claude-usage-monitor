@@ -26,7 +26,7 @@ from app.routers.ingest import _ingest_tx
 from app.services.ingest import ingest_one
 from tests.test_ingest_e2e import db, payload, utcnow, with_util   # noqa: F401
 
-# An entry `ingest_one` cannot process: `payload.get("account") or {}` lets a number
+# An entry `ingest_one` cannot digest: `payload.get("account") or {}` lets a number
 # through (it is truthy), and `acct.get("uuid")` on it raises AttributeError. No
 # monkeypatch, because this is the real shape of a "permanently bad entry".
 BAD_ENTRY = {"account": 123}

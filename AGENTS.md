@@ -76,7 +76,7 @@ screen keeps the last MEASURED percentage together with the amounts, stamped wit
 measurement. The phantom is the zero from the withdrawal payload, never a value measured earlier.
 
 **The deliberate mismatch between the web UI and the panel** lives in one place and follows from
-screen size: the web UI writes, at the hard block, "credits disabled by the organization"; the
+screen size: the web UI shows, at the hard block, "credits disabled by the organization"; the
 panel writes **nothing** about it — 480x320 has neither the room nor the need, so the credits row
 shows only the amounts. That is a decision, not debt: the reason is an explanation, and the panel
 is an indicator.

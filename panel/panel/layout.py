@@ -142,7 +142,7 @@ class AlertSolo:
         """The detail tile grows with the number of lines, not the other way round: a
         one-line `detail` has no reason to leave empty space below itself.
 
-        The height of the text block is truncated DOWNWARD. The browser keeps the block
+        The height of the text block is truncated DOWNWARD. The mockup's browser keeps the block
         in fractions — one line at line-height 1.35 is 16.2 px — and only the tile EDGE
         lands on the pixel grid: 20 + 10 + 5 + 16.2 = 51.2 px paints as 51, not 52.
         Rounding the block itself up gave a tile one pixel too tall (measured on the
@@ -190,7 +190,7 @@ class AlertPair:
         self.x0 = ALERT_PAD_X
         self.x1 = width - ALERT_PAD_X
         # 282 px for two halves with one hairline of divider: 281 px of content splits
-        # into 140.5 px each, and the browser gives the remainder to the BOTTOM half — the
+        # into 140.5 px each, and the mockup's browser gives the remainder to the BOTTOM half — the
         # divider lands on row 178, not 179. Measured on the rendered mockup; an earlier
         # comment claimed the opposite, and that is where that one line of difference came from.
         top = BANNER_H
@@ -335,7 +335,7 @@ class Layout:
     def __init__(self, width=480, height=320):
         self.width = width
         self.height = height
-        # 319 px for two bands is 159.5 px each — the browser gives the extra pixel to
+        # 319 px for two bands is 159.5 px each — the mockup's browser gives the extra pixel to
         # the TOP band, so the divider falls on row 160, not 159.
         band_h = (height - DIVIDER_H + 1) // 2
         self.band_a = Band(0, band_h, width)
