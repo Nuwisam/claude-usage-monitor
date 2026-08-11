@@ -118,14 +118,7 @@ reset-boundary detection (61 "resets" a day instead of five). There is `parsing.
 and regression tests for this; a real reset moves the boundary by a whole window, so the two are
 told apart with a threshold, not with equality.
 
-**10. UI text is English (US), and so are comments.**
-Series labels, warnings and captions reach the screen in English, and code comments are
-written the same way. Fixed terminology: window, pool, series,
-sample, freshness, cascade, withdrawn meter, block, permission, credits, overage, reset, probe,
-frame, banner, card. `display_label` is refreshed on every ingest, so a dictionary fix reaches
-series registered earlier.
-
-**11. Time comes in through `NaiveUtcDt`, goes out through `UtcDt`.**
+**10. Time comes in through `NaiveUtcDt`, goes out through `UtcDt`.**
 Ever since the output started carrying a zone, the browser **sends it back** (`Date.toISOString()`), while
 the database, `utcnow()` and the samples are naive UTC. A plain `datetime` in a query parameter
 lets a zoned timestamp in, and it doesn't fall over until a layer further down — History was
@@ -136,8 +129,12 @@ in `app/schemas.py`.
 
 ## Terminology
 
-Rule 10 fixes the vocabulary. Four of those words are easy to reach for in the wrong place,
-so each one carries the test that settles it.
+The project holds to a fixed vocabulary: window, pool, series, sample, freshness, cascade,
+withdrawn meter, block, permission, credits, overage, reset, probe, frame, banner, card. Series
+labels, warnings and captions reach the screen in those words. `display_label` is refreshed on
+every ingest, so a wording fix reaches series registered earlier — a label is never frozen at the
+moment its series was first seen. Four of the words are easy to reach for in the wrong place, so
+each one carries the test that settles it.
 
 **meter vs counter vs count vs countdown.** A **meter** is only the usage meter an organization
 can withdraw — the thing `meter_withdrawn` names, that goes dark, works, tells the truth, has a

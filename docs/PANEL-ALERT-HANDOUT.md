@@ -52,8 +52,6 @@ same thing happens to look on a desktop screen, not at what the panel draws.
   one is narrower than the zero), so a large number would jitter on every change.
 - **Icons are drawn as vectors, never with an icon font.** At 11 px a font glyph turns into a
   blob; `draw.clock_glyph` is the precedent for that.
-- **English on screen** — on-screen text is written in English (project rule 10 in
-  `AGENTS.md`).
 - **Height is measured from the actual outline, not from the nominal size.** The probe string
   that does the measuring (`PROBE` in `panel/panel/draw.py`) is a run of accented capitals and
   descenders, `ĄĘŚŹŻgjpqy` — accents that reach up, tails that reach down. Measured against the
