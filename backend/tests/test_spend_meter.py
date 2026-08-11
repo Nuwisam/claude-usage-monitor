@@ -152,7 +152,7 @@ async def test_cascade_e2e_after_withdrawal_does_not_show_credits_as_on(db):
 
 # --------------------------------------------------------------------------- view
 async def test_extra_usage_does_not_draw_a_second_credits_row(db):
-    """`spend` and `extra_usage` describe THE SAME pool, so one row must appear on the screen.
+    """`spend` and `extra_usage` describe THE SAME pool, so exactly one row must appear on the screen.
 
     The assertion on the numbers matters more here than the flag itself: 93.0 next to 92.656
     shows why pairing by VALUE (the one from the buckets) would never catch this pair —

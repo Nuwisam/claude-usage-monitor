@@ -273,7 +273,7 @@ async def test_frame_carries_post_commit_state(api, db, monkeypatch):
 
 
 async def test_publish_failure_does_not_break_ingest(api, db, monkeypatch):
-    """The probe is the only code sitting in the path of the user's actual work. The chart
+    """The probe is the only code sitting on the critical path of the user's actual work. The chart
     may break, the session may not."""
     import app.routers.ingest as ingest_router
 

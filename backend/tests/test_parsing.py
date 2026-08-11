@@ -208,7 +208,7 @@ def test_limit_scoped_carries_model_name():
 
 def test_spend_is_a_first_class_series():
     """On a Team account this IS the binding limit ('org's monthly spend limit'), so it
-    cannot be a side field."""
+    cannot be a secondary field."""
     r = parse_usage(REAL)
     sp = [o for o in r.observations if o.source == "spend"]
     assert len(sp) == 1

@@ -150,7 +150,7 @@ async def test_every_frame_carries_full_set(api, monkeypatch):
     assert sorted(a["project"] for a in last) == ["alpha", "beta"]
 
 
-async def test_alert_reaches_regardless_of_account_subscription(api, monkeypatch):
+async def test_alert_arrives_regardless_of_account_subscription(api, monkeypatch):
     """`publish_all`, not `publish`: an alert belongs to no single account. A panel
     subscribed to one account must see a block in a project that happens to be running
     on another."""

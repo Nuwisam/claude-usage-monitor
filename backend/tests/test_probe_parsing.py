@@ -260,7 +260,7 @@ def test_extract_scalar_does_not_raise_on_corrupted_file(probe):
                  full_text[: len(full_text) // 2]):
         assert probe._safe(probe._extract_scalar, text, KEY) is None
 
-    # A truncated TAIL of the file no longer spoils the value, and that is the whole edge of
+    # A truncated TAIL of the file no longer spoils the value, and that is the whole advantage of
     # the manual extraction over `json.load`, which returns NOTHING on a truncated file.
     assert probe._extract_scalar(full_text[:-3], KEY) == "org_level_disabled_until"
     assert probe._safe(json.loads, full_text[:-3]) is None

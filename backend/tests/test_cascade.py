@@ -1,10 +1,10 @@
 """The limit cascade: 5 h -> week -> credits -> hard block.
 
 EVERY case rests on REAL payloads: Max on `usage_max.json`, Team on three dumps from one
-account (`tests/team.py`) — credits working, the own pool exhausted, the meter withdrawn
+account (`tests/team.py`) — credits working, the account's own pool exhausted, the meter withdrawn
 by the organization. Team used to be made up here (USD, a threshold of 9000), because at
 the time of writing there was no way to observe credits switched on; now there is, so the
-synthetic goes away together with numbers nobody has ever measured.
+synthetic case goes away together with numbers nobody has ever measured.
 """
 import json
 from pathlib import Path
@@ -83,7 +83,7 @@ def test_team_credit_amounts_in_minor_units_without_flattening():
 
 
 def test_exhausted_pool_slides_to_hard_block_despite_spend_limit_reached_false():
-    """Exhausting the OWN pool lights no flag at all: `spend_limit_reached` was
+    """Exhausting the account's OWN pool lights no flag at all: `spend_limit_reached` was
     `false` with used 300.04 / limit 300.00 EUR. The only thing that detects this state is
     comparing the amounts — which is why the `_exhausted` branch has its own test here, so
     that a cleanup does not make it disappear as 'dead code'."""
@@ -141,7 +141,7 @@ def test_cascade_on_withdrawn_meter_does_not_promise_a_way_out():
 
 def test_withdrawn_credits_are_skipped_even_without_spend_limit_reached_flag():
     """`spend_limit_reached` is sometimes `true` on withdrawal, but relying on it is
-    guesswork: with the own pool exhausted it reads `false`. Sliding down to the hard
+    guesswork: with the account's own pool exhausted it reads `false`. Sliding down to the hard
     block has to follow from the rung being SWITCHED OFF, not from the flag."""
     p = usage(USAGE_WITHDRAWN)
     p["extra_usage"]["spend_limit_reached"] = False

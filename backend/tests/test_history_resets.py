@@ -24,7 +24,7 @@ def test_a_change_in_resets_at_gives_a_boundary_at_the_moment_it_was_observed():
 
 
 def test_the_first_sample_is_not_a_reset():
-    """The first `resets_at` is only a reference point — no window came up at that moment."""
+    """The first `resets_at` is only a reference point — no window rolled over at that moment."""
     assert _reset_boundaries([(at(0), R1), (at(5), R1)]) == []
 
 

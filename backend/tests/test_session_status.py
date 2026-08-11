@@ -348,7 +348,7 @@ def test_rule_does_not_run_at_session_boundaries(ss, event):
     assert names(ss) == []
 
 
-def test_current_session_missing_from_registry_holds_off_rule(ss):
+def test_current_session_missing_from_registry_suspends_the_rule(ss):
     """The session this hook runs in is ALIVE. If it is not in the registry, then we do not
     understand the registry — and nothing may be deleted on its authority."""
     entry_name = foreign_session_entry(ss)
@@ -358,7 +358,7 @@ def test_current_session_missing_from_registry_holds_off_rule(ss):
     assert names(ss) == [entry_name]
 
 
-def test_holding_off_leaves_a_trace_in_the_log(ss):
+def test_suspension_leaves_a_trace_in_the_log(ss):
     """Otherwise "the mechanism died after a change at Anthropic" and "there is nothing to
     collect" are indistinguishable, and the symptom is exactly the bug this section fixes."""
     foreign_session_entry(ss)

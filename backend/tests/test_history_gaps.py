@@ -64,7 +64,7 @@ def test_both_gap_kinds_in_one_range_in_time_order():
 def test_slivers_shorter_than_the_threshold_are_not_reported():
     """Where two silent periods meet, a stretch of a few minutes with a batch is left. That
     is no series failure, only an ordinary interval — it has no right to a chart pattern."""
-    batches = m(0, 40, 45, 90)          # two silences with a short breath, 12:40-12:45
+    batches = m(0, 40, 45, 90)          # two silences with a short breather, 12:40-12:45
     samples = m(0)
     gaps = _find_gaps(T0, T0 + timedelta(minutes=90),
                       batch_times=batches, sample_times=samples, threshold=GAP_THRESHOLD)

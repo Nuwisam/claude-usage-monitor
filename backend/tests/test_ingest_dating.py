@@ -6,7 +6,7 @@ A probe measurement glues together values from two places — the `claude -p "/u
 the cache up to 3600 s. As long as both rode on one stamp taken from the dump, `spend` and
 `extra_usage` were being made to look fresher by that entire difference.
 
-This is not cosmetics. The backend decides by that stamp which reading is CURRENT
+This is not cosmetics. The backend uses that stamp to decide which reading is CURRENT
 (`newest`, services/ingest.py), and the monotonicity guard requires a known window boundary
 on both ends — which these two series NEVER have. They are therefore the only two series
 with no defense at all, and they happen to be the binding limit on the Team account.
@@ -128,7 +128,7 @@ async def test_fresh_covered_of_wrong_type_does_not_break_write(db, garbage):
 # --------------------------------------------------- probe <-> backend key agreement
 def test_probe_key_matches_probe_keys(probe):
     """A divergence here is SILENT: the sets would never match, `covered_by_fresh` would
-    never light up and dating would quietly fall back to the state from before this change.
+    never be set and dating would quietly fall back to the state from before this change.
     The fixture carries a `weekly_scoped` limit with the model "Fable" — exactly the case in
     which slugging (`limit_series_key` turns it into `fable`) would drive the two ends
     apart."""

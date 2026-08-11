@@ -80,7 +80,7 @@ async def test_a_range_with_a_zone_does_not_crash_the_endpoint(api, data):
         "an empty start of the range is client silence — and that was the path that used to crash"
 
 
-async def test_writing_with_and_without_a_zone_gives_the_same_result(api, data):
+async def test_notation_with_and_without_a_zone_gives_the_same_result(api, data):
     """Naive UTC already worked and must keep working — conversion must not change meaning."""
     args = {"account": data["account"], "seriesId": data["seriesId"]}
     frm, to = data["now"] - timedelta(hours=2), data["now"]

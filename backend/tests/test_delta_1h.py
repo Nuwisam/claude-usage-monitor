@@ -34,7 +34,7 @@ def test_after_the_boundary_has_passed_there_is_no_delta():
     assert _delta_1h(rows, now=NOW, current=0.0, resets_at=B_PREV) == (None, None)
 
 
-def test_one_sample_in_the_window_is_not_a_spread():
+def test_one_sample_in_the_window_is_not_a_delta():
     rows = trace((60, 46.0, B_PREV), (2, 3.0, B_NEXT))
     assert _delta_1h(rows, now=NOW, current=3.0, resets_at=B_NEXT) == (None, None)
 

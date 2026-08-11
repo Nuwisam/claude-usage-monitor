@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    """The app with a BUILT UI — the static directory is a make-believe one."""
+    """The app with a BUILT UI — the static directory is a stand-in."""
     static = tmp_path / "static"
     (static / "assets").mkdir(parents=True)
     (static / "index.html").write_text("<!doctype html><title>Claude Usage</title>", "utf-8")

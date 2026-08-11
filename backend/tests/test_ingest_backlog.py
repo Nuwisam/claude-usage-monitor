@@ -26,7 +26,7 @@ from app.routers.ingest import _ingest_tx
 from app.services.ingest import ingest_one
 from tests.test_ingest_e2e import db, payload, utcnow, with_util   # noqa: F401
 
-# An entry `ingest_one` cannot digest: `payload.get("account") or {}` lets a number
+# An entry `ingest_one` cannot process: `payload.get("account") or {}` lets a number
 # through (it is truthy), and `acct.get("uuid")` on it raises AttributeError. No
 # monkeypatch, because this is the real shape of a "permanently bad entry".
 BAD_ENTRY = {"account": 123}
@@ -223,7 +223,7 @@ async def test_expire_all_removes_stale_object_from_identity_map(tmp_path):
             async with _ingest_tx(a):
                 await ingest_one(a, machine_name="desktop",
                                  payload=payload(captured_at=now + timedelta(seconds=2)))
-            assert held is not None      # the reference must live to the end
+            assert held is not None      # the reference must stay alive to the end
 
         async with factory() as c:
             batches = (await c.execute(select(Machine.batches))).scalar_one()
