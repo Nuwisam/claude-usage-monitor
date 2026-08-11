@@ -127,6 +127,12 @@ with `strftime` and **ignores** `tzinfo`, so a `+02:00` offset would shift the w
 hours while still returning HTTP 200 and a correctly-shaped response. Both types sit side by side
 in `app/schemas.py`.
 
+**11. Do not describe the tree from memory — ask it.**
+Before writing a sentence that names a file, a string or a line number, open it. A `file.py:NNN`
+citation moves with its target or it is deleted; in range is not correct. A grep is a floor: it
+finds the shape you already knew, so a clean sweep is not a completion signal, and a count taken
+from a truncated window is not a count.
+
 ## Terminology
 
 The project holds to a fixed vocabulary: window, pool, series, sample, freshness, cascade,
