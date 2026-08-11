@@ -50,7 +50,7 @@ Above, the end of the ladder on two accounts. On the right the weekly pool is ex
 credits have reached their ceiling — the next stop is a hard block. On the left the organization
 has switched credits off, and the tile says so, instead of showing a silent zero.
 
-## 📈 History
+## 📈 And history, if you like charts
 
 ![The History view: one series across accounts, with reset boundaries and gaps marked](docs/screenshots/history.png)
 
