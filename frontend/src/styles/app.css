@@ -178,7 +178,7 @@
   align-items: baseline;
   gap: var(--space-3);
   /* Ever since `hero-fresh` has carried the time AND the age ("confirmed on Wed. at 11:58 ·
-     3 d 4 h ago"), it no longer fits next to the kicker and "binds now" in a narrower account
+     3 d 4 h ago"), it no longer fits next to the kicker and "limiting now" in a narrower account
      column. Wrapping to a second line beats squeezing the kicker. */
   flex-wrap: wrap;
 }
@@ -504,8 +504,8 @@
 /* ─── fill track: two drawings, not four ──────────────────────────────── */
 /* This is the place where the rule "unknown is never zero" turns into pixels — and after the
    model change it turns into them STRONGER, not weaker. Every real measurement gets the same
-   full track, because we show the last MEASURED value and not zero; how much that number is
-   worth is told by the reading-age label under the row. No fill is left only where there is
+   full track, because we show the last MEASURED value and not zero; the reading-age label under the
+   row says how much that number is worth. No fill is left only where there is
    no number: `inferred_reset` (an outline without mass, a stub at zero) and a series that has
    NEVER been measured (an outline with hatching). There an empty track would read as zero. */
 .bar {

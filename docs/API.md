@@ -354,7 +354,7 @@ user loses a figure we genuinely have.
 The whole row then describes **that measurement**: `rawUtilization`, the amounts in `extra`
 (`used`/`limit` from before the block, since the withdrawal payload zeroes them) and
 `capturedAt`/`confirmedAt`/`valueSince` pointing at the moment this number was last confirmed.
-The row looks exactly like a normal one — the UI writes
+The row looks exactly like a normal one — the UI shows
 "confirmed on Wed. at 13:39 · 2 d 5 h ago", not "confirmed just now".
 
 The dashed track and the words "no meter" stay only when there has **never** been a
@@ -512,7 +512,7 @@ me" with "this is where it ran out".
 **`state: "off"` and `state: "unknown"` are two different things.** "Credits are off" is
 information, "I don't know whether you have credits" is the absence of it. Merging them would
 show a way out of the limit that may not exist. When the slide-down ends on the `unknown`
-rung, that one gets `isCurrent` — and the UI writes "unknown" there, it does not guess.
+rung, that one gets `isCurrent` — and the UI shows "unknown" there, it does not guess.
 
 **Amounts in the cascade are in minor units with an exponent** — `usedMinor: 3820`,
 `exponent: 2`, `currency: "USD"` means `38.20 USD`. The backend **does not format**; the UI
@@ -704,7 +704,7 @@ current interface rests on:
 | Question | Decision |
 |---|---|
 | Number of screens | **Two: Live and History.** Accounts/Machines and Diagnostics stay with `curl` |
-| Hierarchy of the Live view | **Session 5 h is always in the foreground.** `isActive` does NOT reorder the hierarchy — it is a thin line and the word `binds` next to the series that is limiting you (`binds now` in the hero) |
+| Hierarchy of the Live view | **Session 5 h is always in the foreground.** `isActive` does NOT reorder the hierarchy — it is a thin line and the word `limiting` next to the series that binds you (`limiting now` in the hero) |
 | Visualization | Horizontal track + number — **one drawing for the freshness states**, with the age of the reading carried by the caption beside it. Only `inferred_reset` and a never-measured series look different (§ 4) |
 | Palette | Nocturne (structure) + **the warm Claude palette** (`--color-accent: #d97757` on `#1c1b19`) |
 | Chart library | None — the chart is its own SVG, `viewBox 0 0 1000 200` |

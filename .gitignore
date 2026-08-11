@@ -23,7 +23,7 @@ frontend/dist/
 backups/
 
 # Scratchpad: payload dumps, frames from the panel, working notes. Nothing from here goes
-# into the repository — and without this rule a single `git add -A` publishes the lot.
+# into the repository — and without this rule a single `git add -A` publishes all of it.
 tmp/
 
 # Local compose override (networks and ports specific to a single deployment).

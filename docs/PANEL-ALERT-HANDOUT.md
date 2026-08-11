@@ -252,9 +252,9 @@ These are judgment calls, not measurements, and all three are keys in `panel.jso
 - The `Detail` tile wraps at font 12 across 420 px, two lines at most (`AlertSolo`,
   `draw.wrap_lines`); the solo demo detail — "Dump scope: session only, session and week, or
   all the limit windows" — fits in one.
-  A longer one wraps to both: "Full scope: session and week for every account, plus the
-  marker state once the card folds away after five minutes" — longer than the plan-approval
-  demo text (`render-png.py:39-40`) on purpose, to show the second line actually filling.
+  A longer one wraps to both: the plan-approval demo text (`render-png.py:39-40`) with one
+  clause appended, so the second line actually fills. Both cases are pinned by the wrap
+  parametrize in `panel/tests/test_render.py`.
 
 ## Where things live
 

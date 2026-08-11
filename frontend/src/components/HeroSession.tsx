@@ -32,7 +32,7 @@ export function HeroSession({ s, nowMs }: { s: SeriesStatus; nowMs: number }) {
         </span>
         {s.isActive && (
           <span className="hero-binds">
-            binds<span className="hero-binds-now"> now</span>
+            limiting<span className="hero-binds-now"> now</span>
           </span>
         )}
         <span className="hero-fresh">{v.heroNote}</span>

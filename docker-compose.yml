@@ -80,7 +80,7 @@ services:
     # Behind a reverse proxy publishing the port is unnecessary — the proxy reaches the
     # container over the Docker network. It can be removed ONLY with `ports: !reset []`
     # in docker-compose.override.yml (Compose >= 2.24). `BACKEND_BIND=` is not enough: `:-`
-    # fires on an empty value too, so the port comes back to the default.
+    # fires on an empty value too, so the port falls back to the default.
     ports:
       - "${BACKEND_BIND:-127.0.0.1:8080}:8000"
     healthcheck:

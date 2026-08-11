@@ -19,7 +19,7 @@ logs/
 # Secrets have no business entering the image.
 .env
 
-# Things unused when building the image.
+# Not needed when building the image.
 docs/
 scripts/
 deploy/

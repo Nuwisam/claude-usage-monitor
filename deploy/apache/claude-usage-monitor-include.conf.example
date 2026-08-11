@@ -27,7 +27,7 @@ ProxyPassReverse /claude-usage/api/ingest http://claude_usage_monitor_backend:80
 
 # --- Session alerts: same kind of traffic as ingest, same pair of layers ---
 # Without this block the path is publicly reachable and is protected by the Bearer token alone —
-# meaning scanners hammer their way through to Python. The edge filter is just as mandatory
+# meaning scanners hammer on Python directly. The edge filter is just as mandatory
 # here as on ingest, because the endpoint is called by the same client with the same secret.
 <Location /claude-usage/api/session-alert>
     <If "req('X-Ingest-Key') != '__INGEST_EDGE_KEY__'">
@@ -58,7 +58,7 @@ ProxyPassReverse /claude-usage/api/stream http://claude_usage_monitor_backend:80
 # --- Rest of the API: the SSO cookie goes to the backend -------------------
 # The backend calls /api/verify itself and enforces ALLOWED_EMAILS. No session =>
 # 401 {reason, redirect_url}, NOT 302 — because there is no nginx auth_request here.
-# The UI has to answer with a redirect; that is part of the API contract.
+# The UI has to perform the redirect; that is part of the API contract.
 ProxyPass        /claude-usage/api http://claude_usage_monitor_backend:8000/api
 ProxyPassReverse /claude-usage/api http://claude_usage_monitor_backend:8000/api
 
@@ -68,9 +68,9 @@ RequestHeader set X-Forwarded-Port "443"
 # --- UI ---------------------------------------------------------------------
 # The static files are served by THE SAME backend (FastAPI mounts /assets and serves index.html
 # as the SPA fallback) — there is no separate nginx container. Two reasons: a host may have its
-# Docker address pools exhausted, and the nginx + auth_request variant carries a known pitfall
+# Docker address pools exhausted, and the nginx + auth_request variant has a known pitfall
 # in which `$scheme` inside the container is http and `$request_uri` comes without the prefix,
-# so after login `rd=` throws the user out to the service root. Here the SSO gate stays in the
+# so after login `rd=` dumps the user at the service root. Here the SSO gate stays in the
 # backend, which builds redirect_url from explicit PUBLIC_ORIGIN + APP_BASE_PATH.
 #
 # THIS RULE MUST BE BELOW the /api rules — ProxyPass is checked in the order written

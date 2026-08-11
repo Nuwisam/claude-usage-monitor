@@ -109,7 +109,7 @@ function rung(r: Partial<CascadeRung> & { key: CascadeRung["key"]; state: Cascad
   };
 }
 
-// ─── Max account: session 31%, week 30% and it binds, credits disabled ───────
+// ─── Max account: session 31%, week 30% and limiting, credits disabled ───────
 function accountMax(): AccountStatus {
   return {
     uuid: "00000000-0000-4000-8000-000000000003",
@@ -272,7 +272,7 @@ function accountPro(): AccountStatus {
 // ─── edge-case variants from the state catalog (2d) ──────────────────────────
 function withEdgeCases(accounts: AccountStatus[]): AccountStatus[] {
   const max = accounts[0]!;
-  // inferred_reset: the window came up overnight and nobody worked
+  // inferred_reset: the window rolled over overnight and nobody worked
   max.series.push(
     series(7, { key: "bucket:seven_day_cowork", label: "Week — Cowork", source: "bucket",
       sort: 100, bucket: "seven_day_cowork", u: 0, raw: 18, resetMin: 5600,

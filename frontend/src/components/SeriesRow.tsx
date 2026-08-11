@@ -48,7 +48,7 @@ export function SeriesRow({ s, nowMs, eu }: Props) {
             )}
           </HelpDot>
         )}
-        {s.isActive && <span className="series-binds">binds</span>}
+        {s.isActive && <span className="series-binds">limiting</span>}
       </div>
 
       <UtilBar v={v} />

@@ -35,7 +35,7 @@ TWO SOURCES, because freshness and completeness live in different places (measur
     because the API itself returns whole numbers (verified on the raw payload).
   * ~/.claude.json -> cachedUsageUtilization.utilization — the FULL raw response
     body (spend, extra_usage, limits[], every bucket), but Claude Code rewrites it
-    at most once every 5 minutes (a hard write throttle on its side).
+    at most once every 5 minutes (a hard write throttle of its own).
 
 We merge: the structure from the cache + fresh percentages from stdout laid on top.
 The result has EXACTLY the same shape as the former HTTP response, so the backend parser
@@ -217,7 +217,7 @@ def read_claude_json():
     The former version cached the identity by mtime. This file now has to be read every
     time anyway (cachedUsageUtilization changes), so a separate cache was nothing but extra
     I/O. Switching accounts through /login rewrites this same file, so account-change
-    detection still works — simply without the middleman."""
+    detection still works — just without the middleman."""
     path = _find(".claude.json")
     if not path:
         return None, None, None, None
@@ -234,7 +234,7 @@ def read_claude_json():
 
     cached = _safe(_extract_block, text, "cachedUsageUtilization")
     # The credits-disabled reason from the CLIENT cache. On its own it tells apart three
-    # states that the in-band data does not: null / `org_spend_cap_reached` (the OWN pool
+    # states that the in-band data does not: null / `org_spend_cap_reached` (the account's OWN pool
     # exhausted, where `spend.disabled_reason` is null) / `org_level_disabled_until` (the
     # organization ceiling). Collected FOR INSPECTION — the verdict still rests on in-band data.
     reason = _safe(_extract_scalar, text, "cachedExtraUsageDisabledReason")
@@ -365,7 +365,7 @@ def parse_usage_text(text):
 def read_fresh():
     """Reads the stdout dump left by the PREVIOUS run.
 
-    The file is written by the child process, so a write in progress can be hit — which is
+    The file is written by the child process, so a read can land mid-write — which is
     why validation goes through json.loads(): a truncated file simply does not parse and
     the cycle runs on the cache alone. No locking, no marker file."""
     try:
@@ -719,7 +719,7 @@ def account_uuid():
     """`oauthAccount.accountUuid` from ~/.claude.json, cached on mtime.
 
     Read ONLY on the entry path (a rare one), so it does not replace `read_claude_json` —
-    that one reads the same file after the throttle and for considerably more. The panel
+    that one reads the same file after the throttle and for much more than the uuid. The panel
     puts the marker on one specific account band, so it has to know which band the alert
     belongs to; AGENTS.md rule 7 says identity comes from here and from here only.
     """
@@ -1457,7 +1457,7 @@ def sweep_session(cfg, hook):
     sweep would wipe alerts every minute.
 
     This loop also looks at entries of OTHER sessions, but it deletes them on one of two
-    PROOFS, never on resemblance: either the session has no record in the harness registry
+    PROOFS, never on resemblance alone: either the session has no record in the harness registry
     (`registry_dead`), or its own transcript already carries a resolution
     (`closed_by_transcript`). Without this, an entry of a session that fell silent after a
     denial has no collector: that is the failure this came from.
