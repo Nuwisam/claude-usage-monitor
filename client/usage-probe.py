@@ -17,7 +17,9 @@ A side effect, also counted: 9 of the 13 shared names were byte-for-byte identic
 Does NOT call api.anthropic.com. Instead it asks Claude Code itself to measure
 (`claude -p "/usage"`) and reads the result from the two places Claude Code leaves on disk.
 
-SAFETY RULES — do not break them while extending:
+SAFETY RULES — do not break them while extending (numbered locally, for this file alone;
+a bare "rule N" anywhere else in the repo means AGENTS.md, and only item 1 below is the
+same number there):
   1. The probe makes NO request to api.anthropic.com. The only party calling
      /api/oauth/usage is Claude Code, over its own channel, with its own token, which
      it refreshes itself. That removes in one stroke: use of the OAuth token by a

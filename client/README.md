@@ -192,7 +192,7 @@ import os, runpy, sys
 
 SRC = r"C:\path\to\repo\client\usage-probe.py"   # full path to the source file
 
-if not os.path.isfile(SRC):        # rule 5: no source means silence, not a traceback
+if not os.path.isfile(SRC):        # AGENTS.md rule 3: no source means silence, not a traceback
     sys.exit(0)
 try:
     runpy.run_path(SRC, run_name="__main__")
@@ -401,7 +401,11 @@ event — the probe then compares the on-disk set against the marker of the last
 mismatch, sends a correction, even when it deleted nothing itself. The same path handles expiry
 after `blocked_ttl_sec`, which used to delete the files without telling the server about it.
 
-## Rules that must not be broken
+## Client rules that must not be broken
+
+Numbered **locally**, for this file alone. A bare "rule N" anywhere else in the repo means
+[`AGENTS.md`](../AGENTS.md), whose rules 1-3 are the ones that govern `client/` — item 1 below
+happens to be its rule 1, and from item 2 on the two numberings part ways.
 
 **1. No request to `api.anthropic.com`.** Not a single one. This is the entire point of version 3.
 
@@ -425,7 +429,7 @@ path (`PostToolUse` with an empty state directory) ends at a single `scandir` an
 nothing.
 
 **Do not move them up, and do not add uses before the import line** —
-a `NameError`/`UnboundLocalError` here would swallow rule 5, and the machine would stop
+a `NameError`/`UnboundLocalError` here would swallow AGENTS.md rule 3, and the machine would stop
 reporting without a single symptom.
 
 **5. Never raises an exception.** `except: sys.exit(0)` at the top level.
