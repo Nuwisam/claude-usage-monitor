@@ -225,8 +225,8 @@ before opening the stream.
 
 A session that has stopped on a question to a human — a tool permission request,
 `AskUserQuestion`, or `ExitPlanMode` (`reason`: `permission` | `question` | `plan`).
-`client/usage-probe.py` signals it (the same probe, the "alert" section — measured at 1.7 ms
-against 41.9 ms for a separate process), and the desk panel shows a card and a marker next to
+`client/usage-probe.py` signals it (the same probe, the "alert" section — measured at 2.3 ms
+against 37.4 ms for a separate process), and the desk panel shows a card and a marker next to
 the account. Off switch: `"session_status": false` in `config.json`.
 
 **A session can run on a remote machine while the panel sits locally** — which is why events

@@ -2,12 +2,14 @@
 """Claude limit probe + blocked-session signaller. Both run from Claude Code hooks.
 
 TWO FUNCTIONS, ONE PROCESS — and that is measured, not aesthetic. The signaller used to
-be a separate script (`client/session-status.py`), so 9 of its 10 events started a SECOND
-CPython next to the one that was starting for the probe anyway. Measurement (100 runs per
-variant, interleaved, median): folding the signaller code into this process costs 2.7 ms
-(95% CI 1.9-3.2), a separate process 41.9 ms (41.7-42.3). Over a day, at ~21,000 events:
-+57 s against +890 s. The old justification for the split ("+0.294 ms for every added
-line") was overstated ~71-fold — really 0.0041 ms/line.
+be a separate script (`client/session-status.py`), so 7 of its 10 events started a SECOND
+CPython next to the one that was starting for the probe anyway — and those seven include
+PreToolUse and PostToolUse, so it was the overwhelming majority of runs. Re-measured on this
+tree (100 runs per variant, interleaved, median of paired differences): folding the signaller
+code into this process costs 2.3 ms (95% CI 1.7-2.6, slower in 92 of 100 pairs), a separate
+process 37.4 ms (37.0-37.9). Over a day, at ~21,000 events: +48 s against +785 s. The old
+justification for the split ("+0.294 ms for every added line") was overstated ~71-fold — really
+0.0041 ms/line, and that slope has held: the English translation added 437 lines for 1.8 ms.
 
 A side effect, also counted: 9 of the 13 shared names were byte-for-byte identical, and
 `_extract_block` (~40 lines) differed only in a comment. The split FORCED the duplicate.

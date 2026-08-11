@@ -56,15 +56,22 @@ paid model turn runs instead. The probe detects this from `num_turns>0` and disc
 **Why one file, not two.** The signaller used to be a separate script wired into ten events, of
 which **seven** were already covered by the probe — and since these are `PreToolUse` and
 `PostToolUse`, i.e. the ones firing on every tool call, in the **overwhelming majority of runs**
-two CPythons were starting instead of one. Measured (100 runs per variant, interleaved,
-median): folding the signaller code into the probe process costs **2.7 ms** (95% CI 1.9-3.2),
-a separate process **41.9 ms** (41.7-42.3). After the merge actually happened, a check gave
-**1.7 ms** — lower than the projection, because the merge also removed duplicates (+542 lines
-instead of +648). Over a day, at ~21,000 events, using the measured 1.7 ms: **+36 s** instead
-of **+890 s**.
+two CPythons were starting instead of one. Re-measured on the current tree (100 runs per
+variant, interleaved by rotation, median of paired differences, every variant on the local disk,
+the probe entered with `CUM_PROBE_CHILD=1` so that `main()` returns on its first line): folding
+the signaller code into the probe process costs **2.3 ms** (95% CI 1.7-2.6, slower in 92 of 100
+pairs), a separate process **37.4 ms** (37.0-37.9). Over a day, at ~21,000 events: **+48 s**
+instead of **+785 s**.
+
+The merge-time numbers were 2.7 ms for the projection and 1.7 ms for the post-merge control, and
+the re-measurement lands between them — they were never in conflict, both are the same quantity
+inside its own spread. What has changed since is the file: 1317 lines at the merge (+542 rather
+than the forecast +648, because merging removed duplicates), 1755 today, of which the English
+translation is +437.
 
 The previous justification for the split — *"+0.294 ms for every line added to the probe"* —
-was **overstated ~71-fold**; the real figure is 0.0041 ms/line. The split also forced a
+was **overstated ~71-fold**; the real figure is 0.0041 ms/line, and it held across the
+translation as well (437 lines for 1.8 ms — 0.0040 ms/line). The split also forced a
 duplicate: of 13 names shared by both files, 9 were byte-for-byte identical, and
 `_extract_block` (~40 lines) differed only in a comment.
 

@@ -175,7 +175,7 @@ mean wherever the surrounding text does not.
 client/     probe (stdlib-only) + analysis tools; rules 1-3
               usage-probe.py — SOURCE OF TRUTH, the copies on machines are a release
                 ALSO contains the blocked-session signaller (the "alert" section):
-                measured 1.7 ms to fold it into this process versus 41.9 ms
+                measured 2.3 ms to fold it into this process versus 37.4 ms
                 for a separate one — see `client/README.md`
 backend/    FastAPI + async SQLAlchemy + Alembic; MariaDB; also serves the UI's static files
   app/parsing.py     pure functions, all normalization logic  <- start here for API changes

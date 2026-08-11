@@ -5,7 +5,7 @@ running on the critical path that NEVER raises — meaning every one of its bugs
 definition, and this is the only place where anything checks it at all.
 
 The signaller was a separate script until measurement showed that folding it into the probe
-process costs 2.7 ms against 41.9 ms for a separate process. The tests stayed; only the file
+process costs 2.3 ms against 37.4 ms for a separate process. The tests stayed; only the file
 they are loaded from changed.
 
 Every case matches measured harness behavior, not an idea of it. The measurement methodology
