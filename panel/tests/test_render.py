@@ -1,7 +1,7 @@
-"""Uklad, kolory i sam render. Bez sprzetu.
+"""The layout, the colors and the render itself. No hardware.
 
-Testy pilnuja rzeczy, ktore na 480x320 psuja sie po cichu: obciete ogonki,
-prostokaty wychodzace poza ekran, kolory ginace po kwantyzacji 5/6/5.
+The tests guard the things that break quietly on 480x320: clipped tails,
+rectangles running off the screen, colors lost to the 5/6/5 quantization.
 """
 import pytest
 
@@ -11,9 +11,9 @@ from panel import draw, layout as L, render, theme, view
 from tests import fixtures
 
 
-# --- geometria --------------------------------------------------------------
+# --- geometry ---------------------------------------------------------------
 
-def test_pasy_dziela_ekran_bez_nachodzenia():
+def test_bands_divide_screen_without_overlap():
     lay = L.Layout(480, 320)
     a, b = lay.bands
     assert a.top == 0 and b.bottom == 320
@@ -21,105 +21,108 @@ def test_pasy_dziela_ekran_bez_nachodzenia():
     assert a.height + b.height + L.DIVIDER_H == 320
 
 
-def test_kredyty_nie_wchodza_na_tydzien():
-    """Wiersz kredytow jest przyklejony do dolu pasa. Gdyby pas byl za niski,
-    nachodzilby na odliczanie tygodnia i nikt by tego nie zauwazyl na PNG."""
+def test_credits_do_not_overlap_week():
+    """The credits row is glued to the bottom of the band. Were the band too short,
+    it would overlap the week countdown and nobody would notice that on a PNG."""
     for band in L.Layout(480, 320).bands:
-        assert band.fits, "kredyty nachodza na tydzien"
+        assert band.fits, "credits overlap week"
 
 
-def test_wszystko_miesci_sie_w_ekranie():
+def test_everything_fits_within_screen():
     lay = L.Layout(480, 320)
     for band in lay.bands:
         for name in ("header", "ses_label", "ses_bar", "ses_line",
                      "wk_label", "wk_bar", "wk_line", "credits"):
             x0, y0, x1, y1 = getattr(band, name)
-            assert 0 <= x0 < x1 <= lay.width, "%s wychodzi w poziomie" % name
-            assert band.top <= y0 < y1 <= band.bottom, "%s wychodzi w pionie" % name
+            assert 0 <= x0 < x1 <= lay.width, "%s runs off horizontally" % name
+            assert band.top <= y0 < y1 <= band.bottom, "%s runs off vertically" % name
 
 
-def test_kolumna_liczb_i_blok_nie_nachodza():
+def test_number_column_and_bar_column_do_not_overlap():
     band = L.Layout(480, 320).band_a
     assert band.num_right < band.block_x0
 
 
-# --- typografia -------------------------------------------------------------
+# --- typography -------------------------------------------------------------
 
-def test_trzycyfrowa_wartosc_miesci_sie_w_kolumnie():
-    """Makieta schodzi ze 42 na 34 px przy 100% wlasnie dlatego. Gdyby nie,
-    liczba rozepchnelaby kolumne i paski przestalyby startowac rowno."""
+def test_three_digit_value_fits_in_column():
+    """That is exactly why the mockup drops from 42 to 34 px at 100%. Without it
+    the number would force the column wider and the bars would no longer start level."""
     f_big = draw.font(L.F_SES_NUM)
     f_tight = draw.font(L.F_SES_NUM_TIGHT)
     f_pct = draw.font(L.F_SES_PCT)
-    szerokosc = lambda f: draw.text_width("100", f) + L.PCT_GAP + draw.text_width("%", f_pct)
-    assert szerokosc(f_big) > L.NUM_W, "gdyby sie miescilo, zejscie byloby zbedne"
-    assert szerokosc(f_tight) <= L.NUM_W
+    width = lambda f: draw.text_width("100", f) + L.PCT_GAP + draw.text_width("%", f_pct)
+    assert width(f_big) > L.NUM_W, "if it fit, the step-down would be unnecessary"
+    assert width(f_tight) <= L.NUM_W
 
 
-def test_ogonki_nie_sa_obcinane():
-    """Mierzymy z faktycznego obrysu, nie z nominalnego rozmiaru: 'Ń' siega
-    wyzej niz wielkie litery bez znaku diakrytycznego."""
+# The accented glyphs below are the measurement, not text. 'Ń' reaches higher than any
+# unaccented capital and the sample carries every tail the panel can clip, so replacing
+# either with plain letters makes this test pass while measuring nothing.
+def test_descenders_are_not_clipped():
+    """Measured from the actual glyph outline, not from the nominal size: 'Ń' reaches
+    higher than capital letters carrying no diacritic."""
     for size in (10, 11, 12, 13, 15):
         f = draw.font(size)
         assert draw.line_height(f) >= f.getbbox("TYDZIEŃ")[3] - f.getbbox("TYDZIEŃ")[1]
         assert draw.text_width("Zażółć gęślą jaźń", f) > 0
 
 
-def test_ellipsize_nie_przekracza_szerokosci():
+def test_ellipsize_does_not_exceed_width():
     f = draw.font(15)
-    dlugi = "bardzo.dluga.nazwa.konta.ktora.sie.nie.miesci@przyklad.example.pl"
+    long_name = "very.long.account.name.that.does.not.fit@example.example.org"
     for limit in (40, 80, 160, 300):
-        assert draw.text_width(draw.ellipsize(dlugi, f, limit), f) <= limit
-    assert draw.ellipsize("krotki", f, 300) == "krotki", "krotkie zostaja bez zmian"
+        assert draw.text_width(draw.ellipsize(long_name, f, limit), f) <= limit
+    assert draw.ellipsize("short", f, 300) == "short", "short strings stay unchanged"
 
 
-# --- kolory -----------------------------------------------------------------
+# --- colors -----------------------------------------------------------------
 
-@pytest.mark.parametrize("fg,nazwa", [
-    (theme.TEXT, "tekst"), (theme.TEXT_50, "plan"), (theme.TEXT_28, "kontur"),
-    (theme.TEXT_10, "skos"), (theme.ACCENT, "akcent"), (theme.ACCENT_200, "etykieta"),
-    (theme.NEUTRAL_900, "tor"), (theme.DIVIDER, "separator"),
-    (theme.SURFACE, "kafel szczegolu"), (theme.SUNKEN, "listwa"),
+@pytest.mark.parametrize("fg,name", [
+    (theme.TEXT, "text"), (theme.TEXT_50, "plan"), (theme.TEXT_28, "outline"),
+    (theme.TEXT_10, "diagonal"), (theme.ACCENT, "accent"), (theme.ACCENT_200, "label"),
+    (theme.NEUTRAL_900, "track"), (theme.DIVIDER, "separator"),
+    (theme.SURFACE, "detail tile"), (theme.SUNKEN, "strip"),
 ])
-def test_kolory_przezywaja_kwantyzacje(fg, nazwa):
-    """Panel ma 5/6/5 bitow. Najbardziej zagrozony jest kreskowany kontur
-    (28% bieli na prawie czarnym tle) — gdyby zlal sie z tlem, stan `unknown`
-    stalby sie niewidoczny."""
+def test_colors_survive_quantization(fg, name):
+    """The panel has 5/6/5 bits. The most endangered one is the dashed outline
+    (28% white on a nearly black background) — were it to blend into the background,
+    the `unknown` state would become invisible."""
     assert theme.to_rgb565_pair(fg) != theme.to_rgb565_pair(theme.BG), \
-        "%s ginie na tle po kwantyzacji" % nazwa
+        "%s gets lost against the background after quantization" % name
 
 
-@pytest.mark.parametrize("fg,bg,nazwa", [
-    (theme.ACCENT_800, theme.BG, "baner alertu na tle"),
-    (theme.ACCENT_100, theme.ACCENT_800, "tytul alertu na banerze"),
-    (theme.ACCENT_200, theme.ACCENT_800, "godzina na banerze"),
-    (theme.BG, theme.ACCENT, "napis w zalanym pasmie"),
-    (theme.TEXT_78_SURFACE, theme.SURFACE, "szczegol w kaflu"),
-    (theme.TEXT_45_SURFACE, theme.SURFACE, "etykieta w kaflu"),
-    (theme.TEXT_70_SUNKEN, theme.SUNKEN, "wartosc w listwie"),
-    (theme.TEXT_72_SUNKEN, theme.SUNKEN, "szczegol w stopce listy"),
-    (theme.TEXT_62_SUNKEN, theme.SUNKEN, "nazwy reszty w stopce"),
-    (theme.TEXT_45_SUNKEN, theme.SUNKEN, "etykieta w listwie i stopce"),
-    (theme.ACCENT_200, theme.SUNKEN, "licznik reszty w stopce"),
-    (theme.SURFACE, theme.BG, "kafel na tle"),
-    (theme.SUNKEN, theme.BG, "listwa na tle"),
+@pytest.mark.parametrize("fg,bg,name", [
+    (theme.ACCENT_800, theme.BG, "alert banner on background"),
+    (theme.ACCENT_100, theme.ACCENT_800, "alert title on banner"),
+    (theme.ACCENT_200, theme.ACCENT_800, "time on banner"),
+    (theme.BG, theme.ACCENT, "caption in flooded banner"),
+    (theme.TEXT_78_SURFACE, theme.SURFACE, "detail in tile"),
+    (theme.TEXT_45_SURFACE, theme.SURFACE, "label in tile"),
+    (theme.TEXT_70_SUNKEN, theme.SUNKEN, "value in strip"),
+    (theme.TEXT_72_SUNKEN, theme.SUNKEN, "detail in list footer"),
+    (theme.TEXT_62_SUNKEN, theme.SUNKEN, "names of the rest in footer"),
+    (theme.TEXT_45_SUNKEN, theme.SUNKEN, "label in strip and footer"),
+    (theme.ACCENT_200, theme.SUNKEN, "rest counter in footer"),
+    (theme.SURFACE, theme.BG, "tile on background"),
+    (theme.SUNKEN, theme.BG, "strip on background"),
 ])
-def test_pary_kolorow_przezywaja_kwantyzacje(fg, bg, nazwa):
-    """Osobny test od powyzszego, bo tamten porownuje WYLACZNIE z `theme.BG`.
+def test_color_pairs_survive_quantization(fg, bg, name):
+    """A separate test from the one above, because that one compares SOLELY with `theme.BG`.
 
-    Marginalna para karty to `ACCENT_800` na `BG` (roznica 42,13,4 przed kwantyzacja),
-    a nie tekst na banerze. Pary z `SURFACE` i `SUNKEN` sa tu dlatego, ze kafel szczegolu
-    i listwa trybu roznia sie od tla o kilka jednostek — gdyby zlaly sie po kwantyzacji,
-    karta stracilaby caly podzial na pola.
+    The card's marginal pair is `ACCENT_800` on `BG` (a difference of 42, 13, 4 before
+    quantization), not the text on the banner. The pairs with `SURFACE` and `SUNKEN` are here
+    because the detail tile and the mode strip differ from the background by a few units —
+    were they to blend after quantization, the card would lose all separation between its areas.
     """
     assert theme.to_rgb565_pair(fg) != theme.to_rgb565_pair(bg), \
-        "%s znika po kwantyzacji" % nazwa
+        "%s disappears after quantization" % name
 
 
 # --- render -----------------------------------------------------------------
 
 @pytest.mark.parametrize("scene", sorted(fixtures.SCENES))
-def test_kazda_scena_renderuje_sie(scene):
+def test_each_scene_renders(scene):
     from panel import fmt
     now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
     bands = []
@@ -132,130 +135,136 @@ def test_kazda_scena_renderuje_sie(scene):
     assert len(frame.rgb565("be")) == 480 * 320 * 2
 
 
-def test_ta_sama_scena_daje_ten_sam_ladunek():
-    """Na tym stoi cala oszczednosc: klatke wysylamy tylko, gdy rozni sie od
-    poprzedniej. Gdyby render byl niedeterministyczny, panel nadawalby non stop."""
+def test_same_scene_gives_same_payload():
+    """The whole saving rests on this: we send a frame only when it differs from the
+    previous one. Were the render non-deterministic, the panel would transmit non-stop."""
     from panel import fmt
     now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
-    def zbuduj():
+    def build_payload():
         bands = [render.band_state(a, now_ms=now_ms, show_clock=(i == 0))
                  for i, a in enumerate(fixtures.base())]
         return render.Renderer().frame(
             render.ScreenState(clock="21:07", link="live", bands=bands)).rgb565("be")
-    assert zbuduj() == zbuduj()
+    assert build_payload() == build_payload()
 
 
-def test_karta_stanu_zamiast_pasow():
+def test_status_card_instead_of_bands():
     frame = render.Renderer().frame(render.ScreenState(
-        message=["Brak konfiguracji", "panel.json"]))
+        message=["No configuration", "panel.json"]))
     assert frame.image.size == (480, 320)
 
 
-def test_pusty_slot_nie_wybucha():
+def test_empty_slot_does_not_blow_up():
     frame = render.Renderer().frame(
         render.ScreenState(clock="21:07", link="down", bands=[None, None]))
     assert len(frame.rgb565("be")) == 480 * 320 * 2
 
 
-def test_trzy_stany_lacza_daja_trzy_rozne_obrazy():
-    """Roznica RYSUNKIEM, nie kolorem: gdy strumien padnie, wiek odczytu rosnie
-    obu kontom naraz i wyglada to identycznie jak 'przestales pracowac'."""
+def test_three_link_states_give_three_different_images():
+    """The difference is in the DRAWING, not in the color: when the stream dies, the
+    reading age grows on both accounts at once and that looks exactly like 'the work stopped'."""
     from panel import fmt
     now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
-    def klatka(link):
+    def build_frame(link):
         bands = [render.band_state(a, now_ms=now_ms, show_clock=(i == 0))
                  for i, a in enumerate(fixtures.base())]
         return render.Renderer().frame(
             render.ScreenState(clock="21:07", link=link, bands=bands)).rgb565("be")
-    assert len({klatka("live"), klatka("reconnecting"), klatka("down")}) == 3
+    assert len({build_frame("live"), build_frame("reconnecting"), build_frame("down")}) == 3
 
 
-def test_wiek_bierze_starsza_z_dwoch_serii():
-    """Etykieta wieku jest tu JEDYNYM nosnikiem swiezosci i stoi tylko przy
-    wierszu sesji. Backend potwierdza kazda serie osobno, wiec gdyby brala
-    stempel sesji, panel pisalby "1 min temu" obok pewnie wygladajacego paska
-    tygodnia sprzed trzech dni."""
+def test_age_takes_the_older_of_two_series():
+    """The age label is the ONLY carrier of freshness here and appears only next to
+    the session row. The backend confirms each series separately, so were it to take
+    the session stamp, the panel would write "1 min ago" beside a confidently drawn
+    week bar from three days back."""
     from panel import fmt
     now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
     acc = fixtures.account(
-        "u", "kto@example.pl",
-        series=[fixtures.series("limit:session|session|-|-", "Sesja",
+        "u", "who@example.org",
+        series=[fixtures.series("limit:session|session|-|-", "Session",
                                 kind="session", bucketKey="five_hour",
                                 utilization=31,
                                 confirmedAt="2026-07-26T19:06:40Z",
                                 capturedAt="2026-07-26T19:06:40Z"),
-                fixtures.series("limit:weekly_all|weekly|-|-", "Tydzien",
+                fixtures.series("limit:weekly_all|weekly|-|-", "Week",
                                 kind="weekly_all", bucketKey="seven_day",
                                 utilization=30,
                                 confirmedAt="2026-07-23T19:07:40Z",
                                 capturedAt="2026-07-23T19:07:40Z")])
-    assert render.band_state(acc, now_ms=now_ms).ago == "3 d 0 h temu"
+    assert render.band_state(acc, now_ms=now_ms).ago == "3 d 0 h ago"
 
 
-# Pakowanie pikseli ma swoj plik: tests/test_pixels.py.
+# Pixel packing has a file of its own: tests/test_pixels.py.
 
 
-def test_wycofane_kredyty_zostaja_narysowane():
-    """Regresja na realny przypadek: organizacja odcina kredyty, szczebel schodzi na `off`
-    i wiersz kwot ZNIKAL z pasa. Panel gubil wtedy jedyna liczbe, ktora o wydatkach mial —
-    a kwoty przychodza dalej, bo backend podaje je z ostatniego pomiaru.
+def test_withdrawn_credits_still_get_drawn():
+    """Regression on a real case: the organization cuts credits off, the rung drops to `off`
+    and the amounts row USED TO VANISH from the band. The panel then lost the only number it had
+    about spending — and the amounts keep coming, because the backend reports them from the last
+    measurement.
 
-    Porownujemy ladunki: wersja z kwotami MUSI dac inny obraz niz `off` bez kwot, a taki
-    sam jak `on` z tymi samymi kwotami — bo rysunek jest ten sam, rozni sie tylko stan.
+    We compare payloads: the version with amounts MUST give a different image than `off` without
+    amounts, and the same one as `on` with those same amounts — because the drawing is the same,
+    only the state differs.
     """
     from panel import fmt
     now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
 
-    def klatka(**kw):
-        wzor = fixtures.base()[1]
-        cascade = [{"key": r.key, "state": r.state} for r in wzor.cascade
+    def build_frame(**kw):
+        template = fixtures.base()[1]
+        cascade = [{"key": r.key, "state": r.state} for r in template.cascade
                    if r.key != "credits"]
         cascade.append(fixtures.rung("credits", **kw))
-        acc = fixtures.account(wzor.uuid, wzor.email, org_type="claude_team",
+        acc = fixtures.account(template.uuid, template.email, org_type="claude_team",
                                cascade=cascade, series=[])
         band = render.band_state(acc, now_ms=now_ms)
         return render.Renderer().frame(
             render.ScreenState(clock="21:07", link="live", bands=[band, None])).rgb565("be")
 
-    kwoty = dict(usedMinor=30004, limitMinor=30000, currency="EUR", exponent=2)
-    wycofane = klatka(state="off", reason="org_level_disabled_until", **kwoty)
-    puste = klatka(state="off")
-    dzialajace = klatka(state="on", **kwoty)
+    amounts = dict(usedMinor=30004, limitMinor=30000, currency="EUR", exponent=2)
+    withdrawn = build_frame(state="off", reason="org_level_disabled_until", **amounts)
+    empty = build_frame(state="off")
+    working = build_frame(state="on", **amounts)
 
-    assert wycofane != puste, "wiersz kwot zniknal — panel stracil liczbe"
-    assert wycofane == dzialajace, "powodu wycofania panel nie rysuje; kwoty to kwoty"
+    assert withdrawn != empty, "the amounts row disappeared — the panel lost the number"
+    assert withdrawn == working, "the panel does not draw the withdrawal reason; amounts are amounts"
 
 
-# --- lamanie tekstu ---------------------------------------------------------
+# --- text wrapping ----------------------------------------------------------
 
-@pytest.mark.parametrize("tekst,linie", [
-    ("krotki", 1),
-    # Ten `detail` miesci sie w JEDNEJ linii kafla (420 px) i kafel ma sie wtedy
-    # skrocic, a nie zostawic pustego pola — patrz AlertSolo.detail_box.
-    ("Zakres zrzutu: tylko sesja, sesja i tydzień, czy wszystkie okna limitów", 1),
-    ("Plan na 6 kroków: layout.Alert, render._alert, AlertState, testy geometrii "
-     "i kwantyzacji, a do tego jeszcze jedno zdanie na dokladke", 2),
+@pytest.mark.parametrize("text,lines", [
+    ("short", 1),
+    # This `detail` fits in ONE line of the tile (420 px) and the tile is then to
+    # shorten itself rather than leave empty space — see AlertSolo.detail_box.
+    ("Dump scope: session only, session and week, or all the limit windows", 1),
+    ("A 6-step plan: layout.Alert, render._alert, AlertState, geometry and "
+     "quantization tests, plus one more sentence for good measure", 2),
+    # An accented line repeated 20 times is the densest overflow this wrapper can be
+    # given; the accents also prove the width measurement is not ASCII-only.
     ("Zażółć gęślą jaźń " * 20, 2),
     ("", 0),
 ])
-def test_wrap_lines_nie_przekracza_limitow(tekst, linie):
-    """`detail` bywa zdaniem, a kafel ma dwie linie i szerokosc 420 px. Ani jedno,
-    ani drugie nie moze zalezec od tresci."""
+def test_wrap_lines_does_not_exceed_limits(text, lines):
+    """`detail` is sometimes a sentence, and the tile has two lines and a width of
+    420 px. Neither of those must depend on the content."""
     f = draw.font(12)
-    out = draw.wrap_lines(tekst, f, 420, 2)
-    assert len(out) == linie
+    out = draw.wrap_lines(text, f, 420, 2)
+    assert len(out) == lines
     for line in out:
         assert draw.text_width(line, f) <= 420
 
 
-def test_wrap_lines_obcina_ostatnia_linie_wielokropkiem():
+def test_wrap_lines_truncates_last_line_with_ellipsis():
     f = draw.font(12)
+    # Same sample, same reason as the parametrized case above.
     out = draw.wrap_lines("Zażółć gęślą jaźń " * 20, f, 420, 2)
-    assert out[-1].endswith("…"), "nadmiar ma byc widoczny, nie uciety po cichu"
+    assert out[-1].endswith("…"), "the overflow must be visible, not silently cut off"
 
 
-def test_wrap_lines_znosi_slowo_dluzsze_niz_linia():
-    """Regresja: bez tego jedno dlugie slowo albo znikalo, albo zapetlalo funkcje."""
+def test_wrap_lines_survives_word_longer_than_line():
+    """Regression: without this one long word either vanished or sent the function into
+    an endless loop."""
     f = draw.font(12)
     out = draw.wrap_lines("a" * 400, f, 100, 2)
     assert len(out) == 1 and draw.text_width(out[0], f) <= 100

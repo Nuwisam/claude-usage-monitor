@@ -8,11 +8,11 @@ import { RANGES } from "../hooks/useHistory";
 import { useStatus } from "../hooks/useStatus";
 import { dm, hm, tzLabel } from "../lib/time";
 
-/** Wybor serii jest BUDOWANY Z DANYCH, nie z zaszytej listy (zasada 5 z AGENTS.md).
+/** The choice of series is BUILT FROM THE DATA, not from a hardcoded list (rule 5 of AGENTS.md).
  *
- *  `seriesId` jest inny dla kazdego konta, ale `seriesKey` jest wspolny — wiec kontroler
- *  operuje na kluczach, a kazdy facet odczytuje swoje wlasne id dla wybranego klucza.
- *  Nowy bucket u Anthropic pojawi sie tutaj sam, bez zmiany kodu i bez deployu.
+ *  `seriesId` differs for every account, but `seriesKey` is shared — so the controller works
+ *  on keys, and every facet reads its own id for the selected key.
+ *  A new bucket at Anthropic will show up here by itself, with no code change and no deploy.
  */
 function seriesOptions(status: StatusResponse) {
   const seen = new Map<string, { key: string; label: string; sort: number }>();
@@ -25,8 +25,8 @@ function seriesOptions(status: StatusResponse) {
   return [...seen.values()].sort((x, y) => x.sort - y.sort || x.label.localeCompare(y.label));
 }
 
-/** Kotwica zakresu zaokraglona do minuty — inaczej kazde tyknięcie zegara zmienialoby
- *  klucz zapytania i wykres przeladowywalby sie co sekunde. */
+/** The range anchor rounded to the minute — otherwise every tick of the clock would change
+ *  the query key and the chart would reload every second. */
 function useMinuteAnchor(): Date {
   const [, setTick] = useState(0);
   useMemo(() => {
@@ -60,7 +60,7 @@ export function History() {
     <>
       <div className="hist-controls">
         <div className="field">
-          <label>Seria</label>
+          <label>Series</label>
           <div className="seg">
             {options.map((o) => (
               <label className="seg-opt" key={o.key} title={o.key}>
@@ -77,7 +77,7 @@ export function History() {
         </div>
 
         <div className="field">
-          <label>Zakres</label>
+          <label>Range</label>
           <div className="seg">
             {RANGES.map((r) => (
               <label className="seg-opt" key={r.id}>
@@ -103,8 +103,8 @@ export function History() {
 
       {active === null ? (
         <div className="state-block">
-          <h4>Nie ma jeszcze żadnej serii</h4>
-          <p>Historia pojawi się po pierwszym pomiarze.</p>
+          <h4>No series yet</h4>
+          <p>History appears after the first measurement.</p>
         </div>
       ) : (
         q.data.accounts.map((a) => (
@@ -119,8 +119,8 @@ export function History() {
         ))
       )}
 
-      {/* Blok-uwaga o stanie `unknown` zostal usuniety razem z samym pojeciem w UI. Jego
-          prawdziwa tresc — ze dziura nie znaczy zera — stoi w `Legend`. */}
+      {/* The note block about the `unknown` state was removed together with the notion itself
+          in the UI. Its true content — that a gap does not mean zero — lives in `Legend`. */}
       <Legend bucket={bucketHint} />
     </>
   );

@@ -1,12 +1,12 @@
 import { WarningCircle } from "@phosphor-icons/react";
 
-/** Baner z `warnings[]`. Dzis backend NIE generuje zadnego — ostrzezenie o serii w stanie
- *  `unknown` zniklo razem z samym pojeciem w UI, bo etykieta wieku odczytu mowi to samo
- *  liczba minut, zamiast nazwa stanu.
+/** A banner from `warnings[]`. Today the backend generates NONE — the warning about a series in
+ *  the `unknown` state disappeared together with the very notion in the UI, because the
+ *  reading-age label says the same thing with a number of minutes instead of a state name.
  *
- *  Komponent zostaje, bo `warnings[]` zostaje w kontrakcie: pole jest miejscem na fakty
- *  ponad kontami, ktorych karta konta nie ma jak pokazac. Puste `warnings[]` to poprawny
- *  stan, nie brak implementacji. */
+ *  The component stays, because `warnings[]` stays in the contract: the field is the place for
+ *  facts above the accounts, which an account card has no way to show. An empty `warnings[]` is
+ *  a correct state, not a missing implementation. */
 export function Warnings({ items }: { items: string[] }) {
   if (items.length === 0) return null;
   return (
@@ -17,7 +17,7 @@ export function Warnings({ items }: { items: string[] }) {
           <div className="banner-lines">
             <span className="banner-text">{text}</span>
             <span className="banner-source">
-              z pola <code>warnings[]</code> odpowiedzi /status
+              from the <code>warnings[]</code> field of the /status response
             </span>
           </div>
         </div>

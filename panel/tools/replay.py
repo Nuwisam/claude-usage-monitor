@@ -1,12 +1,12 @@
-"""Odtworzenie nagranego strumienia SSE do PNG.
+"""Replay a recorded SSE stream to PNG.
 
-Nagrywanie wlacza `"record_sse": true` w panel.json — surowe bajty ladują obok
-logu, jako panel.log.sse.
+Recording is switched on by `"record_sse": true` in panel.json — the raw bytes
+land next to the log, as panel.log.sse.
 
-    python tools/replay.py %LOCALAPPDATA%\\claude-usage-monitor\\panel.log.sse --outdir klatki
+    python tools/replay.py %LOCALAPPDATA%\\claude-usage-monitor\\panel.log.sse --outdir frames
 
-Po co: odtworzenie zlej ramki nie moze wymagac czekania, az sytuacja powtorzy sie
-w dzialajacym systemie. Zwlaszcza ze ramki plyna tylko wtedy, gdy ktos pracuje.
+Why: replaying a bad stream frame must not require waiting for the situation to
+repeat in a running system. Especially since frames only flow while someone works.
 """
 import argparse
 import os
@@ -47,10 +47,10 @@ def main():
             continue
         if payload.get("serverNow"):
             clock.anchor(payload["serverNow"])
-        # Ramki `alert` MUSZA przechodzic przez ten filtr. Wczesniej stalo tu
-        # `if event != "account": continue`, wiec nagrane alerty byly dla tego
-        # narzedzia niewidzialne — czyli jedyna scena, ktorej nie da sie wywolac
-        # na zadanie, bylaby tez jedyna, ktorej nie da sie odtworzyc.
+        # `alert` frames MUST get through this filter. The line that used to be here was
+        # `if event != "account": continue`, so recorded alerts were invisible to
+        # this tool — meaning the one scene that cannot be summoned on demand
+        # would also be the only one that cannot be replayed.
         if event == "alert":
             alerts = status.parse_frame(payload)
         elif event != "account":
@@ -78,11 +78,11 @@ def main():
             img = img.resize((img.width * args.zoom, img.height * args.zoom),
                              Image.NEAREST)
         frames += 1
-        img.save(os.path.join(args.outdir, "klatka-%04d.png" % frames))
+        img.save(os.path.join(args.outdir, "frame-%04d.png" % frames))
 
-    print("odtworzono %d klatek do %s/" % (frames, args.outdir))
+    print("replayed %d frames to %s/" % (frames, args.outdir))
     if not frames:
-        print("(brak ramek `account` w pliku — czy record_sse bylo wlaczone?)")
+        print("(no `account` frames in the file — was record_sse switched on?)")
 
 
 if __name__ == "__main__":

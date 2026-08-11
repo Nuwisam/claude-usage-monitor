@@ -1,43 +1,44 @@
-/* Paleta z makiety — struktura zostaje z Nocturne, kolor przychodzi stad.
+/* Palette from the mockup — the structure stays Nocturne's, the color comes from here.
 
-   Makieta nadpisuje tylko czesc rampy; reszta kroków zostawala blurple z Nocturne, po
-   ktore komponenty (.btn, .seg, .radio, .table) siegaja same w hoverach i :focus-visible.
-   Domykamy wiec cala rampe — kroki dopisane przez nas sa oznaczone. */
+   The mockup overrides only part of the ramp; the remaining steps stayed Nocturne's blurple,
+   which components (.btn, .seg, .radio, .table) reach for on their own in hovers and in
+   :focus-visible. So we close the whole ramp — the steps we added are marked. */
 
 :root {
-  /* Tlo POD karta aplikacji. Makieta trzyma je na <body>, karta ekranu lezy na nim. */
+  /* The background UNDER the app card. The mockup keeps it on <body>, and the screen card
+     lies on it. */
   --color-canvas: #141312;
   --color-bg: #1c1b19;
   --color-surface: #262523;
-  --color-sunken: #211f1d;          /* token nieobecny w Nocturne, wprowadzony przez makiete */
+  --color-sunken: #211f1d;          /* token absent from Nocturne, introduced by the mockup */
   --color-text: #f0eee6;
   --color-accent: #d97757;
   --color-divider: color-mix(in srgb, #f0eee6 14%, transparent);
 
-  /* --- neutral: cieply greige ------------------------------------------- */
+  /* --- neutral: warm greige --------------------------------------------- */
   --color-neutral-100: #d6d2c6;
-  --color-neutral-200: #c7c2b5;     /* dopisane */
-  --color-neutral-300: #b5afa1;     /* dopisane */
+  --color-neutral-200: #c7c2b5;     /* added */
+  --color-neutral-300: #b5afa1;     /* added */
   --color-neutral-400: #9a9388;
-  --color-neutral-500: #8a8479;     /* dopisane */
+  --color-neutral-500: #8a8479;     /* added */
   --color-neutral-600: #7a746a;
-  --color-neutral-700: #5c574f;     /* dopisane */
+  --color-neutral-700: #5c574f;     /* added */
   --color-neutral-800: #413d37;
   --color-neutral-900: #322f2b;
 
-  /* --- accent: terakota ------------------------------------------------- */
+  /* --- accent: terracotta ----------------------------------------------- */
   --color-accent-100: #f7cbb8;
   --color-accent-200: #f0ab90;
   --color-accent-300: #e89477;
-  --color-accent-400: #e08567;      /* dopisane */
+  --color-accent-400: #e08567;      /* added */
   --color-accent-500: #d97757;
-  --color-accent-600: #b46246;      /* dopisane */
+  --color-accent-600: #b46246;      /* added */
   --color-accent-700: #8a4a33;
   --color-accent-800: #46281d;
-  --color-accent-900: #2b1811;      /* dopisane */
+  --color-accent-900: #2b1811;      /* added */
 
-  /* Nocturne to schemat mono — accent-2 jest maszynowym zastepnikiem trzymanym tylko po
-     to, zeby oba zestawy sie rozwiazywaly. Mapujemy go 1:1 na accent, zeby nie wyciekl. */
+  /* Nocturne is a mono scheme — accent-2 is a machine-derived stand-in kept only so that
+     both sets resolve. We map it 1:1 onto accent so that it never leaks through. */
   --color-accent-2: #d97757;
   --color-accent-2-100: #f7cbb8;
   --color-accent-2-200: #f0ab90;
@@ -49,12 +50,12 @@
   --color-accent-2-800: #46281d;
   --color-accent-2-900: #2b1811;
 
-  /* Elewacja: na ciemnym tle to krawedz plus ambientny mrok, nie stos cieni. */
+  /* Elevation: on a dark ground it is an edge plus ambient darkness, not a stack of shadows. */
   --shadow-sm: 0 0 0 1px rgba(240, 238, 230, 0.10);
   --shadow-md: 0 0 0 1px rgba(240, 238, 230, 0.08), 0 8px 24px rgba(0, 0, 0, 0.5);
-  --shadow-lg: 0 0 0 1px rgba(240, 238, 230, 0.16), 0 16px 40px rgba(0, 0, 0, 0.65); /* dopisane */
+  --shadow-lg: 0 0 0 1px rgba(240, 238, 230, 0.16), 0 16px 40px rgba(0, 0, 0, 0.65); /* added */
 
-  /* Liczby, procenty i czasy — wszedzie tabelarycznie, zeby nie skakaly przy odswiezeniu. */
+  /* Numbers, percentages and times — tabular everywhere, so they do not jump on a refresh. */
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 

@@ -1,7 +1,8 @@
-"""Logi JSON na stdout. Vector zbiera je z docker.sock automatycznie i wysyla do Loki.
+"""JSON logs on stdout. Vector picks them up from docker.sock automatically and ships to Loki.
 
-REDAKCJA JEST OBOWIAZKOWA: stdout trafia do drugiego systemu, wiec token w logu to wyciek
-do Loki i do Slacka. Filtrujemy wszystko, co wyglada na poswiadczenie, ZANIM opusci proces.
+REDACTION IS MANDATORY: stdout reaches a second system, so a token in a log is a leak into
+Loki and into Slack. Anything that looks like a credential is filtered out BEFORE it leaves
+the process.
 """
 import json
 import re
@@ -21,7 +22,7 @@ _SECRETS = re.compile(
 
 
 def _redact(text: str) -> str:
-    return _SECRETS.sub("[ZREDAGOWANO]", text)
+    return _SECRETS.sub("[REDACTED]", text)
 
 
 def _sink(message) -> None:

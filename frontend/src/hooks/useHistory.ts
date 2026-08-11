@@ -9,7 +9,7 @@ export interface RangeOption {
   hours: number;
 }
 
-/** Zakresy z makiety 2c. `bucket=auto` w backendzie: <=6 h raw, <=48 h 5m, wyzej 1h. */
+/** Ranges from mockup 2c. `bucket=auto` in the backend: <=6 h raw, <=48 h 5m, above that 1h. */
 export const RANGES: RangeOption[] = [
   { id: "6h", label: "6 h", hours: 6 },
   { id: "24h", label: "24 h", hours: 24 },
@@ -24,8 +24,8 @@ export function useHistory(
   to: Date,
 ) {
   return useQuery({
-    // `to` w kluczu jest zaokraglone przez wywolujacego — inaczej kazde tyknięcie zegara
-    // tworzyloby nowy klucz i przeladowywalo wykres.
+    // `to` in the key is rounded by the caller — otherwise every tick of the clock
+    // would create a new key and reload the chart.
     queryKey: ["history", account, seriesId, from.toISOString(), to.toISOString()],
     queryFn: () => fetchHistory({ account, seriesId: seriesId as number, from, to }),
     enabled: seriesId !== null,
@@ -41,8 +41,8 @@ export interface Stats {
   n: number;
 }
 
-/** min/max/ostatnia/n do podpisu facetu — liczone tutaj, bo backend oddaje juz agregaty
- *  per koszyk i nie ma sensu pytac go drugi raz o to samo. */
+/** min/max/last/n for the facet caption — computed here, because the backend already returns
+ *  aggregates per bucket and there is no point asking it a second time for the same thing. */
 export function statsOf(points: HistoryPoint[]): Stats | null {
   const withValue = points.filter((p) => p.avg !== null);
   if (withValue.length === 0) return null;

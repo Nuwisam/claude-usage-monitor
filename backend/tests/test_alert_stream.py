@@ -1,13 +1,14 @@
-"""POST /api/session-alert i ramka `alert`.
+"""POST /api/session-alert and the `alert` frame.
 
-Ten endpoint jest inny niz reszta backendu: nie dotyka bazy, a jego stan zyje w pamieci
-procesu. Testy pilnuja wiec czterech rzeczy, ktore w tej konstrukcji psuja sie po cichu:
+This endpoint is unlike the rest of the backend: it does not touch the database, and its
+state lives in process memory. The tests therefore guard four things that break silently
+in this construction:
 
-  * alert opublikowany W TRAKCIE budowania snapshotu musi przezyc (regresja na petli
-    kasujacej kolejke w routers/stream.py),
-  * kazda ramka niesie PELNY zbior, wiec po `lag` nastepna ramka odtwarza stan,
-  * POST zastepuje zbior maszyny w calosci — pusta lista gasi alerty tej maszyny,
-  * `machine` bierze sie z TOKENU, nigdy z ciala zadania.
+  * an alert published WHILE the snapshot is being built must survive (a regression on
+    the loop that clears the queue in routers/stream.py),
+  * every frame carries the FULL set, so after a `lag` the next frame restores the state,
+  * a POST replaces the machine's set wholesale — an empty list clears its alerts,
+  * `machine` comes from the TOKEN, never from the request body.
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ import time
 import pytest
 import pytest_asyncio
 
-from tests.test_stream import (  # noqa: F401 — fixtury `api`/`db` jada razem z tym
+from tests.test_stream import (  # noqa: F401 — the `api`/`db` fixtures come along too
     ACCOUNT_MAX, api, cards, clean_broker, db, ingest_one, listen, parse_sse,
     payload, utcnow, with_util,
 )
@@ -38,11 +39,11 @@ async def clean_alerts():
 
 
 def entry(**kw):
-    # `since` MUSI byc liczone teraz, nie wpisane na sztywno: `current_alerts()` odsiewa
-    # wpisy starsze niz ALERT_MAX_AGE_SEC (24 h), wiec staly stempel zamienia kazdy test
-    # zbioru w bombe zegarowa — przechodzi dobe od napisania i pada na zawsze potem.
-    # Test filtra wieku podaje swoja wlasna date i tej domyslnej nie uzywa.
-    base = {"key": "sesja__main__abc", "reason": "permission", "project": "proj",
+    # `since` MUST be computed now, not written in by hand: `current_alerts()` drops
+    # entries older than ALERT_MAX_AGE_SEC (24 h), so a fixed stamp turns every set-level
+    # test into a time bomb — it passes for a day after being written, then fails forever.
+    # The age-filter test supplies its own date and does not use this default.
+    base = {"key": "session__main__abc", "reason": "permission", "project": "proj",
             "tool": "Bash", "detail": "git status",
             "since": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     base.update(kw)
@@ -59,168 +60,168 @@ def alerts_of(events):
 
 
 # --------------------------------------------------------------------------- endpoint
-async def test_bez_tokenu_nie_wchodzi(api):
+async def test_no_token_rejected(api):
     r = await api.post("/api/session-alert", json={"entries": []})
     assert r.status_code == 401
 
 
-async def test_zly_token_nie_wchodzi(api):
-    r = await send(api, [], token="nie-ten")
+async def test_wrong_token_rejected(api):
+    r = await send(api, [], token="not-this-one")
     assert r.status_code == 401
 
 
-async def test_nazwa_maszyny_pochodzi_z_tokenu_a_nie_z_ciala(api):
-    """Gdyby klient mogl przyslac `machine`, kazda maszyna mogla by podszyc sie pod
-    cudze wpisy — a to jest etykieta, ktora czlowiek czyta z panelu i po ktorej
-    decyduje, gdzie isc."""
-    r = await send(api, [entry(machine="cudza-maszyna")])
+async def test_machine_name_comes_from_token_not_body(api):
+    """If the client could send `machine`, any machine could impersonate somebody
+    else's entries — and this is the label a person reads off the panel and uses to
+    decide where to go."""
+    r = await send(api, [entry(machine="someone-elses-machine")])
     assert r.status_code == 200
     assert r.json()["machine"] == "desktop"
     assert ALERTS["desktop"][0].machine == "desktop"
 
 
-async def test_zepsuty_wpis_nie_kasuje_calego_zbioru(api):
-    """Zgaszenie alertu przez blad formatowania byloby najgorszym trybem awarii tej
-    funkcji — to ten sam rodzaj bledu co falszywe zero w pomiarze."""
+async def test_malformed_entry_does_not_clear_whole_set(api):
+    """Clearing an alert because of a formatting error would be the worst failure mode of
+    this feature — the same kind of bug as a false zero in a measurement."""
     r = await send(api, [entry(key="a"), {"reason": "permission"}, entry(key="b")])
     assert r.status_code == 200
     assert r.json()["accepted"] == 2
 
 
-async def test_pusta_lista_gasi_alerty_maszyny(api):
+async def test_empty_list_clears_machine_alerts(api):
     await send(api, [entry()])
     assert ALERTS
     await send(api, [])
     assert "desktop" not in ALERTS
 
 
-async def test_entries_musi_byc_lista(api):
-    r = await api.post("/api/session-alert", json={"entries": "nie-lista"},
+async def test_entries_must_be_a_list(api):
+    r = await api.post("/api/session-alert", json={"entries": "not-a-list"},
                        headers={"Authorization": "Bearer t"})
     assert r.status_code == 400
 
 
-async def test_za_duze_cialo(api, monkeypatch):
+async def test_body_too_large(api, monkeypatch):
     monkeypatch.setattr(settings, "max_ingest_body_bytes", 50)
     r = await send(api, [entry()])
     assert r.status_code == 413
 
 
-# --------------------------------------------------------------------------- strumien
-async def test_snapshot_niesie_alerty_zastane_przed_polaczeniem(api, monkeypatch):
-    """Najwazniejszy test w tym pliku.
+# --------------------------------------------------------------------------- stream
+async def test_snapshot_carries_alerts_present_before_connection(api, monkeypatch):
+    """The most important test in this file.
 
-    STREAM_MAX_LIFETIME_SEC zmusza panel do przelaczenia polaczenia co 15 minut,
-    a zablokowana sesja nie emituje w tym czasie ZADNEGO zdarzenia (zmierzone: 98%
-    blokad). Bez odtworzenia stanu w snapshocie blokada trwajaca 40 minut znikalaby
-    z ekranu po pietnastu — i nikt by nie zauwazyl, ze zniknela.
+    STREAM_MAX_LIFETIME_SEC forces the panel to recycle the connection every 15 minutes,
+    and a blocked session emits NO event at all in that time (measured: 98% of blocks).
+    Without the state being restored in the snapshot, a block lasting 40 minutes would
+    disappear from the screen after fifteen — and nobody would notice it was gone.
     """
     await send(api, [entry()])
     events = await listen(api, monkeypatch, query="account=%s" % UUID_MAX)
-    ramki = alerts_of(events)
-    assert ramki, "snapshot musi zawierac ramke `alert`"
-    assert ramki[0][0]["project"] == "proj"
-    assert ramki[0][0]["machine"] == "desktop"
+    frames = alerts_of(events)
+    assert frames, "snapshot must contain an `alert` frame"
+    assert frames[0][0]["project"] == "proj"
+    assert frames[0][0]["machine"] == "desktop"
 
 
-async def test_alert_w_trakcie_snapshotu_przezywa(api, monkeypatch):
-    """Regresja na `stream.py`: petla po snapshocie kasuje wszystko, co wpadlo do
-    kolejki w trakcie jego budowania. Dla ramek `account` jest to nieszkodliwe
-    z zalozenia (snapshot je zastepuje), dla efemerycznego alertu byloby ciche
-    i smiertelne — dlatego ramka alertu leci PO tej petli, nie przez kolejke."""
+async def test_alert_during_snapshot_survives(api, monkeypatch):
+    """A regression on `stream.py`: the loop after the snapshot discards everything that
+    landed in the queue while it was being built. For `account` frames that is harmless
+    by design (the snapshot supersedes them), for an ephemeral alert it would be silent
+    and fatal — so the alert frame goes out AFTER that loop, not through the queue."""
     async def work():
-        await send(api, [entry(project="wpadl-w-trakcie")])
+        await send(api, [entry(project="landed-during-snapshot")])
 
     events = await listen(api, monkeypatch, query="account=%s" % UUID_MAX, work=work)
-    widziane = [a["project"] for ramka in alerts_of(events) for a in ramka]
-    assert "wpadl-w-trakcie" in widziane
+    seen = [a["project"] for frame in alerts_of(events) for a in frame]
+    assert "landed-during-snapshot" in seen
 
 
-async def test_kazda_ramka_niesie_pelny_zbior(api, monkeypatch):
-    """Nie przyrost. Dlatego zgubienie ramki jest nieszkodliwe, a `lag` wystarcza
-    jako jedyny sygnal przerwy."""
+async def test_every_frame_carries_full_set(api, monkeypatch):
+    """Not a delta. That is why losing a frame is harmless, and why `lag` suffices
+    as the only signal that there was a break."""
     async def work():
-        await send(api, [entry(key="a", project="alfa")])
-        await send(api, [entry(key="a", project="alfa"),
+        await send(api, [entry(key="a", project="alpha")])
+        await send(api, [entry(key="a", project="alpha"),
                          entry(key="b", project="beta")])
 
     events = await listen(api, monkeypatch, query="account=%s" % UUID_MAX, work=work)
-    ostatnia = alerts_of(events)[-1]
-    assert sorted(a["project"] for a in ostatnia) == ["alfa", "beta"]
+    last = alerts_of(events)[-1]
+    assert sorted(a["project"] for a in last) == ["alpha", "beta"]
 
 
-async def test_alert_dociera_niezaleznie_od_subskrypcji_kont(api, monkeypatch):
-    """`publish_all`, nie `publish`: alert nie nalezy do zadnego pojedynczego konta.
-    Panel zapisany na jedno konto ma zobaczyc blokade w projekcie, ktory akurat chodzi
-    na drugim."""
+async def test_alert_arrives_regardless_of_account_subscription(api, monkeypatch):
+    """`publish_all`, not `publish`: an alert belongs to no single account. A panel
+    subscribed to one account must see a block in a project that happens to be running
+    on another."""
     async def work():
         await send(api, [entry()])
 
     events = await listen(api, monkeypatch,
-                          query="account=uuid-ktorego-nie-ma", work=work)
-    assert alerts_of(events), "ramka `alert` nie moze zalezec od tego, na co panel jest zapisany"
+                          query="account=uuid-that-does-not-exist", work=work)
+    assert alerts_of(events), "the `alert` frame must not depend on what the panel is subscribed to"
 
 
-async def test_przepelniona_kolejka_daje_lag_a_nastepna_ramka_odtwarza_stan(monkeypatch):
-    """Przy przepelnieniu `_drain` wyrzuca WSZYSTKIE zakolejkowane ramki i wstawia
-    `lag`. Historia naprawcza dziala tylko dlatego, ze nastepna ramka jest pelnym
-    stanem — dla przyrostu ten mechanizm bylby cicha utrata danych.
+async def test_overflowing_queue_gives_lag_and_next_frame_restores_state(monkeypatch):
+    """On overflow `_drain` throws away ALL queued frames and inserts a `lag`. The
+    recovery works only because the next frame is a full state — for a delta this
+    mechanism would be silent data loss.
 
-    Sprawdzane na samym brokerze, nie przez endpoint: przez HTTP odbiorca oproznia
-    kolejke tak szybko, jak ta rosnie, wiec przepelnienia nie da sie tam wywolac
-    inaczej niz przez sztuczne wstrzymanie generatora — a wtedy testowaloby sie
-    wstrzymanie, nie przepelnienie.
+    Checked on the broker itself, not through the endpoint: over HTTP the receiver
+    drains the queue as fast as it grows, so an overflow cannot be provoked there
+    other than by artificially stalling the generator — and that would test the
+    stall, not the overflow.
     """
     from app.services.events import alert_frame, set_alerts
     from app.schemas import SessionAlert
 
     monkeypatch.setattr(settings, "stream_queue_max", 2)
-    sub = broker.subscribe(frozenset(["dowolne"]), "panel")
+    sub = broker.subscribe(frozenset(["any-account"]), "panel")
     try:
         for i in range(6):
             set_alerts("desktop", [SessionAlert(**entry(key="k%d" % i,
                                                         project="p%d" % i,
                                                         machine="desktop"))])
             broker.publish_all(alert_frame(now=utcnow()))
-        ramki = []
+        frames = []
         while not sub.queue.empty():
-            ramki.append(sub.queue.get_nowait())
+            frames.append(sub.queue.get_nowait())
     finally:
         broker.unsubscribe(sub)
 
-    assert any("event: lag" in r for r in ramki)
-    # Ostatnia ramka po `lag` niesie caly biezacy stan, wiec zguba sie sama leczy.
-    assert "p5" in ramki[-1]
+    assert any("event: lag" in r for r in frames)
+    # The last frame after `lag` carries the whole current state, so the loss self-heals.
+    assert "p5" in frames[-1]
 
 
-async def test_stary_wpis_wypada_ze_snapshotu(api, monkeypatch):
-    """Maszyna, ktora zniknela w trakcie blokady, nigdy nie przysle korekty. Writer ma
-    wlasny TTL, ale serwer nie moze na nim polegac."""
+async def test_stale_entry_drops_out_of_snapshot(api, monkeypatch):
+    """A machine that disappeared mid-block will never send a correction. The writer has
+    its own TTL, but the server must not rely on it."""
     from app.services import events as ev
 
     monkeypatch.setattr(ev, "ALERT_MAX_AGE_SEC", 1.0)
     await send(api, [entry(since="2020-01-01T00:00:00Z")])
-    ramki = alerts_of(await listen(api, monkeypatch, query="account=%s" % UUID_MAX))
-    assert ramki and ramki[0] == []
+    frames = alerts_of(await listen(api, monkeypatch, query="account=%s" % UUID_MAX))
+    assert frames and frames[0] == []
 
 
-async def test_restart_procesu_czysci_mape():
-    """Swiadome: alerty wracaja przy najblizszym zdarzeniu z maszyny, a zapis do bazy
-    oznaczalby migracje i cykl zycia wierszy dla stanu z definicji chwilowego."""
-    ALERTS["desktop"] = ["cokolwiek"]
-    ALERTS.clear()                      # to robi start procesu
+async def test_process_restart_clears_map():
+    """Deliberate: alerts return with the next event from a machine, and a write to the
+    database would mean a migration and a row lifecycle for state that is momentary by
+    definition."""
+    ALERTS["desktop"] = ["anything"]
+    ALERTS.clear()                      # this is what a process start does
     assert ALERTS == {}
 
 
-async def test_przegladarkowy_zestaw_listenerow_nie_widzi_ramki(api, monkeypatch):
-    """`useLiveStream.ts` rejestruje piec nazwanych listenerow i NIE MA `onmessage`,
-    wiec ramka `alert` jest dla przegladarki niewidzialna z konstrukcji. Ten test
-    przypina te wlasnosc do nazwy zdarzenia, zeby zmiana na `message` nie przeszla
-    niezauwazona."""
+async def test_browser_listener_set_does_not_see_frame(api, monkeypatch):
+    """`useLiveStream.ts` registers five named listeners and has NO `onmessage`, so
+    the `alert` frame is invisible to the browser by construction. This test pins that
+    property to the event name, so a change to `message` cannot pass unnoticed."""
     async def work():
         await send(api, [entry()])
 
     events = await listen(api, monkeypatch, query="account=%s" % UUID_MAX, work=work)
-    znane_przegladarce = {"hello", "ping", "account", "lag", "bye"}
+    known_to_browser = {"hello", "ping", "account", "lag", "bye"}
     assert any(e == "alert" for e, _ in events)
-    assert "alert" not in znane_przegladarce
+    assert "alert" not in known_to_browser

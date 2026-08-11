@@ -1,179 +1,222 @@
-# AGENTS.md — zasady pracy w tym repo
+# AGENTS.md — working rules for this repo
 
-Monitor limitów Claude dla wielu kont. Szczegóły: `README.md`.
-Rozpoznanie, na którym stoi projekt — sekcja „Dlaczego tak, a nie inaczej" w `README.md`.
+Claude usage-limit monitor for multiple accounts. Details: `README.md`.
+The groundwork this project rests on — the "Why this way, not another" section in
+`README.md`.
 
-## Zasady, których nie wolno złamać
+## Rules that must not be broken
 
-Każda z nich powstała po realnym problemie, nie z ostrożności.
+Each one exists because of a real problem, not out of caution.
 
-**1. Sonda nie wysyła żadnego żądania do `api.anthropic.com`.**
-Pomiar zleca sam Claude Code (`claude -p "/usage"`), a `client/usage-probe.py` czyta tylko
-wynik z dysku. Nie ma w niej klienta HTTP do Anthropic, nie ma nagłówka `Authorization`
-z tokenem OAuth i nie ma podszywania się pod `User-Agent: claude-code/…`.
+**1. The probe sends no request to `api.anthropic.com`.**
+The measurement is delegated to Claude Code itself (`claude -p "/usage"`), and
+`client/usage-probe.py` only reads the result off disk. It has no HTTP client to Anthropic, no
+`Authorization` header carrying an OAuth token, and no impersonation of
+`User-Agent: claude-code/…`.
 
-Powód jest prosty: warunki Anthropic mówią bez wyjątków, że tokeny OAuth z kont Free/Pro/Max
-nie mogą być używane *„in any other product, tool, or service"*. Nie ma tam furtki dla użycia
-read-only. Wersja 2 sondy wołała `/api/oauth/usage` sama i była w szarej strefie; wersja 3
-usuwa cały ten problem, bo żądanie wykonuje pierwszorzędny klient własnym, odświeżanym
-tokenem.
+The reason is simple: Anthropic's terms say without exception that OAuth tokens from Free/Pro/Max
+accounts must not be used *"in any other product, tool, or service"*. There is no carve-out for
+read-only use. Version 2 of the probe called `/api/oauth/usage` itself and lived in a gray area;
+version 3 removes the whole problem, because the request is made by the first-party client with
+its own, self-refreshed token.
 
-`.credentials.json` czytamy dalej — ale **wyłącznie po metadane planu** (`subscriptionType`,
-`rateLimitTier`, `expiresAt`), tylko do odczytu, i `accessToken` nie jest z niego używany do
-niczego. Linia podziału leży przy **użyciu tokena**, nie przy odczycie pliku: odczyt jest
-operacją czysto lokalną, wysłanie nim żądania — nie.
+We still read `.credentials.json` — but **only for plan metadata** (`subscriptionType`,
+`rateLimitTier`, `expiresAt`), read-only, and `accessToken` is never used for anything at all.
+The dividing line sits at **using the token**, not at reading the file: reading it is a purely
+local operation, sending a request with it is not.
 
-Endpointu tokenowego (`grant_type=refresh_token`) nie wołamy i nigdy nie zawołamy. Rotacja
-jednorazowego refresh tokenu to główny udokumentowany wektor utraty konta
+We do not call the token endpoint (`grant_type=refresh_token`) and never will. Rotation of the
+one-time refresh token is the main documented vector for account loss
 ([#38248](https://github.com/anthropics/claude-code/issues/38248), #47754, #53063).
 
-**2. Zero ciężkich importów w kliencie.**
-Na górze pliku wolno tylko: `sys`, `json`, `os`, `time`, `re`.
-`socket`, `hashlib`, `http.client`, `urllib.parse`, `ssl`, `base64` i `subprocess` są
-dozwolone, ale **wyłącznie leniwie, poza ścieżką gorącą** — w ciele `post()`, `main()`
-oraz w gałęziach wejścia i wyjścia z blokady w sekcji alertu. Ta sekcja biegnie PRZED
-throttlem, więc nie jest „za throttlem" — jest za czymś innym: odpala się parę razy na
-blokadę, a nie przy każdym wywołaniu narzędzia. Ścieżka gorąca kończy się na jednym
-`scandir` i nie importuje niczego. Na górze te moduły kosztowały
-23 ms przy **każdym** odpaleniu hooka, także tym, który zaraz wychodzi na throttlu, czyli
-na zdecydowanej większości. Zmierzone: 59,5 → 35,7 ms mediana, na dwóch identycznych
-kopiach sondy różniących się tylko tą linią.
-Sam `import httpx` to ~150 ms, a skrypt startuje przy **każdym** wywołaniu narzędzia.
-Podłoga jest twarda: goły start CPythona to 31–36 ms (min–mediana pomiaru referencyjnego)
-i nic jej nie zejdzie — cały budżet zależy od tej zasady.
+**2. Zero heavy imports in the client.**
+At the top of the file, only these are allowed: `sys`, `json`, `os`, `time`, `re`.
+`socket`, `hashlib`, `http.client`, `urllib.parse`, `ssl`, `base64` and `subprocess` are
+permitted, but **only lazily, off the hot path** — inside the body of `post()`, `main()`,
+and in the entry/exit branches around the lock in the alert section. That section runs BEFORE
+the throttle, so it is not "behind the throttle" — it is behind something else: it fires a few
+times per block, not on every tool call. The hot path ends at a single
+`scandir` and imports nothing. At the top of the file these modules used to cost
+23 ms on **every** hook run, including the one that is about to exit on the throttle — which is
+the overwhelming majority of runs. Measured: 59.5 → 35.7 ms median, on two identical
+copies of the probe differing only in that one line.
+`import httpx` alone is ~150 ms, and the script starts on **every** tool call.
+The floor is hard: a bare CPython start is 31-36 ms (min-median of the reference measurement)
+and nothing moves it — the whole budget rests on this rule.
 
-Liczb wydajnościowych **nie przepisywać z tego pliku bez ponownego pomiaru**. Maszyna, na
-której powstały, miała rozrzut rzędu 30 ms między min a max, a pomiar składników
-(`python -c "import ..."`)
-potrafi rozminąć się z pomiarem końcówka-do-końcówki nawet trzykrotnie. Wiążący jest
-pomiar całego przebiegu sondy, nie suma kosztów modułów.
+Performance numbers here **must not be copied out of this file without re-measuring**. The
+machine they were produced on had a spread of about 30 ms between min and max, and measuring
+components in isolation (`python -c "import ..."`) can disagree with an end-to-end measurement
+by as much as a factor of three. What's binding is a measurement of the whole probe run, not the
+sum of module costs.
 
-**3. Sonda nigdy nie rzuca wyjątkiem.**
-`except: sys.exit(0)` na najwyższym poziomie. To jedyny kod w projekcie, który działa w ścieżce
-Twojej pracy — błąd tutaj psuje sesję, nie tylko wykres.
+**3. The probe never raises an exception.**
+`except Exception: sys.exit(0)` at the top level. This is the only code in the project that runs
+on the critical path of your own work — a bug here breaks the session, not just a chart.
 
-**4. `unknown` nigdy nie jest zerem.**
-`app/freshness.py` rozróżnia „okno się zresetowało i nikt nie pracował" (można wnioskować 0%)
-od „klient działa, ale brak próbek" (awaria → `utilization: null`). Fałszywe, pewnie wyglądające
-zero jest najgorszym trybem awarii tego narzędzia — użytkownik odpali duże zadanie i trafi
-w ścianę. Test regresyjny: `test_dzialajacy_klient_bez_probek_daje_unknown`.
+**4. `unknown` is never zero.**
+`app/freshness.py` distinguishes "the window reset and nobody worked" (0% can be inferred) from
+"the client is running but there are no samples" (a failure → `utilization: null`). A false,
+confident-looking zero is this tool's worst failure mode — a user kicks off a big task and walks
+straight into a wall. Regression test: `test_a_live_client_with_no_samples_gives_unknown`.
 
-W pikselach niesie tę zasadę **etykieta wieku odczytu**, nie osobny rysunek toru. UI liczy
-wartość jako `utilization ?? rawUtilization` — czyli przy `unknown` pokazuje **ostatni
-ZMIERZONY** procent, nigdy zero i nigdy słowa zamiast znanej liczby — a o tym, ile ta liczba
-jest warta, mówi stojące obok „potwierdzone w śr. o 11:58 · 3 d 4 h temu". `live`, `stale`
-i `unknown` wyglądają więc **identycznie**; osobny rysunek zostaje dla `inferred_reset`
-(wnioskowanie, nie pomiar) i dla serii, której nie zmierzono **nigdy** — tam pusty tor
-czytałoby się jako zero. To ten sam model po obu stronach biurka: `frontend/src/lib/freshness.ts`
-i `panel/panel/view.py` są jedną decyzją w dwóch językach, a panel miał ją pierwszy.
+In pixels, this rule is carried by the **reading's age label**, not a separate drawing of the
+track. The UI computes the value as `utilization ?? rawUtilization` — meaning that under
+`unknown` it shows the **last MEASURED** percentage, never zero and never a word standing in for
+a known number — and the label next to it says what that number is worth:
+"confirmed on Wed. at 11:58 · 3 d 4 h ago". `live`, `stale` and `unknown` therefore look
+**identical**; a separate drawing is reserved for `inferred_reset` (an inference, not a
+measurement) and for a series that was **never** measured at all — there an empty track would
+read as zero. It is the same model on both sides of the desk: `frontend/src/lib/freshness.ts`
+and `panel/panel/view.py` are one decision in two languages, and the panel had it first.
 
-Wycofany miernik (`unavailableReason`) tej zasady **nie łamie, tylko ją stosuje**: gdy
-organizacja odetnie kredyty, Anthropic podaje `percent: 0` — i to zero jest odrzucane, a na
-ekranie zostaje ostatni ZMIERZONY procent razem z kwotami, ze stemplem tamtego pomiaru.
-Fantomem jest zero z payloadu wycofania, nigdy wartość zmierzona wcześniej.
+The withdrawn meter (`unavailableReason`) **applies this rule, it does not break it**: when an
+organization cuts off credits, Anthropic reports `percent: 0` — and that zero is rejected, so the
+screen keeps the last MEASURED percentage together with the amounts, stamped with that earlier
+measurement. The phantom is the zero from the withdrawal payload, never a value measured earlier.
 
-**Świadomy rozjazd WWW z panelem** jest w jednym miejscu i wynika z rozmiaru ekranu: WWW pisze
-przy twardym bloku „kredyty wyłączone przez organizację", panel nie pisze o tym **nic** —
-480×320 nie ma na to miejsca ani potrzeby, więc wiersz kredytów pokazuje same kwoty. To decyzja,
-nie dług: powód jest wyjaśnieniem, a panel jest wskaźnikiem.
+**The deliberate mismatch between the web UI and the panel** lives in one place and follows from
+screen size: the web UI shows, at the hard block, "credits disabled by the organization"; the
+panel writes **nothing** about it — 480x320 has neither the room nor the need, so the credits row
+shows only the amounts. That is a decision, not debt: the reason is an explanation, and the panel
+is an indicator.
 
-**5. Żadnych zahardkodowanych nazw bucketów.**
-Odpowiedź ma 17 kluczy najwyższego poziomu, z czego 5 nie było znanych ani z walidatora
-w binarce Claude Code, ani z repo referencyjnego. Serie są **wierszami w tabeli**. Nowy bucket
-u Anthropic ma zadziałać bez migracji i bez deployu.
+**5. No hardcoded bucket names.**
+The response has 17 top-level keys, 5 of which were known from neither the validator inside the
+Claude Code binary nor the reference repo. Series are **rows in a table**. A new bucket on
+Anthropic's side has to work without a migration and without a deploy.
 
-**6. Surowa odpowiedź trafia do bazy zawsze.**
-`raw_payloads` (adresowane treścią). To jedyny sposób odtworzenia historii po zmianie schematu
-przez Anthropic. Repo referencyjne straciło użytkownikom dane, bo miało strict decoder (PR #271).
+**6. The raw response always lands in the database.**
+`raw_payloads` (content-addressed). It's the only way to reconstruct history after Anthropic
+changes the schema. The reference repo lost user data because it had a strict decoder (PR #271).
 
-**7. Tożsamość konta wyłącznie z `oauthAccount.accountUuid`.**
-Nigdy ze statycznej konfiguracji. Na jednej maszynie konta przełącza się przez `/login`,
-a `settings.json` jest wspólny — label przypisywałby połowę próbek do złego konta i cicho
-zatruwał historię obu, bez żadnego widocznego objawu.
+**7. Account identity comes solely from `oauthAccount.accountUuid`.**
+Never from static configuration. On one machine, accounts are switched through `/login`, and
+`settings.json` is shared — a label would attribute half the samples to the wrong account and
+silently poison both accounts' history, with no visible symptom at all.
 
-**8. Kontrakt API jest zamrożony.**
-`/api/status` zwraca `contractVersion` (dziś **3**). Zmiana łamiąca zgodność = podbicie wersji
-**i** aktualizacja `docs/API.md` **i** stałej `CONTRACT_VERSION` w
-`frontend/src/api/types.ts` — UI porównuje je i protestuje w nagłówku przy rozjeździe.
+**8. The API contract is frozen.**
+`/api/status` returns `contractVersion` (today **3**). A breaking change means bumping the
+version **and** updating `docs/API.md` **and** the `CONTRACT_VERSION` constant in
+`frontend/src/api/types.ts` — the UI compares them and complains in the header on a mismatch.
 
-Konsumentów tej stałej jest **dwóch**: `/api/status` i ramki `/api/stream`, bo ramka `account`
-niesie ten sam model `AccountStatus`. Osadzaj go w ramkach **dosłownie** — wariant „lite"
-byłby drugim kontraktem do utrzymania i dopiero on łamałby tę zasadę. Kartę konta składa
-jedna funkcja (`build_account_status`), a `test_status_contract.py` porównuje wynik obu
-ścieżek pole po polu.
+This constant has **two** consumers: `/api/status` and `/api/stream` frames, because the
+`account` frame carries the same `AccountStatus` model. Embed it in frames **verbatim** — a
+"lite" variant would be a second contract to maintain, and that is exactly what would break this
+rule. One function builds the account card (`build_account_status`), and
+`test_status_contract.py` compares the result of both paths field by field.
 
-Stałą trzyma u siebie **trzeci** odbiorca: `panel/panel/model.py` (`CONTRACT_VERSION`).
-Panel czyta tylko strumień, więc rozjazd zobaczy dopiero w ramce `hello` — i wtedy przestaje
-ufać danym, zamiast rysować je dalej.
+A **third** consumer keeps its own copy of the constant: `panel/panel/model.py`
+(`CONTRACT_VERSION`). The panel only reads the stream, so it only sees a mismatch in the `hello`
+frame — and at that point it stops trusting the data instead of continuing to draw it.
 
-**9. `resets_at` porównuj z tolerancją, nigdy na równość.**
-Granica okna podawana przez Anthropic **kołysze się**: zmierzone 49 próbek w 3 h, jedno okno,
-wartości od `00:59:59.014384` do `01:00:00.982268`. Porównanie doslowne było zawsze fałszywe
-i po cichu wyłączyło **trzy** mechanizmy naraz — dedup, guard monotoniczności i wykrywanie
-granic resetu (61 „resetów" na dobę zamiast pięciu). Jest na to `parsing.same_reset_window`
-i testy regresyjne; prawdziwy reset przesuwa granicę o całe okno, więc rozróżnia się je
-progiem, a nie równością.
+**9. Compare `resets_at` with a tolerance, never for equality.**
+The window boundary Anthropic reports **wobbles**: measured 49 samples over 3 h, one window,
+values ranging from `00:59:59.014384` to `01:00:00.982268`. A literal comparison was always
+false and silently disabled **three** mechanisms at once — dedup, the monotonicity guard, and
+reset-boundary detection (61 "resets" a day instead of five). There is `parsing.same_reset_window`
+and regression tests for this; a real reset moves the boundary by a whole window, so the two are
+told apart with a threshold, not with equality.
 
-**10. Tekst widoczny w UI pisze się po polsku, z ogonkami.**
-Komentarze w kodzie zostają bez — to świadoma niespójność (kodowanie na Windows), ale etykiety
-serii, ostrzeżenia i podpisy trafiają na ekran. `display_label` jest odświeżane przy każdym
-ingest, więc poprawka słownika dochodzi do serii zarejestrowanych wcześniej.
+**10. Time comes in through `NaiveUtcDt`, goes out through `UtcDt`.**
+Ever since the output started carrying a zone, the browser **sends it back** (`Date.toISOString()`), while
+the database, `utcnow()` and the samples are naive UTC. A plain `datetime` in a query parameter
+lets a zoned timestamp in, and it doesn't fall over until a layer further down — History was
+returning 500 on every open. The worse variant is silent: the MySQL driver formats the datetime
+with `strftime` and **ignores** `tzinfo`, so a `+02:00` offset would shift the whole range by two
+hours while still returning HTTP 200 and a correctly-shaped response. Both types sit side by side
+in `app/schemas.py`.
 
-**11. Czas wchodzi przez `NaiveUtcDt`, wychodzi przez `UtcDt`.**
-Odkąd wyjście ma strefę, przeglądarka ją **odsyła** (`Date.toISOString()`), a baza,
-`utcnow()` i próbki są naiwne w UTC. Zwykły `datetime` w parametrze zapytania wpuszcza czas
-ze strefą do środka i wywraca się dopiero warstwę dalej — Historia zwracała 500 przy każdym
-otwarciu. Gorszy wariant jest cichy: sterownik MySQL formatuje datetime `strftime`-em
-i `tzinfo` **ignoruje**, więc `+02:00` przesunęłoby cały zakres o dwie godziny przy
-HTTP 200 i poprawnie wyglądającej odpowiedzi. Oba typy leżą obok siebie w `app/schemas.py`.
+## Terminology
 
-## Układ
+The project holds to a fixed vocabulary: window, pool, series, sample, freshness, cascade,
+withdrawn meter, block, permission, credits, overage, reset, probe, frame, banner, card. Series
+labels, warnings and captions reach the screen in those words. `display_label` is refreshed on
+every ingest, so a wording fix reaches series registered earlier — a label is never frozen at the
+moment its series was first seen. Four of the words are easy to reach for in the wrong place, so
+each one carries the test that settles it.
+
+**meter vs counter vs count vs countdown.** A **meter** is only the usage meter an organization
+can withdraw — the thing `meter_withdrawn` names, that goes dark, works, tells the truth, has a
+threshold. For anything else use the ordinary word: **counter** for a tally that increments
+(`seen_count`, a loop or retry counter), **count** for a plain number of things, **countdown**
+for time running down. The test: if "withdrawn" could not be said of it, it is not a meter.
+
+**banner vs band.** A **banner** is the panel's strip across the top of a card — the thing that
+is drawn. **Band** is the ordinary in-band / out-of-band sense: data carried inside the payload
+itself, as against a signal arriving on a side channel (`spend.disabled_reason`, the client
+cache). The test: if "out of" could be said of it, it is a band. Six sites in the backend, the
+probe and the frontend use it that way, and "in-banner data" is not English.
+
+**`ALLOW` on the panel is a width constraint, not a synonym.** The concept is **permission**,
+matching the `permission` reason key; the panel's `SHORT` display value is `ALLOW` because that
+is what fits: measured 39 px against `AlertList.REASON_W = 58`, where `PERMISSION` is 66 px and
+`APPROVAL` 59 px and both overflow. Any longer string silently runs off the alert list — measure
+before you change it.
+
+**frame, qualified.** A stream frame and a display frame are different things; say which one you
+mean wherever the surrounding text does not.
+
+## Locale
+
+| Item | Rule |
+|---|---|
+| Numeric date | day first, dotted — `26.07` |
+| Clock | 24 h |
+| Decimal separator | a **dot**, in prose and in the formatters alike |
+| Time preposition | `at`, `yesterday at`, `on Wed. at`; the bare numeric-date form takes no preposition |
+| `DAYS` | Sun. Mon. Tue. Wed. Thu. Fri. Sat. |
+| HTML | `<html lang="en">` |
+| Spelling | US (organization, utilization, color), to match the API payload |
+
+## Layout
 
 ```
-client/     sonda (stdlib-only) + narzędzia analizy; zasady 1-3
-              usage-probe.py — ŹRÓDŁO PRAWDY, kopie na maszynach są wydaniem
-                zawiera TAKŻE sygnalizator zablokowanej sesji (sekcja „alert"):
-                zmierzone 1,7 ms za dołożenie go do tego procesu wobec 41,9 ms
-                za osobny — patrz `client/README.md`
-backend/    FastAPI + SQLAlchemy async + Alembic; MariaDB; serwuje też statyki UI
-  app/parsing.py     czyste funkcje, cała logika normalizacji  <- tu zaczynaj przy zmianach API
-  app/freshness.py   czyste funkcje, cztery stany świeżości
-  app/services/      ingest (zapis), status (odczyt), cascade (szczeble limitu)
-  app/services/events.py  broker SSE — W PROCESIE, patrz pulapka o --workers nizej
-  app/sso.py         brama: AUTH_MODE none / header / verify + allowlista adresów
-  app/main.py        mount /assets + fallback SPA; powłoka HTML celowo BEZ bramy
-frontend/   React 18 + Vite + TypeScript, bez Tailwinda i bez biblioteki wykresów
-  src/lib/freshness.ts   stan -> wygląd; JEDYNE miejsce tej decyzji (zasada 4 w pikselach)
-  src/lib/time.ts        stamp/atStamp — JEDYNE miejsce decyzji „czy dopisać dzień"
-  src/mocks/             VITE_MOCKS=1: stany, których w produkcji nie da się wywołać
-docs/       API.md (kontrakt), RUNBOOK.md (obsługa i diagnostyka)
-              PANEL-ALERT-HANDOUT.md + handout/ — zbudowany projekt karty alertu
-deploy/     szablon vhosta Apache; sekret podstawiany przy deployu, NIE w repo
+client/     probe (stdlib-only) + analysis tools; rules 1-3
+              usage-probe.py — SOURCE OF TRUTH, the copies on machines are a release
+                ALSO contains the blocked-session signaller (the "alert" section):
+                measured 1.7 ms to fold it into this process versus 41.9 ms
+                for a separate one — see `client/README.md`
+backend/    FastAPI + async SQLAlchemy + Alembic; MariaDB; also serves the UI's static files
+  app/parsing.py     pure functions, all normalization logic  <- start here for API changes
+  app/freshness.py   pure functions, the four freshness states
+  app/services/      ingest (write), status (read), cascade (limit rungs)
+  app/services/events.py  the SSE broker — IN-PROCESS, see the --workers pitfall below
+  app/sso.py         the gate: AUTH_MODE none / header / verify + an address allowlist
+  app/main.py        mounts /assets + SPA fallback; the HTML shell is deliberately gate-free
+frontend/   React 18 + Vite + TypeScript, no Tailwind and no charting library
+  src/lib/freshness.ts   state -> appearance; the ONLY place this decision is made (rule 4 in pixels)
+  src/lib/time.ts        stamp/atStamp — the ONLY place the "add the day or not" decision is made
+  src/mocks/             VITE_MOCKS=1: states that cannot be triggered against a live deployment
+docs/       API.md (the contract), RUNBOOK.md (operations and diagnostics)
+              PANEL-ALERT-HANDOUT.md + handout/ — the built design for the alert card
+deploy/     Apache vhost template; the secret is substituted at deploy time, NOT in the repo
 ```
 
-**Frontend budowany jest w Dockerfile backendu** (etap `node`), więc kontekst budowania to
-katalog repo, nie `./backend`. Bez `.dockerignore` każdy build wysyłałby do daemona cały
-katalog `data/` z bazą.
+**The frontend is built inside the backend's Dockerfile** (the `node` stage), so the build
+context is the repo root, not `./backend`. Without `.dockerignore`, every build would ship the
+whole `data/` directory, database included, to the daemon.
 
-Iteracja nad wyglądem: `cd frontend && VITE_MOCKS=1 npm run dev`. Backend nie ma CORS, więc
-dev przeciw zdalnemu wdrożeniu i tak nie zadziała — mocki dają też stany, których w produkcji
-nie da się wywołać. Warianty przez `?mock=states`.
+Iterating on the look: `cd frontend && VITE_MOCKS=1 npm run dev`. The backend has no CORS, so
+running dev against a remote deployment would not work anyway — the mocks also give you states
+that cannot be triggered against a live deployment. Variants via `?mock=states`.
 
-## Testy
+## Tests
 
 ```bash
-cd backend && pytest                     # zmienne srodowiskowe ustawia tests/conftest.py
-cd ../frontend && npm run typecheck      # kontrakt jest typowany, korzystaj z tego
+cd backend && pytest                     # env vars are set by tests/conftest.py
+cd ../frontend && npm run typecheck      # the contract is typed, use it
 cd ../panel && pytest
 ```
 
-`tests/conftest.py` przypisuje `AUTH_MODE`, `DATABASE_URL`, `INGEST_TOKENS` i `ALLOWED_EMAILS`
-**bezwarunkowo**, nie przez `setdefault` — inaczej przypadkowa zmienna w powłoce decydowałaby
-o tym, co zestaw sprawdza, a wynik rozjeżdżałby się między maszynami bez śladu w repo.
+`tests/conftest.py` sets `AUTH_MODE`, `DATABASE_URL`, `INGEST_TOKENS` and `ALLOWED_EMAILS`
+**unconditionally**, not through `setdefault` — otherwise a stray variable in the shell would
+decide what the suite checks, and the result would drift between machines with no trace in the
+repo.
 
-Normalizator i ścieżka zapisu są testowane na **realnym payloadzie** z konta Max
-(`tests/fixtures/usage_max.json`). Przy zmianach w `parsing.py` albo `services/ingest.py`
-zaktualizuj fixture świeżą odpowiedzią, nie wymyślaj danych.
+The normalizer and the write path are tested against a **real payload** from a Max account
+(`tests/fixtures/usage_max.json`). When you change `parsing.py` or `services/ingest.py`, update
+the fixture with a fresh response — don't make up data.
 
 ## Deploy
 
@@ -181,75 +224,80 @@ zaktualizuj fixture świeżą odpowiedzią, nie wymyślaj danych.
 git pull && docker compose up -d --build
 ```
 
-`AUTH_MODE` jest wymagane i nie ma wartości domyślnej — bez niego kontener nie wstanie.
-Konfiguracja jednego wdrożenia (sieci, porty, adres usługi tożsamości) siedzi w nieśledzonym
-`docker-compose.override.yml` i `.env`, nie w repo.
+`AUTH_MODE` is required and has no default — without it the container will not come up.
+The configuration for one particular deployment (networks, ports, the identity service's
+address) lives in the untracked `docker-compose.override.yml` and `.env`, not in the repo.
 
-**Sondy nie trzeba kopiować.** Pod ścieżką z hooków
-(`%LOCALAPPDATA%\claude-usage-monitor\usage-probe.py`) wystarczy kilkanaście linijek
-przekierowania, które `runpy` wykonuje prawdziwy plik spod `SRC` — czyli
-`client/usage-probe.py` w repo. Wtedy edycja działa od razu, bez `Copy-Item`. Miało tam stać
-dowiązanie symboliczne; Windows odmawia jego utworzenia bez trybu dewelopera albo praw
-administratora. Szczegóły w `client/README.md`.
+**The probe never needs to be copied.** Under the hooks path
+(`%LOCALAPPDATA%\claude-usage-monitor\usage-probe.py`) a dozen or so lines of redirection are
+enough; `runpy` executes the real file from `SRC` — that is, `client/usage-probe.py` in the
+repo. That way an edit takes effect immediately, without `Copy-Item`. A symbolic link was meant
+to go there instead; Windows refuses to create one without developer mode or administrator
+rights. Details in `client/README.md`.
 
-**Gdzie kopia jednak leży, tam jest wydaniem.** `client/usage-probe.py` to źródło (ładuje je
-`backend/tests/test_probe_parsing.py` po sztywnej ścieżce); kopia na maszynie zdalnej **może
-być starsza** od HEAD i to jest poprawne — publikacja ma być decyzją, nie skutkiem ubocznym
-pushu. Dlatego **każda zmiana zachowania sondy wymaga podbicia `SCRIPT_VERSION`**: wersja
-jedzie w każdym batchu i jest jedynym sposobem, żeby z `/api/machines` odczytać, która
-maszyna chodzi na którym kodzie. Bez podbicia dwie różne sondy są nierozróżnialne, a pytanie
-„czemu tamta maszyna raportuje inaczej" zostaje bez odpowiedzi.
+**Wherever a copy does live, it is a release.** `client/usage-probe.py` is the source
+(`backend/tests/test_probe_parsing.py` loads it by a fixed path); the copy on a remote machine
+**may be older** than HEAD, and that is correct — publishing is meant to be a decision, not a
+side effect of a push. That's why **every change to the probe's behavior requires bumping
+`SCRIPT_VERSION`**: the version rides along in every batch and is the only way to read from
+`/api/machines` which machine is running which code. Without the bump, two different probes are
+indistinguishable, and the question "why does that machine report differently" is left
+unanswered.
 
-## Pułapki
+## Pitfalls
 
-- **`uvicorn --workers > 1` rozbija strumień SSE.** Broker (`app/services/events.py`) żyje
-  w pamięci procesu, więc przy wielu workerach ingest trafia do innego procesu niż
-  połączenie klienta i **część subskrybentów milknie bez jednego objawu w logach** — dane
-  nadal płyną, tylko nie do wszystkich. `entrypoint.sh` startuje jeden proces świadomie.
-  Skalowanie w poziom wymaga najpierw brokera poza procesem (Redis pub/sub albo
-  `LISTEN/NOTIFY`), nie samej flagi.
-- **Backend potrzebuje DWÓCH sieci.** `claude-usage-monitor_internal` ma `internal: true`,
-  a to odcina także ruch **wychodzący** — bez drugiej sieci `AUTH_MODE=verify` nie miałby
-  jak zapytać usługi tożsamości, a publikowany port nie miałby czego publikować. Jeśli
-  `docker compose up` kończy się na *„all predefined address pools have been fully
-  subnetted"*, host wyczerpał pule adresowe Dockera; poszukaj osieroconych sieci albo
-  podłącz backend do sieci, która już istnieje (`networks: !override` w nadpisaniu).
-- **`statusLine` nie działa w rozszerzeniu VS Code** — to funkcja CLI/TUI. Nie próbuj
-  wracać do tego pomysłu. Zgłoszenie
-  [#55643](https://github.com/anthropics/claude-code/issues/55643) zamknięto jako
-  `not_planned` (bot od nieaktywności), więc to się samo nie naprawi.
-- **`claude -p "/usage"` NIE zużywa limitu, ale `claude -p "cokolwiek innego"` zużywa.**
-  `/usage` jest zarejestrowane dwukrotnie i wariant `supportsNonInteractive` zwraca
-  `{type:"text"}`, co ustawia `shouldQuery=false` — zmierzone `num_turns=0`,
-  `duration_api_ms=0`, `total_cost_usd=0`. Jeśli argument nie trafi w komendę lokalną,
-  leci **normalny turn modelu**. Sonda wykrywa to po `num_turns>0` i odrzuca taki zrzut.
-- **Git Bash zjada argumenty zaczynające się od `/`.** `claude -p "/usage"` w Git Bashu
-  staje się `claude -p "C:/Program Files/Git/usage"` (konwersja ścieżek MSYS) i zamiast
-  komendy lokalnej dostajesz płatny turn modelu. Testuj z PowerShella albo ustaw
-  `MSYS_NO_PATHCONV=1`. Kosztowało to dwa przypadkowe wywołania po ~$0,10.
-- **Payload hooka to UTF-8, ale `sys.stdin` dekoduje go kodowaniem locale.** W procesie
-  hooka zmierzone `sys.stdin.encoding = cp1250`, `errors = surrogateescape` — czyli
-  `sys.stdin.read()` cicho psuje polskie znaki (dwa znaki na jeden: `ć` → `Ä‡`), a bajty
-  bez odpowiednika w cp1250 (`0x81 0x83 0x88 0x90 0x98`, m.in. `Ł` i apostrof typograficzny)
-  zamienia w samotne surogaty. Te wywracają się dopiero warstwę dalej, na `.encode("utf-8")`
-  w `write_excl` — a że tam stoi `except: pass`, wpis blokady powstawał **pusty** i alert
-  ginął bez śladu. Czytaj `sys.stdin.buffer` i dekoduj jawnie. Cała reszta ścieżki ma jawne
-  utf-8, więc wiernie niosła to, co weszło: jedno miejsce psuło toast, panel i backend naraz.
-  Objawem bywa **brak zdarzenia**, nie krzaki.
-- **PowerShell 5.1 czyta `.ps1` bez BOM jako ANSI** — i wtedy myślnik `—` (U+2014, trzy bajty
-  w UTF-8) rozpada się na trzy znaki, z których `0x94` to **cudzysłów zamykający** U+201D.
-  Parser uznaje go za koniec stringa i przewraca się kilkadziesiąt linii dalej, w miejscu bez
-  związku z przyczyną („The string is missing the terminator"). Skrypty `.ps1` trzymamy
-  w **czystym ASCII** — to odporniejsze niż liczenie na to, że każda kolejna edycja zachowa BOM.
-- **Klient weryfikuje TLS przez `certifi`, nie przez magazyn systemowy.** Magazyn CA Windows
-  potrafi odrzucić poprawny łańcuch Let's Encrypt, w którym każde ogniwo jest ważne. Nie
-  wyłączaj weryfikacji — podmień magazyn.
-- **Windows odmawia tworzenia dowiązań symbolicznych** bez trybu dewelopera albo praw
-  administratora (`Administrator privilege required`). Stąd pod ścieżką z hooków stoi
-  kilkanaście linijek przekierowania w Pythonie, a nie symlink.
-- **Sonda musi mieć konce linii LF, a skrypty powłoki dodatkowo bit `+x`.** Bit wykonywalny
-  z indeksu gita nie zawsze przekłada się na katalog roboczy — jeśli repo jest widziane
-  przez udział sieciowy, git po stronie Linuksa **po cichu pomija** skrypt bez `+x`. Końce
-  linii pilnuje `.gitattributes`; przy pracy z takiego udziału ustaw też
-  `core.filemode=false`, inaczej `git add -A` z Windows zdejmie bit wykonywalny bez słowa
-  ostrzeżenia.
+- **`uvicorn --workers > 1` breaks the SSE stream.** The broker (`app/services/events.py`) lives
+  in the process's memory, so with multiple workers an ingest can land in a different process
+  than a client's connection, and **some subscribers go silent with not a single symptom in the
+  logs** — data keeps flowing, just not to everyone. `entrypoint.sh` deliberately starts a
+  single process. Scaling out requires moving the broker out of process first (Redis pub/sub, or
+  `LISTEN/NOTIFY`), not just the flag.
+- **The backend needs TWO networks.** `claude-usage-monitor_internal` has `internal: true`, and
+  that also cuts **outbound** traffic — without a second network, `AUTH_MODE=verify` would have
+  no way to reach the identity service, and the published port would have nothing to publish.
+  If `docker compose up` ends with *"all predefined address pools have been fully subnetted"*,
+  the host machine has exhausted Docker's address pools; look for orphaned networks, or attach
+  the backend to a network that already exists (`networks: !override` in the override file).
+- **`statusLine` does not work in the VS Code extension** — it's a CLI/TUI feature. Don't try
+  going back to that idea. Issue
+  [#55643](https://github.com/anthropics/claude-code/issues/55643) was closed as
+  `not_planned` (by the inactivity bot), so this will not fix itself.
+- **`claude -p "/usage"` does NOT use up quota, but `claude -p "whatever else"` does.**
+  `/usage` is registered twice, and the `supportsNonInteractive` variant returns
+  `{type:"text"}`, which sets `shouldQuery=false` — measured `num_turns=0`,
+  `duration_api_ms=0`, `total_cost_usd=0`. If the argument doesn't match a local command, it
+  turns into a **normal model turn**. The probe detects this via `num_turns>0` and discards
+  such a dump.
+- **Git Bash eats arguments that start with `/`.** `claude -p "/usage"` in Git Bash becomes
+  `claude -p "C:/Program Files/Git/usage"` (MSYS path conversion), and instead of the local
+  command you get a paid model turn. Test from PowerShell, or set `MSYS_NO_PATHCONV=1`. This
+  cost two accidental calls at ~$0.10 each.
+- **The hook payload is UTF-8, but `sys.stdin` decodes it with the locale encoding.** In the
+  hook process, measured `sys.stdin.encoding = cp1250`, `errors = surrogateescape` — meaning
+  `sys.stdin.read()` silently corrupts accented characters (one character becomes two: `ć` →
+  `Ä‡`), and turns bytes with no cp1250 counterpart (`0x81 0x83 0x88 0x90 0x98`, among them `Ł`
+  and the typographic apostrophe) into lone surrogates. Those don't fall over until a layer
+  further down, at `.encode("utf-8")` inside `write_excl` — and because that call sits under
+  `except Exception: pass`, the block entry came out **empty** and the alert vanished without a
+  trace. Read `sys.stdin.buffer` and decode explicitly. The rest of the path has explicit utf-8
+  throughout, so it faithfully carried whatever came in: one single spot was corrupting the
+  toast, the panel and the backend all at once. The symptom is often **no event at all**, not
+  garbled text.
+- **PowerShell 5.1 reads a BOM-less `.ps1` as ANSI** — and then an em dash `—` (U+2014, three
+  bytes in UTF-8) falls apart into three characters, one of which, `0x94`, is a **closing
+  quotation mark**, U+201D. The parser takes it for the end of a string and fails dozens of
+  lines further down, at a spot unrelated to the cause ("The string is missing the
+  terminator"). We keep `.ps1` scripts in **pure ASCII** — that's more robust than counting on
+  every future edit to preserve the BOM.
+- **The client verifies TLS through `certifi`, not the system store.** The Windows CA store can
+  reject a valid Let's Encrypt chain in which every link is valid. Don't disable verification —
+  swap the store.
+- **Windows refuses to create symbolic links** without developer mode or administrator rights
+  (`Administrator privilege required`). That's why a dozen or so lines of Python redirection sit
+  under the hooks path instead of a symlink.
+- **The probe must have LF line endings, and shell scripts additionally need the `+x` bit.**
+  The executable bit from git's index doesn't always carry over to the working tree — if the
+  repo is viewed through a network share, git on the Linux side **silently skips** a script
+  without `+x`. Line endings are enforced by `.gitattributes`; when working from such a share,
+  also set `core.filemode=false`, otherwise `git add -A` from Windows will strip the executable
+  bit without a word of warning.

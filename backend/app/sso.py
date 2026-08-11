@@ -1,22 +1,23 @@
-"""Brama autoryzacji dla API odczytu.
+"""Authorization gate for the read API.
 
-Trzy tryby, wybierane przez AUTH_MODE:
+Three modes, selected by AUTH_MODE:
 
-  `none`   — bez bramy. Sensowne wylacznie wtedy, gdy usluga nie jest osiagalna z sieci:
-             port na petli zwrotnej albo zaufany segment LAN. ALLOWED_EMAILS nie ma tu
-             zastosowania, bo zadnego adresu nie ma skad wziac.
-  `header` — proxy odwrotne juz uwierzytelnilo i podaje adres w naglowku
-             (AUTH_EMAIL_HEADER). Wolno tylko za proxy, ktore ten naglowek USUWA z zadan
-             przychodzacych; inaczej kazdy nazwie sie kim zechce.
-  `verify` — pytamy usluge tozsamosci przez JSON (AUTH_VERIFY_URL), przekazujac
-             ciasteczka. Nazwy pol odpowiedzi sa konfiguracja.
+  `none`   — no gate. Sensible only when the service is not reachable from the network:
+             a loopback port or a trusted LAN segment. ALLOWED_EMAILS does not apply here,
+             because there is no email address to be had from anywhere.
+  `header` — the reverse proxy has already authenticated and supplies the email address in a
+             header (AUTH_EMAIL_HEADER). Permitted only behind a proxy that STRIPS that
+             header from incoming requests; otherwise anyone calls themselves whatever
+             they like.
+  `verify` — the identity service is queried over JSON (AUTH_VERIFY_URL), forwarding the
+             cookies. The response field names are configuration.
 
-W trybach `header` i `verify` na wierzchu stoi jeszcze wlasna allowlista ALLOWED_EMAILS
-(pusta = deny all, fail-safe): uwierzytelnienie mowi KTO, allowlista mowi KOMU wolno.
+In `header` and `verify` mode there is still a separate ALLOWED_EMAILS allowlist on top
+(empty = deny all, fail-safe): authentication says WHO, the allowlist says who is PERMITTED.
 
-UWAGA: ten modul jest JEDYNA brama — przed backendem nie stoi zadne osobne `auth_request`.
-Jego odpowiedz "401 z redirect_url" jest czescia publicznego kontraktu API, bo UI musi na
-nia zareagowac samo. Nikt nie zwroci mu 302.
+NOTE: this module is the ONLY gate — no separate `auth_request` sits in front of the
+backend. Its "401 with redirect_url" response is part of the public API contract, because the
+UI has to react to it on its own. Nobody will hand it a 302.
 """
 from dataclasses import dataclass
 from urllib.parse import quote
@@ -27,8 +28,8 @@ from loguru import logger
 
 from app.config import settings
 
-#: Tozsamosc w trybie `none`. Nie jest adresem i celowo nie wyglada na adres — gdyby
-#: kiedys trafila do allowlisty albo do logu, ma byc od razu widac, ze nikt sie nie logowal.
+#: The identity in `none` mode. Not an email address, and deliberately not email-shaped — if it
+#: ever lands in the allowlist or in a log, it must be visible at once that nobody logged in.
 ANONYMOUS = "anonymous"
 
 
@@ -39,11 +40,11 @@ class CurrentUser:
 
 
 def _login_url() -> str | None:
-    """Adres logowania albo None, gdy nie ma dokad odeslac.
+    """The login URL, or None when there is nowhere to send the user back to.
 
-    None jest pelnoprawnym wynikiem: instalacja bez zewnetrznego logowania nie ma zadnej
-    strony, na ktora wypadaloby przekierowac, a wyslanie uzytkownika w domysle byle gdzie
-    jest gorsze niz powiedzenie mu wprost, ze nie jest zalogowany.
+    None is a fully valid result: an installation without external login has no page that
+    would be worth redirecting to, and sending the user off to some default somewhere is
+    worse than telling them outright that they are not logged in.
     """
     if not settings.auth_login_url:
         return None
@@ -61,14 +62,14 @@ def _not_authenticated(redirect: str | None = None) -> HTTPException:
 
 
 def _authorize(email: str | None, verified_at: str | None) -> CurrentUser:
-    """Wspolna koncowka dla `header` i `verify`: mamy adres, pytamy czy wolno."""
+    """Shared tail for `header` and `verify`: the email is known, now ask whether it is allowed."""
     if not email:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"reason": "missing-email"},
         )
     if email.lower() not in settings.allowed_emails:
-        logger.warning("Odrzucono dostep dla adresu spoza allowlisty: {}", email)
+        logger.warning("Denied access to an email outside the allowlist: {}", email)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"reason": "email-not-allowed"},
@@ -84,7 +85,7 @@ async def _call_verify(cookie: str) -> tuple[int, dict]:
                 headers={"Cookie": cookie} if cookie else {},
             )
         except httpx.RequestError as exc:
-            logger.error("Usluga tozsamosci nieosiagalna: {}", exc)
+            logger.error("Identity service unreachable: {}", exc)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={"reason": "sso-unreachable"},
@@ -92,14 +93,14 @@ async def _call_verify(cookie: str) -> tuple[int, dict]:
     try:
         payload = response.json()
     except ValueError:
-        # Odpowiedzia bywa strona HTML, nie JSON — to nie blad, tylko brak danych.
+        # The response is sometimes an HTML page, not JSON — not an error, just no data.
         payload = {}
     return response.status_code, payload
 
 
 async def _verify(request: Request) -> CurrentUser:
     if not settings.auth_verify_url:
-        logger.error("AUTH_MODE=verify, ale AUTH_VERIFY_URL jest pusty")
+        logger.error("AUTH_MODE=verify, but AUTH_VERIFY_URL is empty")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"reason": "sso-unavailable"},
@@ -115,9 +116,9 @@ async def _verify(request: Request) -> CurrentUser:
         )
         return _authorize(data.get(settings.auth_email_field), verified_at)
 
-    # Zarowno 401, jak i 403: usluga tozsamosci, ktora odpowiada niezalogowanemu strona
-    # logowania zamiast JSON-em, uzywa raz jednego, raz drugiego. Tutaj backend JEST brama,
-    # wiec oba musza znaczyc "nie zalogowany", a nie "awaria".
+    # Both 401 and 403: an identity service that answers an unauthenticated caller with a login
+    # page instead of JSON uses one on one occasion and the other on the next. Here the backend
+    # IS the gate, so both must mean "not logged in", not "failure".
     if status_code in (401, 403):
         redirect = (
             data.get(settings.auth_redirect_field)
@@ -126,7 +127,7 @@ async def _verify(request: Request) -> CurrentUser:
         )
         raise _not_authenticated(redirect)
 
-    logger.warning("Usluga tozsamosci zwrocila nieoczekiwany status: {}", status_code)
+    logger.warning("Identity service returned an unexpected status: {}", status_code)
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail={"reason": "sso-unavailable"},
@@ -140,8 +141,8 @@ async def require_authorized_user(request: Request) -> CurrentUser:
     if settings.auth_mode == "header":
         email = request.headers.get(settings.auth_email_header, "").strip()
         if not email:
-            # Brak naglowka to "nie zalogowany", nie "zly adres" — proxy po prostu nikogo
-            # nie przepuscilo.
+            # A missing header means "not logged in", not "bad email address" — the proxy simply
+            # did not let anyone through.
             raise _not_authenticated()
         return _authorize(email, None)
 

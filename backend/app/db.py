@@ -6,7 +6,7 @@ from app.config import settings
 
 engine = create_async_engine(
     settings.database_url,
-    pool_pre_ping=True,      # kontener bazy moze sie zrestartowac niezaleznie od backendu
+    pool_pre_ping=True,      # the database container can restart independently of the backend
     pool_recycle=1800,
     echo=False,
 )

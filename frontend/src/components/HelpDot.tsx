@@ -1,15 +1,16 @@
 import { useEffect, useId, useRef, useState } from "react";
 
-/** Kropka „?" z wyjasnieniem. Pierwszy element interaktywny w karcie konta — dotad byla
- *  czysto prezentacyjna, wiec ten plik jest tez precedensem i dlatego jest tak maly.
+/** A "?" dot with an explanation. The first interactive element in the account card — until now
+ *  it was purely presentational, so this file is also a precedent and that is why it is so small.
  *
- *  DLACZEGO PRZYCISK, A NIE `title`: atrybut `title` jest w repo uzywany do skrotow
- *  (etykieta serii, znacznik biezacego szczebla) i tam wystarcza, bo powtarza tekst, ktory
- *  obok stoi.
- *  Tutaj tresc jest JEDYNYM nosnikiem tej informacji, a `title` nie otwiera sie ani
- *  z klawiatury, ani dotykiem — czyli na telefonie i pod Tabem wiedza po prostu nie
- *  istnieje. `<button>` z `aria-expanded` daje oba wejscia bez ani jednej zaleznosci;
- *  biblioteki popoverow repo nie ma i dla jednego uzycia jej nie dodajemy.
+ *  WHY A BUTTON AND NOT `title`: the `title` attribute is used in the repo for shorthands (a
+ *  series label, the current-rung marker) and there it is enough, because it repeats text that
+ *  sits right next to it.
+ *  Here the content is the ONLY carrier of this information, and `title` opens neither from the
+ *  keyboard nor by touch — so on a phone and when navigating with Tab, this information is
+ *  simply unreachable.
+ *  `<button>` with `aria-expanded` gives both entry points without a single dependency; the repo
+ *  has no popover library and we are not adding one for a single use.
  */
 export function HelpDot({ label, children }: { label: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -18,16 +19,16 @@ export function HelpDot({ label, children }: { label: string; children: React.Re
 
   useEffect(() => {
     if (!open) return;
-    // `pointerdown`, nie `click`: przy `click` panel zamykal sie dopiero po puszczeniu
-    // przycisku, wiec zaznaczanie tekstu W SRODKU panelu konczylo sie jego zamknieciem.
+    // `pointerdown`, not `click`: with `click` the panel closed only once the button was
+    // released, so selecting text INSIDE the panel ended with the panel closing.
     const away = (e: PointerEvent) => {
       if (!box.current?.contains(e.target as Node)) setOpen(false);
     };
     const key = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       setOpen(false);
-      // Fokus wraca na kropke — inaczej po Escape ladowalby na `body` i Tab startowalby
-      // od poczatku strony.
+      // Focus returns to the dot — otherwise after Escape it would land on `body` and Tab
+      // would start from the top of the page.
       box.current?.querySelector("button")?.focus();
     };
     document.addEventListener("pointerdown", away);
@@ -50,8 +51,8 @@ export function HelpDot({ label, children }: { label: string; children: React.Re
       >
         ?
       </button>
-      {/* Panel jest w DOM tylko gdy otwarty: zwiniety `hidden` czytnik ekranu i tak pomija,
-          a tresc siega do rodzenstwa serii i nie ma po co liczyc jej na zapas. */}
+      {/* The panel is in the DOM only when open: a screen reader skips a collapsed `hidden` one
+          anyway, and the content reaches the series siblings — no point computing it in advance. */}
       {open && (
         <span className="series-help-panel" id={id} role="note">
           {children}

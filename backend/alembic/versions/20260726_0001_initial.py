@@ -1,4 +1,4 @@
-"""Schemat poczatkowy.
+"""Initial schema.
 
 Revision ID: 0001_initial
 Revises:
@@ -29,8 +29,8 @@ def upgrade() -> None:
     op.create_table(
         "accounts",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        # Klucz naturalny to UUID konta, NIE label z konfiguracji — bo na jednej maszynie
-        # przelaczasz konta przez /login i statyczny label by sie rozjechal.
+        # The natural key is the account UUID, NOT the label from configuration — because on
+        # one machine accounts are switched via /login and a static label would go out of sync.
         sa.Column("account_uuid", sa.String(64), nullable=False, unique=True),
         sa.Column("label", sa.String(100)),
         sa.Column("email", sa.String(255)),
@@ -75,8 +75,8 @@ def upgrade() -> None:
         sa.Column("samples", sa.BigInteger, nullable=False, server_default=sa.text("0")),
     )
 
-    # Otwarty zbior serii. Krok 0 pokazal 17 kluczy najwyzszego poziomu, z czego 5 nieznanych —
-    # nowy bucket u Anthropic ma dodac wiersz, a nie wymagac migracji.
+    # An open set of series. Step 0 showed 17 top-level keys, 5 of them unknown —
+    # a new bucket at Anthropic should add a row, not require a migration.
     op.create_table(
         "usage_series",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
@@ -97,7 +97,7 @@ def upgrade() -> None:
         mysql_row_format="DYNAMIC",
     )
 
-    # Adresowane trescia: przy bezczynnosci odpowiedz jest bajt-identyczna.
+    # Content-addressed: when idle the response is byte-identical.
     op.create_table(
         "raw_payloads",
         sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=True),
@@ -109,8 +109,8 @@ def upgrade() -> None:
         mysql_row_format="COMPRESSED",
     )
 
-    # Jeden wiersz na request. Kluczowe dla odroznienia "cisza klienta" od "cisza w danych" —
-    # bez tego zepsuta sonda wyglada jak brak aktywnosci i UI pokazuje falszywe 0%.
+    # One row per request. Key to telling "client silence" from "silence in the data" —
+    # without it a broken probe looks like no activity and the UI shows a false 0%.
     op.create_table(
         "ingest_batches",
         sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=True),
@@ -149,7 +149,7 @@ def upgrade() -> None:
         sa.Column("source", sa.Enum("probe", "statusline", "ratelimit_headers",
                                     name="sample_source"),
                   nullable=False, server_default="probe"),
-        # ZAWSZE 0..100 po normalizacji; `source` mowi, z jakiej skali przyszlo.
+        # ALWAYS 0..100 after normalization; `source` says which scale it came from.
         sa.Column("utilization", sa.Numeric(7, 4)),
         _dt("resets_at"),
         sa.Column("is_active", sa.Boolean),
@@ -164,7 +164,7 @@ def upgrade() -> None:
     op.create_index("ix_samples_batch", "limit_samples", ["batch_id"])
     op.create_index("ix_samples_time", "limit_samples", ["captured_at"])
 
-    # Cache goracego stanu — dzieki niemu /api/status czyta kilkanascie wierszy.
+    # Cache of the hot state, so /api/status reads a dozen or so rows.
     op.create_table(
         "series_state",
         sa.Column("account_id", sa.Integer, sa.ForeignKey("accounts.id"), primary_key=True),

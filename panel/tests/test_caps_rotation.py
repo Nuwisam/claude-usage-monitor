@@ -1,7 +1,7 @@
 """Composing a mounting angle onto a driver's own rotation.
 
 `Caps.rotate` carries two things at once: how the logical canvas maps onto this
-model's framebuffer, and how the glass hangs on the wall. Only the sum is ever
+model's framebuffer, and how the glass is mounted on the desk. Only the sum is ever
 read, so the sum is what has to be right - and it has to stay inside the set of
 angles the renderer can actually produce.
 """

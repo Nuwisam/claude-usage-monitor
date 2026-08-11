@@ -1,8 +1,8 @@
-/** Backend jest jedyna brama SSO — nikt nie zwroci 302. Brak sesji to
- *  `401 {detail:{reason, redirect_url}}`, a przekierowanie robi ten plik. */
+/** The backend is the only SSO gate — nobody will return a 302. No session means
+ *  `401 {detail:{reason, redirect_url}}`, and the redirect is done by this file. */
 import type { ApiErrorBody, HistoryResponse, StatusResponse } from "./types";
 
-/** Vite podstawia tu `base` z vite.config.ts. Jedna wartosc dla routera i dla API. */
+/** Vite substitutes `base` from vite.config.ts here. One value for the router and for the API. */
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const API = `${BASE}/api`;
 
@@ -27,18 +27,18 @@ function reasonOf(body: unknown): string | null {
   return null;
 }
 
-/** Obietnica, ktora nigdy sie nie rozwiazuje — React Query zamiera zamiast migotac
- *  bledem w trakcie wychodzenia ze strony. */
+/** A promise that never resolves — React Query freezes instead of flashing an error
+ *  while the page is navigating away. */
 function leaveTo(url: string): Promise<never> {
   window.location.assign(url);
   return new Promise<never>(() => {});
 }
 
-/** 401 z adresem logowania = przekierowanie. 401 bez niego = blad na miejscu.
+/** A 401 with a login address = redirect. A 401 without one = an error in place.
  *
- *  Zadnego adresu zapasowego nie zgadujemy. Backend wie, czy stoi za czymkolwiek
- *  logujacym, a UI nie — wysylanie uzytkownika w domysle pod jakas typowa sciezke
- *  konczy sie 404 albo cudza strona logowania i wyglada jak awaria aplikacji. */
+ *  We do not guess a fallback address. The backend knows whether it sits behind anything
+ *  that logs users in, and the UI does not — sending the user by default to some typical
+ *  path ends in a 404 or somebody else's login page and looks like an app failure. */
 async function handle401(body: unknown): Promise<never> {
   const b = body as ApiErrorBody | null;
   const redirect = typeof b?.detail === "object" ? b.detail?.redirect_url : null;
@@ -55,7 +55,7 @@ async function getJson<T>(path: string): Promise<T> {
   if (res.ok) return (await res.json()) as T;
 
   const body = await res.json().catch(() => null);
-  // Tylko 401 nawiguje — 403/429/503 w miejscu, inaczej awaria SSO daje petle przekierowan.
+  // Only a 401 navigates — 403/429/503 in place, otherwise an SSO failure gives a redirect loop.
   if (res.status === 401) return handle401(body);
   throw new ApiError(res.status, reasonOf(body));
 }

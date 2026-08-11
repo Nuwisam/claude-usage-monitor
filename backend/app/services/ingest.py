@@ -1,24 +1,25 @@
-"""Zapis pomiaru: walidacja, rejestracja serii, dedup, guard monotonicznosci, stan.
+"""Writing a measurement: validation, series registration, dedup, monotonicity guard, state.
 
-Trzy mechanizmy, ktore nie sa oczywiste i bez ktorych system daje zle dane:
+Three mechanisms that are not obvious and without which the system gives bad data:
 
-1. DEDUP. Sonda odpytuje co ~120 s, a utilization zmienia sie rzadko. Bez dedupu tabela
-   puchnie od identycznych wierszy. Piszemy nowy wiersz tylko gdy (utilization, resets_at)
-   sie zmienily ALBO minal heartbeat. Bezstratne, bo miedzy punktami zmiany wartosc jest
-   stala z definicji, a ingest_batches i tak dowodzi, ze klient zyl.
+1. DEDUP. The probe polls every ~120 s, and utilization changes rarely. Without dedup the
+   table swells with identical rows. We write a new row only when (utilization, resets_at)
+   have changed OR the heartbeat has elapsed. Lossless, because between the points of change
+   the value is constant by definition, and ingest_batches proves the client was alive anyway.
 
-2. GUARD MONOTONICZNOSCI. Gdy to samo konto dziala na dwoch maszynach, kazda ma WLASNY
-   cache tokenu i wlasny moment odpytania. Maszyna ze starszym odczytem moze przyslac
-   nizsza wartosc niz juz znamy. Naiwny zapis cofnalby stan biezacy i wygladalo to jak
-   reset okna. Regula: przy DOWODNIE tym samym oknie (obie granice znane i zgodne w
-   tolerancji) spadek > MONOTONIC_EPS zapisujemy z flaga stale_read, ale NIE ruszamy
-   series_state. Sam brak granicy po obu stronach dowodem NIE jest i wstrzymywac zapisu
-   nie moze — patrz parsing.known_same_reset_window.
+2. MONOTONICITY GUARD. When the same account runs on two machines, each one has its OWN
+   token cache and its own moment of polling. The machine with the older reading may send
+   a lower value than we already know. A naive write would move the current state back and
+   it would look like a window reset. The rule: with a PROVABLY identical window (both
+   boundaries known and matching within tolerance) we write a drop > MONOTONIC_EPS with the
+   stale_read flag, but we do NOT touch series_state. The mere absence of a boundary on both
+   sides is NOT proof and must not hold the write back — see parsing.known_same_reset_window.
 
-3. STAN AKTUALIZUJE TYLKO NAJNOWSZA PROBKA. Chroni takze przed backlogiem, ktory po
-   wielogodzinnej przerwie wlewa stare probki — te nie moga nadpisac stanu biezacego.
-   Stan trzyma tez granice okna, a pomiar bez granicy jej NIE kasuje, dopoki ta granica
-   jeszcze nie minela — patrz parsing.carry_reset_window.
+3. STATE IS UPDATED ONLY BY THE NEWEST SAMPLE. This also protects against a backlog which
+   after a break of many hours pours in old samples — those must not overwrite the current
+   state. The state also holds the window boundary, and a measurement without a boundary
+   does NOT clear it as long as that boundary has not passed yet — see
+   parsing.carry_reset_window.
 """
 from __future__ import annotations
 
@@ -41,8 +42,9 @@ from app.parsing import (
     parse_usage, same_reset_window,
 )
 
-# Zero — uzywane, gdy payload nie niesie `sent_at` (sonda ponizej v5 albo obcy klient).
-# Lagodna degradacja: stempel klienta idzie wtedy nietkniety, dokladnie jak przed zmiana.
+# Zero — used when the payload does not carry `sent_at` (a probe below v5 or a foreign client).
+# Graceful degradation: the client stamp then goes through untouched, exactly as before the
+# change.
 _NO_OFFSET = timedelta(0)
 
 _ACCOUNT_FIELDS = {
@@ -52,7 +54,7 @@ _ACCOUNT_FIELDS = {
     "user_rate_limit_tier": "user_rate_limit_tier",
     "extra_usage_enabled": "extra_usage_enabled",
 }
-# Pola planu — ich zmiana jest warta zdarzenia, bo zmienia znaczenie procentow.
+# Plan fields — a change here is worth an event, because it changes what the percentages mean.
 _PLAN_FIELDS = ("org_type", "seat_tier", "org_rate_limit_tier",
                 "user_rate_limit_tier", "subscription_type")
 
@@ -76,8 +78,8 @@ async def get_or_create_machine(db: AsyncSession, name: str, client: dict,
         db.add(m)
         await db.flush()
     m.host = client.get("host") or m.host
-    # Wersja skryptu TYLKO z rekordu biezacego. Wpisy z backlogu leza w spoolu od godzin
-    # albo dni i niosa wersje sprzed aktualizacji — wziete tutaj cofalyby to pole.
+    # Script version ONLY from the current record. Backlog entries sit in the spool for hours
+    # or days and carry a pre-update version — taken here they would move this field back.
     if not is_backlog:
         m.script_version = client.get("script_version") or m.script_version
     m.last_seen_at = utcnow()
@@ -108,7 +110,7 @@ async def get_or_create_account(db: AsyncSession, acct: dict,
     if not created and before != after:
         changed = {k: [before[k], after[k]] for k in before if before[k] != after[k]}
         await _event(db, level="info", event_type="plan_changed", account_id=a.id,
-                     message="Zmiana pol planu konta", detail=changed)
+                     message="Account plan fields changed", detail=changed)
     return a, created
 
 
@@ -132,10 +134,10 @@ async def get_or_create_series(db: AsyncSession, o: Observation,
         await db.flush()
         created = True
     s.last_seen_at = utcnow()
-    # Etykieta i kolejnosc sa OPISEM, nie danymi — odswiezamy je przy kazdym pomiarze.
-    # Bez tego poprawka slownika etykiet (albo nowa nazwa modelu w scope) nigdy nie
-    # doszlaby do serii zarejestrowanych wczesniej i UI pokazywalby stara tresc do konca
-    # zycia bazy.
+    # The label and the ordering are DESCRIPTION, not data — we refresh them on every
+    # measurement. Without this, a fix to the label dictionary (or a new model name in scope)
+    # would never reach series registered earlier and the UI would show the old content until
+    # the end of the database's life.
     if s.display_label != o.display_label:
         s.display_label = o.display_label
     if s.sort_order != o.sort_order:
@@ -147,8 +149,8 @@ async def get_or_create_series(db: AsyncSession, o: Observation,
 
 
 async def store_raw(db: AsyncSession, usage: Any) -> tuple[RawPayload, str]:
-    """Adresowane trescia — przy bezczynnosci odpowiedz jest bajt-identyczna, wiec
-    zamiast tysiecy kopii mamy jeden wiersz i licznik."""
+    """Content-addressed — while idle the response is byte-identical, so instead of
+    thousands of copies we have one row and a counter."""
     body = json.dumps(usage, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
     rp = (await db.execute(select(RawPayload).where(RawPayload.sha256 == digest))).scalar_one_or_none()
@@ -165,22 +167,24 @@ async def store_raw(db: AsyncSession, usage: Any) -> tuple[RawPayload, str]:
 
 def measured_at(ts: datetime | None, offset: timedelta,
                 arrived_at: datetime) -> datetime | None:
-    """DATOWANIE PO STRONIE SERWERA. Klient podaje wiek, serwer datuje `received_at - wiek`.
+    """SERVER-SIDE TIMESTAMPING. The client gives the age; the timestamp is `received_at - age`.
 
-        offset      = arrived_at - sent_at            (raz na zadanie)
+        offset      = arrived_at - sent_at            (once per request)
         measured_at = min(ts + offset, arrived_at)
 
-    Rozwiniete: `arrived_at - (sent_at - ts)`. Zegar SCIENNY klienta nie wchodzi do rachunku
-    — liczy sie wylacznie roznica `sent_at - ts`, a ta jest w obrebie jednego zegara i dlatego
-    wiarygodna. Ta sama formula obsluguje wpisy ze spoola: ich `sent_at` pochodzi z chwili
-    nieudanej proby, wiec wiek liczy sie sam i nic nie trzeba przeliczac po stronie klienta.
+    Expanded: `arrived_at - (sent_at - ts)`. The client's WALL clock does not enter the
+    calculation — only the difference `sent_at - ts` counts, and that one is within a single
+    clock and therefore trustworthy. The same formula handles entries from the spool: their
+    `sent_at` comes from the moment of the failed attempt, so the age works out on its own and
+    nothing has to be recalculated on the client side.
 
-    Przyciecie do `arrived_at` gwarantuje, ze pomiar nie jest nowszy niz moment odebrania.
+    Clamping to `arrived_at` guarantees the measurement is not newer than the moment of receipt.
 
-    None wchodzi i None wychodzi: brak czasu to NIEWIEDZA, a nie "teraz". Poprzednia wersja
-    (`resolve_captured_at`) w trzech przypadkach podstawiala tu czas serwera — czyli
-    twierdzila, ze wartosc zmierzono przed chwila. Dla wpisu sprzed osmiu dni bylo to
-    odwrotnoscia ochrony: taki pomiar stawal sie `newest` i przejmowal stan biezacy."""
+    None goes in and None comes out: a missing time is IGNORANCE, not "now". The previous
+    version (`resolve_captured_at`) substituted the server time here in three cases — that is,
+    it claimed the value had been measured a moment ago. For an entry eight days old that was
+    the opposite of protection: such a measurement became `newest` and took over the current
+    state."""
     if ts is None:
         return None
     shifted = ts + offset
@@ -188,14 +192,14 @@ def measured_at(ts: datetime | None, offset: timedelta,
 
 
 def request_offset(payload: dict, arrived_at: datetime) -> timedelta:
-    """`arrived_at - measurement.sent_at` — jeden na cale zadanie, z rekordu ZEWNETRZNEGO.
+    """`arrived_at - measurement.sent_at` — one per whole request, from the OUTER record.
 
-    Wpisy backlogu leza w tej samej kopercie, wiec ich wiek (`sent_at - ts`, we WLASNYM
-    zegarze klienta) przelicza sie ta sama poprawka; wlasnego `sent_at` uzywaja tylko do
-    kontroli "pomiar nie powstal po wysylce".
+    Backlog entries ride in the same envelope, so their age (`sent_at - ts`, in the client's
+    OWN clock) is corrected by the same amount; their own `sent_at` they use only for the
+    check "the measurement was not taken after it was sent".
 
-    Tu, a nie w handlerze, zeby testy liczyly offset TAK SAMO jak produkcja — inaczej
-    rozjazd miedzy nimi byloby widac dopiero na zywo."""
+    Here, and not in the handler, so that the tests compute the offset THE SAME WAY the real
+    path does — otherwise a divergence between them would show up only live."""
     meas = payload.get("measurement")
     sent = parse_ts(meas.get("sent_at")) if isinstance(meas, dict) else None
     return (arrived_at - sent) if sent is not None else _NO_OFFSET
@@ -207,35 +211,38 @@ async def _write_observation(
     batch: IngestBatch, session_id: str | None, source: str,
     is_backlog: bool = False, client_reason: str | None = None,
 ) -> tuple[bool, bool]:
-    """Zwraca (zapisano, stale_read)."""
+    """Returns (written, stale_read)."""
     if is_backlog:
-        # IDEMPOTENCJA POWTORKI ZE SPOOLA. Sonda obcina spool dopiero po odpowiedzi, wiec
-        # gdy odpowiedz przepadnie (timeout, zerwane polaczenie), te same wpisy przyjda
-        # ponownie. Bez tego guardu `changed` nizej porownuje sie z BIEZACYM stanem, ktory
-        # od tamtego pomiaru poszedl dalej — powtorka wychodzi wiec jako "zmiana" i
-        # dopisuje DRUGI wiersz na tym samym pomiarze. Baza tego nie zatrzyma: na
-        # (account_id, series_id, client_captured_at) nie ma UNIQUE, tylko zwykly indeks.
+        # IDEMPOTENCE OF A SPOOL REPLAY. The probe truncates the spool only after the
+        # response, so when the response is lost (timeout, broken connection) the same
+        # entries arrive again. Without this guard `changed` below compares against the
+        # CURRENT state, which has moved on since that measurement — a replay therefore
+        # comes out as a "change" and appends a SECOND row for the same measurement. The
+        # database will not stop it: there is no UNIQUE on
+        # (account_id, series_id, client_captured_at), only an ordinary index.
         #
-        # Klucz: (konto, seria, client_captured_at, maszyna, sha256 payloadu).
-        #   - `client_captured_at`, a NIE `captured_at`: od czasu datowania po stronie
-        #     serwera `captured_at` jest funkcja ZADANIA (zawiera `offset` policzony z jego
-        #     `arrived_at`), wiec powtorka tego samego wpisu w innym zadaniu dostaje inna
-        #     wartosc i guard by jej nie zobaczyl. Surowy czas klienta jest funkcja samego
-        #     wpisu i przy powtorce jest identyczny — to jedyna czesc, ktora sie nie zmienia.
-        #   - maszyna, bo to samo konto z DWOCH maszyn to poprawne dwa pomiary;
-        #   - sha256, bo `parse_ts` obcina czas do pelnych sekund, a rownolegle hooki
-        #     potrafia odpalic dwie sondy w tej samej sekundzie. Bez niego zderzenie po
-        #     samym czasie skasowaloby drugi, ROZNY pomiar. Z nim zwija sie wylacznie
-        #     przypadek bajt-identyczny, czyli ten sam pomiar — a zwijanie tego samego
-        #     pomiaru jest dokladnie tym, co robi dedup nizej.
-        #     `batch.payload_sha256` jest ustawione przed petla obserwacji, wiec
-        #     tutaj nigdy nie jest NULL.
+        # The key: (account, series, client_captured_at, machine, payload sha256).
+        #   - `client_captured_at`, and NOT `captured_at`: since timestamping moved to the server
+        #     side, `captured_at` is a function of the REQUEST (it holds the `offset` computed
+        #     from that request's `arrived_at`), so a replay of the same entry in another
+        #     request gets a different value and the guard would not see it. The raw client
+        #     time is a function of the entry itself and on a replay it is identical — it is
+        #     the only part that does not change.
+        #   - the machine, because the same account from TWO machines is correctly two
+        #     measurements;
+        #   - sha256, because `parse_ts` truncates the time to whole seconds, and parallel
+        #     hooks can fire two probes within the same second. Without it a collision on
+        #     time alone would erase the second, DIFFERENT measurement. With it only the
+        #     byte-identical case collapses, that is the same measurement — and collapsing
+        #     the same measurement is exactly what the dedup below does.
+        #     `batch.payload_sha256` is set before the observation loop, so here it is
+        #     never NULL.
         #
-        # Per OBSERWACJA, nie raz na wpis: dedup jest per seria, wiec pierwotny zapis mogl
-        # pominac serie 1 i zapisac serie 3. Skrot "sprawdz pierwsza obserwacje i wyjdz"
-        # przepuscilby wtedy duplikat serii 3. Koszt to jeden seek po
-        # ix_samples_series_client_time na obserwacje (~7 na wpis, do ~1400 przy maksymalnym
-        # backlogu) — w calosci z indeksu, zwraca 0 albo 1 wiersz.
+        # Per OBSERVATION, not once per entry: dedup is per series, so the original write
+        # could have skipped series 1 and written series 3. The shortcut "check the first
+        # observation and leave" would then let a duplicate of series 3 through. The cost is
+        # one seek on ix_samples_series_client_time per observation (~7 per entry, up to
+        # ~1400 at the maximum backlog) — entirely from the index, returning 0 or 1 rows.
         already = None if client_captured_at is None else (await db.execute(
             select(LimitSample.id)
             .join(IngestBatch, IngestBatch.id == LimitSample.batch_id)
@@ -247,8 +254,8 @@ async def _write_observation(
             .limit(1)
         )).scalar_one_or_none()
         if already is not None:
-            # (False, False), nie wyjatek: to jest POPRAWNY wynik — mamy ten pomiar.
-            # Wpis musi zostac policzony w `accepted`, zeby sonda go obciela.
+            # (False, False), not an exception: this is a CORRECT result — we have this
+            # measurement. The entry must be counted in `accepted` so the probe truncates it.
             return False, False
 
     st = (await db.execute(
@@ -256,21 +263,22 @@ async def _write_observation(
                                   SeriesState.series_id == series.id)
     )).scalar_one_or_none()
 
-    # Wycofanie miernika i jego powrot sa ZDARZENIEM, nie tylko zmiana liczby: dla `spend`
-    # i `extra:usage` to jedyny moment, w ktorym w logu widac, ze organizacja zamknela
-    # brame. Tylko na PRZEJSCIU i tylko gdy jest z czym porownywac — pierwszy w zyciu pomiar
-    # niczego nie zmienia, wiec nie ma o czym meldowac.
+    # A meter's withdrawal and its return are an EVENT, not just a change of number: for
+    # `spend` and `extra:usage` it is the only moment the log shows that the organization shut
+    # the gate. Only on the TRANSITION and only when there is something to compare against —
+    # the first measurement in a series' life changes nothing, so there is nothing to report.
     if st is not None:
         was = meter_withdrawn(st.last_extra)
         if o.unavailable_reason and not was:
             await _event(db, level="warn", event_type="meter_withdrawn",
                          account_id=account.id, batch_id=batch.id,
-                         message="Miernik %s wycofany przez organizacje" % series.series_key,
+                         message="Meter %s withdrawn by the organization" % series.series_key,
                          detail={"series": series.series_key,
                                  "reason": o.unavailable_reason,
-                                 # Powod z cache KLIENTA (`cachedExtraUsageDisabledReason`)
-                                 # — wylacznie do wgladu. Werdykt stoi na danych w pasmie,
-                                 # bo tylko one sa spojne z reszta tej samej odpowiedzi.
+                                 # Reason from the CLIENT cache
+                                 # (`cachedExtraUsageDisabledReason`) — for inspection only.
+                                 # The verdict rests on the in-band data, because only that
+                                 # is consistent with the rest of the same response.
                                  "client_reason": client_reason,
                                  "last_utilization": (float(st.last_utilization)
                                                       if st.last_utilization is not None
@@ -278,7 +286,7 @@ async def _write_observation(
         elif was and not o.unavailable_reason:
             await _event(db, level="info", event_type="meter_restored",
                          account_id=account.id, batch_id=batch.id,
-                         message="Miernik %s znow dziala" % series.series_key,
+                         message="Meter %s is working again" % series.series_key,
                          detail={"series": series.series_key, "was_reason": was,
                                  "client_reason": client_reason,
                                  "utilization": o.utilization})
@@ -289,57 +297,61 @@ async def _write_observation(
     newest = st is None or st.last_captured_at is None or captured_at > st.last_captured_at
 
     prev_r = st.last_resets_at if st is not None else None
-    # Granica, ktora WEJDZIE do stanu. Pomiar bez granicy nie kasuje granicy, ktora jeszcze
-    # nie minela — patrz parsing.carry_reset_window. Przeniesienie liczy sie wylacznie dla
-    # probki, ktora stan naprawde zapisze (`newest`); probka z backlogu stanu nie rusza, wiec
-    # dla niej porownanie musi isc do tego, co przyszlo.
+    # The boundary that WILL ENTER the state. A measurement without a boundary does not clear
+    # a boundary that has not passed yet — see parsing.carry_reset_window. Carrying it over
+    # counts only for the sample that really writes the state (`newest`); a backlog sample
+    # does not touch the state, so for it the comparison must go against what arrived.
     next_r = carry_reset_window(prev_r, o.resets_at, captured_at) if newest else o.resets_at
 
     if st is not None and st.last_captured_at is not None:
         prev_u = float(st.last_utilization) if st.last_utilization is not None else None
-        # Z TOLERANCJA, nie na rownosc: granica okna podawana przez Anthropic kolysze sie
-        # o ~2 s, wiec porownanie doslowne bylo zawsze falszywe i po cichu wylaczalo
-        # zarowno dedup, jak i guard monotonicznosci ponizej.
+        # WITH TOLERANCE, not on equality: the window boundary reported by Anthropic wobbles by
+        # ~2 s, so a literal comparison was always false and silently switched off both the
+        # dedup and the monotonicity guard below.
         #
-        # Dedup pyta "czy ZMIENI SIE STAN", wiec porownuje `prev_r` z `next_r`, a nie
-        # z surowym `o.resets_at`. Inaczej przy przenoszonej granicy KAZDY kolejny pomiar bez
-        # granicy wygladalby jak zmiana (znana granica w stanie vs NULL w pomiarze) i dedup
-        # pisalby wiersz co pomiar — dokladnie to, czego ma nie robic.
+        # Dedup asks "WILL THE STATE CHANGE", so it compares `prev_r` with `next_r`, not with
+        # the raw `o.resets_at`. Otherwise, with a carried-over boundary EVERY subsequent
+        # measurement without a boundary would look like a change (a known boundary in the
+        # state vs NULL in the measurement) and dedup would write a row per measurement —
+        # exactly what it must not do.
         changed = (prev_u != o.utilization
                    or not same_reset_window(prev_r, next_r,
                                             settings.reset_window_eps_sec))
 
-        # (2) guard monotonicznosci — nieaktualny odczyt z innej maszyny.
+        # (2) monotonicity guard — an out-of-date reading from another machine.
         #
-        # `known_same_reset_window`, a NIE `same_reset_window`: guard wstrzymuje zapis stanu,
-        # wiec wolno mu sie odpalic tylko na DOWODZIE, ze okno jest to samo. Dwa NULL-e sa
-        # brakiem dowodu, a wziete za dowod zamrazaly stan po kazdym resecie sesji i TRWALE
-        # dla serii, ktore granicy nie maja nigdy (`spend:org`, `extra:usage`).
+        # `known_same_reset_window`, and NOT `same_reset_window`: the guard holds back the
+        # state write, so it may fire only on PROOF that the window is the same. Two NULLs are
+        # an absence of proof, and taken for proof they froze the state after every session
+        # reset and PERMANENTLY for series that never have a boundary (`spend:org`,
+        # `extra:usage`).
         #
-        # Do guardu idzie `o.resets_at`, czyli to, co pomiar POWIEDZIAL — nie `next_r`.
-        # Przeniesiona granica jest naszym WNIOSKIEM i uzyta tutaj odtworzylaby to samo
-        # zamrozenie: kazdy pomiar bez granicy dostawalby z powrotem "to samo okno".
+        # What goes into the guard is `o.resets_at`, that is what the measurement SAID — not
+        # `next_r`. The carried-over boundary is our INFERENCE and used here it would
+        # reproduce the same freeze: every measurement without a boundary would get "the same
+        # window" back.
         if (known_same_reset_window(prev_r, o.resets_at, settings.reset_window_eps_sec)
                 and prev_u is not None and o.utilization is not None
                 and o.utilization < prev_u - settings.monotonic_eps):
             stale_read = True
 
         if not changed:
-            # (1) dedup: piszemy tylko heartbeat
+            # (1) dedup: we write only the heartbeat
             age = (captured_at - st.last_captured_at).total_seconds()
             should_write = age >= settings.sample_heartbeat_sec
 
     if not should_write:
-        # Probki nie piszemy, ale POMIAR SIE ODBYL. Bez tego pominiecie zapisu jest
-        # nieodroznialne od ciszy klienta i UI raportuje falszywa starosc danych.
+        # We do not write the sample, but THE MEASUREMENT DID HAPPEN. Without this a skipped
+        # write is indistinguishable from client silence and the UI reports a false data age.
         if newest and not stale_read and st is not None:
             st.last_confirmed_at = captured_at
         return False, False
 
-    # `o.resets_at`, nie `next_r`: PROBKA jest zapisem pomiaru i trzyma to, co pomiar podal.
-    # Przenoszenie granicy nalezy do stanu (`series_state` jest odtwarzalnym cache'em, nie
-    # faktem), a `window_start_index` czyta wlasnie probki i na braku granicy opiera sygnal
-    # `passed` — wpisanie tam naszego wniosku zaslepiloby wykrywanie resetu w historii.
+    # `o.resets_at`, not `next_r`: the SAMPLE is a record of the measurement and holds what the
+    # measurement gave. Carrying the boundary over belongs to the state (`series_state` is a
+    # rebuildable cache, not a fact), and `window_start_index` reads exactly the samples and
+    # rests the `passed` signal on the absence of a boundary — writing our inference there
+    # would blind reset detection in the history.
     sample = LimitSample(
         account_id=account.id, series_id=series.id, captured_at=captured_at,
         client_captured_at=client_captured_at,
@@ -351,7 +363,7 @@ async def _write_observation(
     db.add(sample)
     await db.flush()
 
-    # (3) stan aktualizuje wylacznie najnowsza, niepodejrzana probka
+    # (3) the state is updated only by the newest, unsuspicious sample
     if newest and not stale_read:
         if st is None:
             st = SeriesState(account_id=account.id, series_id=series.id)
@@ -361,9 +373,9 @@ async def _write_observation(
         st.last_sample_id = sample.id
         st.last_captured_at = captured_at
         st.last_confirmed_at = captured_at
-        # value_since przesuwamy WYLACZNIE przy zmianie wartosci — inaczej zapis
-        # heartbeatu (ta sama wartosc, nowy wiersz) udawalby zmiane i "niezmienne od"
-        # resetowaloby sie co heartbeat, czyli pokazywaloby bzdure.
+        # We move value_since ONLY on a change of value — otherwise a heartbeat write (the
+        # same value, a new row) would pose as a change and "unchanged since" would reset
+        # every heartbeat, that is, it would show nonsense.
         if changed or st.value_since is None:
             st.value_since = captured_at
         st.last_utilization = o.utilization
@@ -378,23 +390,25 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
                      arrived_at: datetime | None = None,
                      offset: timedelta = _NO_OFFSET,
                      is_backlog: bool = False) -> dict:
-    """Przetwarza jeden pomiar. Nigdy nie rzuca na danych — problem zapisujemy jako
-    zdarzenie i zwracamy, ile udalo sie zapisac.
+    """Processes one measurement. Never throws on data — a problem is recorded as an event
+    and we return how much we managed to write.
 
-    `arrived_at` to KOTWICA CZASU: moment odebrania zadania, zdjety w handlerze PRZED
-    lockiem zapisu. Nie wolno go liczyc tutaj — `ingest_one` biegnie juz pod `_WRITE_LOCK`,
-    wiec zadanie, ktore przeczekalo cudzy backlog, datowaloby pomiary o tyle za swiezo, a
-    kazdy wpis backlogu dostawalby wlasna, inna kotwice. Domyslka jest wylacznie dla testow.
+    `arrived_at` is the TIME ANCHOR: the moment the request was received, taken in the handler
+    BEFORE the write lock. It must not be computed here — `ingest_one` already runs under
+    `_WRITE_LOCK`, so a request that waited out somebody else's backlog would timestamp the
+    measurements that much too fresh, and every backlog entry would get its own, different
+    anchor. The default is there for the tests alone.
 
-    `offset = arrived_at - sent_at` jest wspolny dla calego zadania — patrz `measured_at`."""
+    `offset = arrived_at - sent_at` is common to the whole request — see `measured_at`."""
     if arrived_at is None:
         arrived_at = utcnow()
     now = arrived_at
     client = payload.get("client") or {}
     hook = payload.get("hook") or {}
     meas = payload.get("measurement") or {}
-    # token_meta jest OPCJONALNY od wersji 3 sondy: na macOS credentiale siedza w Keychain,
-    # a pomiar juz od nich nie zalezy — brakuje wtedy tylko tagow planu, nie danych.
+    # token_meta is OPTIONAL from probe version 3 on: on macOS the credentials sit in the
+    # Keychain and the measurement no longer depends on them — only the plan tags are missing
+    # then, not the data.
     token_meta = payload.get("token_meta") or {}
     acct = payload.get("account") or {}
     usage = payload.get("usage")
@@ -403,7 +417,7 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
 
     source = meas.get("source") or "probe"
     if source not in ("probe", "cli_merged", "cli_usage_cache"):
-        source = "cli_usage_cache"      # nieznana etykieta: nie wywracamy zapisu przez enum
+        source = "cli_usage_cache"      # unknown label: we do not fail the write over an enum
 
     batch = IngestBatch(
         received_at=now, machine_id=machine.id,
@@ -412,8 +426,8 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         hook_event=hook.get("event"), session_id=hook.get("session_id"),
         measurement_source=source, cache_age_s=meas.get("cache_age_s"),
         fresh_age_s=meas.get("fresh_age_s"), probe_ms=client.get("exec_ms"),
-        # Bez tego wyliczonego `captured_at` nie da sie odtworzyc z bazy: znamy `received_at`
-        # i surowy czas klienta, ale nie to, o ile je zsunelismy.
+        # Without this the computed `captured_at` cannot be reconstructed from the database:
+        # we know `received_at` and the raw client time, but not how far we shifted them.
         clock_offset_s=int(offset.total_seconds()),
     )
     db.add(batch)
@@ -423,7 +437,7 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         batch.ok = False
         batch.error_kind = "no_account"
         await _event(db, level="warn", event_type="no_oauth_account", batch_id=batch.id,
-                     message="Payload bez account.uuid — pomiar odrzucony")
+                     message="Payload without account.uuid — measurement rejected")
         return {"samples_written": 0, "batch_id": batch.id, "ok": False,
                 "account_uuid": None}
 
@@ -433,10 +447,10 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
 
     if created:
         await _event(db, level="info", event_type="account_created", account_id=account.id,
-                     batch_id=batch.id, message="Wykryto nowe konto",
+                     batch_id=batch.id, message="New account detected",
                      detail={"email": acct.get("email"), "org_type": acct.get("org_type")})
 
-    # para (maszyna, konto) — detekcja zamiast zakazu
+    # the (machine, account) pair — detection instead of prohibition
     ma = (await db.execute(
         select(MachineAccount).where(MachineAccount.machine_id == machine.id,
                                      MachineAccount.account_id == account.id)
@@ -446,12 +460,12 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
                               last_seen_at=now, samples=0))
         await _event(db, level="info", event_type="new_account_for_token",
                      account_id=account.id, batch_id=batch.id,
-                     message="Maszyna %s po raz pierwszy raportuje to konto" % machine_name)
+                     message="Machine %s reports this account for the first time" % machine_name)
     else:
         ma.last_seen_at = now
         ma.samples = (ma.samples or 0) + 1
 
-    # przelaczenie konta na tej maszynie — czyli /login
+    # an account switch on this machine — that is, /login
     prev = (await db.execute(
         select(IngestBatch).where(IngestBatch.machine_id == machine.id,
                                   IngestBatch.id != batch.id,
@@ -460,14 +474,14 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
     )).scalar_one_or_none()
     if prev is not None and prev.account_id != account.id:
         await _event(db, level="info", event_type="account_switched", account_id=account.id,
-                     batch_id=batch.id, message="Przelaczenie konta na maszynie %s" % machine_name,
+                     batch_id=batch.id, message="Account switched on machine %s" % machine_name,
                      detail={"from_account_id": prev.account_id, "to_account_id": account.id})
 
     if not isinstance(usage, dict):
         batch.ok = False
         batch.error_kind = "no_usage"
         await _event(db, level="warn", event_type="parse_error", account_id=account.id,
-                     batch_id=batch.id, message="Brak obiektu usage w payloadzie")
+                     batch_id=batch.id, message="No usage object in the payload")
         # account_uuid despite ok=False: the batch WAS assigned to an account, so
         # `last_batch_at` moved — and that is precisely what lets `freshness()` tell
         # "the client was silent" apart from "the client was alive and there is still no
@@ -480,56 +494,59 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
     batch.raw_payload_id = rp.id
     batch.payload_sha256 = digest
 
-    # DWA CZASY W JEDNYM PAYLOADZIE. `captured_at` to czas cache'u Claude Code i dotyczy
-    # wszystkiego; `measurement.fresh_at` to czas zrzutu `/usage` i dotyczy WYLACZNIE serii
-    # wymienionych w `fresh_covered`. Cache bywa o godzine starszy od zrzutu, a `spend`
-    # i `extra_usage` pochodza z niego zawsze — jeden stempel na oba zrodla odmladzal je
-    # dokladnie o te roznice.
+    # TWO TIMES IN ONE PAYLOAD. `captured_at` is the time of the Claude Code cache and applies
+    # to everything; `measurement.fresh_at` is the time of the `/usage` dump and applies ONLY
+    # to the series listed in `fresh_covered`. The cache is sometimes an hour older than the
+    # dump, and `spend` and `extra_usage` always come from the CACHE — one stamp for both sources
+    # made them younger by exactly that difference.
     cache_ts = parse_ts(payload.get("captured_at"))
     fresh_ts = parse_ts(meas.get("fresh_at"))
     sent_ts = parse_ts(meas.get("sent_at"))
 
-    # `frozenset(...)` na surowym polu z sieci rzucaloby TypeError na `None` i na kazdym
-    # elemencie nie-hashowalnym, a `ingest_one` NIE ma try/except mimo obietnicy w docstringu:
-    # dla rekordu biezacego to 500 na cale zadanie, dla wpisu backlogu `break` i TRWALE
-    # zatkany ogon spoola. Endpoint jest wystawiony w internecie.
+    # `frozenset(...)` on a raw field from the network would throw TypeError on `None` and on
+    # every non-hashable element, and `ingest_one` does NOT have a try/except despite the
+    # promise in its docstring: for the current record that is a 500 on the whole request, for
+    # a backlog entry a `break` and a PERMANENTLY blocked tail of the spool. The endpoint is
+    # exposed on the internet.
     raw_covered = meas.get("fresh_covered")
     fresh_covered = frozenset(
         x for x in raw_covered if isinstance(x, str)
     ) if isinstance(raw_covered, list) else frozenset()
 
-    # POMIAR NIE MOGL POWSTAC PO WYSYLCE. Jesli powstal, zegar klienta cofnal sie miedzy
-    # zapisem a wyslaniem i datowanie tego wpisu jest niepewne — a rozwiniecie pokazuje, ze
-    # to dokladnie warunek przyciecia (`ts + offset > arrived_at` <=> `ts > sent_at`), czyli
-    # wpis wyladowalby na `arrived_at`, przeszedl `newest` i nadpisal stan starym pomiarem.
-    # Odrzucamy calosc; surowy payload juz jest w bazie (zasada 6), wpis idzie do `accepted`,
-    # zeby sonda obciela spool. Kryterium dotyczy tylko wpisow niosacych `sent_at`.
+    # THE MEASUREMENT CANNOT HAVE BEEN TAKEN AFTER IT WAS SENT. If it was, the client clock
+    # moved back between the write and the send and this entry's timestamp is uncertain — and
+    # the expansion shows this is exactly the clamping condition (`ts + offset > arrived_at` <=>
+    # `ts > sent_at`), so the entry would land on `arrived_at`, pass `newest` and overwrite
+    # the state with an old measurement. We reject the whole thing; the raw payload is already
+    # in the database (rule 6), the entry goes to `accepted` so the probe truncates the spool.
+    # The criterion applies only to entries carrying `sent_at`.
     if sent_ts is not None and any(t is not None and t > sent_ts
                                    for t in (cache_ts, fresh_ts)):
         batch.ok = False
         batch.error_kind = "clock_backwards"
         await _event(db, level="warn", event_type="clock_backwards", account_id=account.id,
                      batch_id=batch.id,
-                     message="Pomiar datowany PO wyslaniu — zegar klienta cofniety",
+                     message="Measurement dated AFTER it was sent — client clock moved back",
                      detail={"captured_at": payload.get("captured_at"),
                              "fresh_at": meas.get("fresh_at"),
                              "sent_at": meas.get("sent_at")})
         return {"samples_written": 0, "batch_id": batch.id, "ok": False,
                 "account_uuid": account.account_uuid}
 
-    # DIAGNOSTYKA, bez wplywu na zapis. Datowanie stoi na roznicy `sent_at - ts`, ktora
-    # jest w obrebie jednego zegara — rozjazd wzgledem serwera juz jej nie psuje.
+    # DIAGNOSTICS, with no effect on the write. The timestamping rests on the difference
+    # `sent_at - ts`, which is within a single clock — a divergence against the server no
+    # longer corrupts it.
     if abs(offset.total_seconds()) > settings.clock_skew_tolerance_sec:
         await _event(db, level="warn", event_type="clock_skew", account_id=account.id,
                      batch_id=batch.id,
-                     message="Zegar klienta rozjechany o %ds" % int(offset.total_seconds()),
+                     message="Client clock skewed by %ds" % int(offset.total_seconds()),
                      detail={"sent_at": meas.get("sent_at"),
                              "arrived_at": arrived_at.isoformat()})
 
     parsed = parse_usage(usage, fresh_covered)
     if parsed.problems:
         await _event(db, level="warn", event_type="schema_drift", account_id=account.id,
-                     batch_id=batch.id, message="Nieoczekiwany ksztalt odpowiedzi",
+                     batch_id=batch.id, message="Unexpected response shape",
                      detail={"problems": parsed.problems})
 
     cache: dict[str, UsageSeries] = {}
@@ -540,8 +557,8 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         client_ts = fresh_ts if (o.covered_by_fresh and fresh_ts is not None) else cache_ts
         captured_at = measured_at(client_ts, offset, arrived_at)
         if captured_at is None:
-            # `limit_samples.captured_at` jest NOT NULL, wiec bez tej sciezki byloby to
-            # IntegrityError na calym zadaniu zamiast pominiecia jednej obserwacji.
+            # `limit_samples.captured_at` is NOT NULL, so without this path it would be an
+            # IntegrityError on the whole request instead of skipping one observation.
             undated += 1
             continue
         if newest_at is None or captured_at > newest_at:
@@ -554,8 +571,8 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
             client_captured_at=client_ts,
             batch=batch, session_id=hook.get("session_id"), source=source,
             is_backlog=is_backlog,
-            # Zwykly `get`: sonda ponizej wersji 4 tego pola nie przysyla i to jest
-            # poprawny stan, nie brak danych.
+            # A plain `get`: a probe below version 4 does not send this field and that is a
+            # correct state, not missing data.
             client_reason=meas.get("extra_usage_disabled_reason"),
         )
         written += int(w)
@@ -564,24 +581,24 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
     if undated:
         await _event(db, level="warn", event_type="no_captured_at", account_id=account.id,
                      batch_id=batch.id,
-                     message="%d obserwacji bez czasu pomiaru — pominiete" % undated,
+                     message="%d observations without a measurement time — skipped" % undated,
                      detail={"captured_at": payload.get("captured_at"),
                              "fresh_at": meas.get("fresh_at")})
 
-    # `max`, nie przypisanie: wpisy backlogu ida PO rekordzie biezacym, wiec oproznienie
-    # spoola cofneloby to pole o godziny.
+    # `max`, not an assignment: backlog entries come AFTER the current record, so emptying
+    # the spool would move this field back by hours.
     if newest_at is not None and (account.last_sample_at is None
                                   or newest_at > account.last_sample_at):
         account.last_sample_at = newest_at
 
     if new_series:
         await _event(db, level="info", event_type="series_registered", account_id=account.id,
-                     batch_id=batch.id, message="Zarejestrowano nowe serie",
+                     batch_id=batch.id, message="New series registered",
                      detail={"series": new_series})
     if stale:
         await _event(db, level="info", event_type="stale_read", account_id=account.id,
                      batch_id=batch.id,
-                     message="%d nieaktualnych odczytow — stan biezacy nietkniety" % stale)
+                     message="%d stale readings — current state untouched" % stale)
 
     batch.samples_written = written
     return {"samples_written": written, "batch_id": batch.id, "ok": True,

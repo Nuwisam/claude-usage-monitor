@@ -1,9 +1,9 @@
-# Ten sam katalog roboczy bywa widziany NARAZ przez dwa systemy: Windows
-# (core.autocrlf=true) i Linuksa. Ten sam plik uruchamia wiec /bin/sh na hoscie i Git Bash
-# na Windows. Bez wymuszenia LF checkout po stronie Windows wstawilby CRLF, a host
-# odpowiedzialby "bad interpreter: No such file or directory".
+# The same working directory is sometimes seen AT THE SAME TIME by two systems: Windows
+# (core.autocrlf=true) and Linux. So the same file is run by /bin/sh on the host and by Git
+# Bash on Windows. Without forcing LF, a checkout on the Windows side would insert CRLF, and
+# the host would fail with "bad interpreter: No such file or directory".
 *.sh                text eol=lf
 
-# Sonda bywa porownywana bajt w bajt z kopia rozdana na maszyny. Rozne konce linii robilyby
-# z tego falszywy alarm przy kazdym porownaniu.
+# The probe is sometimes compared byte for byte against the copy handed out to the machines.
+# Differing line endings would turn that into a false alarm on every comparison.
 *.py                text eol=lf

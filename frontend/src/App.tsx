@@ -8,8 +8,8 @@ import { History } from "./views/History";
 import { Live } from "./views/Live";
 
 export function App() {
-  // Ten sam klucz zapytania co w widokach, wiec React Query oddaje ten sam cache —
-  // naglowek nie generuje drugiego odpytania.
+  // The same query key as in the views, so React Query hands back the same cache —
+  // the header does not generate a second request.
   const q = useStatus();
   const nowMs = useServerClock(q.data?.serverNow);
 
@@ -33,7 +33,7 @@ export function App() {
       />
       <Routes>
         <Route path="/" element={<Live />} />
-        <Route path="/historia" element={<History />} />
+        <Route path="/history" element={<History />} />
         <Route path="*" element={<Live />} />
       </Routes>
     </div>

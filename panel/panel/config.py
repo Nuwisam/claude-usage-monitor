@@ -1,13 +1,14 @@
-"""Konfiguracja panelu — %LOCALAPPDATA%\\claude-usage-monitor\\panel.json.
+"""Panel configuration — %LOCALAPPDATA%\\claude-usage-monitor\\panel.json.
 
-Ten sam katalog co config.json sondy, ale OSOBNY plik. Token strumienia ma inny
-zakres niz token ingestu (backend/app/auth.py:62-67 odrzuca ingestowy na /stream),
-a plik sondy bywa nadpisywany przy jej aktualizacji — nie chcemy, zeby przy okazji
-gubil ustawienia panelu.
+The same directory as the probe's config.json, but a SEPARATE file. The stream
+token has a different scope than the ingest token (backend/app/auth.py:62-67
+rejects an ingest one on /stream), and the probe's file gets overwritten when the
+probe is updated — the panel settings must not be lost along the way.
 
-Konta sa dwoma NAZWANYMI polami, nie lista. Uklad 4a ma dokladnie dwa pasy, wiec
-ksztalt konfiguracji jest tu ksztaltem ekranu: trzeciego konta nie da sie dopisac
-przez nieuwage, trzeba swiadomie zdecydowac, ktore dwa ogladasz.
+The accounts are two NAMED fields, not a list. Layout 4a has exactly two bands, so
+the shape of the configuration is the shape of the screen here: a third account
+cannot be added by accident, it takes a deliberate decision about which two
+you watch.
 """
 import json
 import math
@@ -25,7 +26,7 @@ DEFAULTS = {
     "stream_token": None,
     "account_1": None,
     "account_2": None,
-    "device": None,          # {"port_path": "3.4"} albo {"index": 0}
+    "device": None,          # {"port_path": "3.4"} or {"index": 0}
     "width": 480,
     "height": 320,
     "brightness": 5,
@@ -34,52 +35,56 @@ DEFAULTS = {
     "log_path": None,
     "log_level": "INFO",
     "tick_sec": 1.0,
-    # Panel dostaje klatke tylko wtedy, gdy obraz sie rozni. Ten prog wymusza
-    # wyslanie mimo braku roznicy, zeby ewentualne przeklamanie na ekranie nie
-    # zostalo tam na zawsze — panel trzyma ostatnia klatke w nieskonczonosc.
+    # The panel gets a frame only when the image differs. This threshold forces a
+    # send despite there being no difference, so that a corrupted patch on the
+    # glass does not stay there forever — the panel holds its last frame forever.
     "heal_repaint_sec": 300,
-    # Ile czekac na pierwsze dane, zanim zamalujemy ekran karta stanu. Do tego
-    # czasu na panelu zostaje obraz z poprzedniego biegu — to celowe.
+    # How long to wait for the first data before painting a status card over the
+    # screen. Until then the panel keeps the image from the previous run — that is
+    # deliberate.
     "splash_after_sec": 20,
     "record_sse": False,
-    # --- zablokowane sesje Claude Code (ramka `alert`) ---
-    # Wylacznik calej funkcji. Przy `false` ramka jest ignorowana i panel zachowuje sie
-    # dokladnie jak przedtem — znacznik nie zapala sie ani razu.
+    # --- blocked Claude Code sessions (the `alert` frame) ---
+    # The switch for the whole feature. With `false` the frame is ignored and the
+    # panel behaves exactly as before — the mark never lights up once.
     "session_alerts": True,
-    # Jak dlugo blokady ZAJMUJA ekran karta. Potem zwija sie do paska akcentu na lewej
-    # krawedzi pasa konta; wpisy zyja dalej, przestaja byc tylko przejmujace. Liczone od
-    # `since` z serwera, wiec restart panelu nie wskrzesza starej karty.
+    # How long blocks TAKE the screen with a card. Afterwards it collapses into an
+    # accent bar on the left edge of the account band; the entries live on, they
+    # merely stop being takeover-worthy. Counted from the server's `since`, so a
+    # panel restart does not resurrect an old card.
     #
-    # Okno nalezy do ZBIORU: otwiera je NAJMLODSZA blokada, a karta pokazuje wtedy
-    # wszystkie czekajace, takze te z wypalonym wlasnym oknem. Wpis bez `since` liczy
-    # sie jak swiezy zawsze. Czasu karty na ekranie to nie wydluza — zmienia zawartosc.
+    # The window belongs to the SET: the YOUNGEST block opens it, and the card then
+    # shows all the waiting ones, including those whose own window has burnt out. An
+    # entry without `since` always counts as fresh. This does not extend the card's
+    # time on screen — it changes the contents.
     #
-    # Liczba sekund, 0 (od razu znacznik, bez karty) albo "infinity" — wtedy karta stoi,
-    # dopoki nie odpowiesz, i zuzycie jest przez ten czas niewidoczne.
+    # A number of seconds, 0 (the mark right away, no card) or "infinity" — the card
+    # then stays until you answer, and usage is invisible for that whole time.
     "alert_takeover_sec": 300,
-    # Jak dlugo karta MIGA, czyli podmienia klatke pusta na zalana akcentem. Liczba
-    # sekund, 0 wylacza albo "infinity" — wtedy miga przez cale zycie karty, czyli do
-    # `alert_takeover_sec`.
+    # How long the card BLINKS, that is, swaps the blank frame for one flooded with
+    # the accent. A number of seconds, 0 disables it, or "infinity" — it then blinks
+    # for the card's whole life, that is, up to `alert_takeover_sec`.
     #
-    # Zalanie przemalowuje pasmo i rail 6 px (~13% klatki, ok. 0,24 s na Turingu) — rail
-    # stoi tam takze w spoczynku, w `NEUTRAL_900`, wiec zmienia sie kolor, nie uklad. Animacji
-    # w krokach nie ma i nie bedzie: panel przerysowuje sie linia po linii, wiec klatki
-    # posrednie rozjechalyby sie na przebiegu. Kazde mrugniecie kosztuje na AX206 pelna
-    # klatke (355 ms), wiec "infinity" zajmuje lacze przez caly czas trwania karty.
-    # Zapala sie raz na KLUCZ blokady.
+    # The flood repaints the banner and the 6 px rail (~13% of the frame, about
+    # 0.24 s on the Turing) — the rail is there at rest too, in `NEUTRAL_900`, so
+    # the color changes, not the layout. There is no stepped animation and there will
+    # not be: the panel repaints line by line, so intermediate frames would tear over
+    # the sweep. Every blink costs a full frame on the AX206 (355 ms), so "infinity"
+    # occupies the link for the card's whole life. It lights up once per block KEY.
     "alert_flash_sec": 20,
-    # Ile blokada musi trwac, zanim karta wejdzie. Chroni przed blyskiem przy zgodzie
-    # udzielonej od razu. To OSAD, nie pomiar — stad klucz konfiguracyjny.
+    # How long a block has to last before the card comes in. Guards against a flash
+    # when permission is granted right away. A JUDGEMENT, not a measurement — hence
+    # the configuration key.
     "blocked_debounce_sec": 2,
-    # Ile karta zostaje po zniknieciu ostatniej blokady, ZAMROZONA. Przejscie sceny
-    # kosztuje pelna klatke na obu ekranach, wiec kazde zaoszczedzone przelaczenie
-    # to realne ~1,5 s, w ktorym panel nie odswieza niczego innego.
+    # How long the card stays after the last block is gone, FROZEN. A scene change
+    # costs a full frame on both screens, so every switch saved is a real ~1.5 s in
+    # which the panel refreshes nothing else.
     "blocked_linger_sec": 10,
 }
 
 
 class ConfigError(Exception):
-    """Blad konfiguracji. Widoczny na panelu, nie tylko w logu."""
+    """A configuration error. Visible on the panel, not only in the log."""
 
 
 class Account:
@@ -183,7 +188,7 @@ class Config:
 
     @property
     def accounts(self):
-        """Konta w kolejnosci pasow: gorny, dolny. Puste sloty pomijane."""
+        """Accounts in band order: top, bottom. Empty slots are skipped."""
         out = []
         for slot in ("account_1", "account_2"):
             raw = self._d.get(slot)
@@ -207,12 +212,12 @@ class Config:
         return out
 
     def validate(self):
-        """Zwraca liste problemow. Pusta lista = konfiguracja zdatna do uzycia."""
+        """Returns a list of problems. An empty list = a usable configuration."""
         problems = []
         if not self.stream_token:
-            problems.append("brak stream_token")
+            problems.append("missing stream_token")
         if not self.stream_url:
-            problems.append("brak stream_url")
+            problems.append("missing stream_url")
 
         seen = set()
         for slot in ("account_1", "account_2"):
@@ -220,39 +225,39 @@ class Config:
             if raw is None:
                 continue
             if not isinstance(raw, dict):
-                problems.append("%s musi byc obiektem {\"uuid\": ...}" % slot)
+                problems.append("%s must be an object {\"uuid\": ...}" % slot)
                 continue
             uuid = (raw.get("uuid") or "").strip()
             if not uuid:
-                problems.append("%s bez uuid" % slot)
+                problems.append("%s has no uuid" % slot)
             elif uuid in seen:
-                problems.append("%s powtarza uuid z poprzedniego slotu" % slot)
+                problems.append("%s repeats the uuid from the previous slot" % slot)
             else:
                 seen.add(uuid)
         if not seen:
-            problems.append("nie wskazano zadnego konta (account_1 / account_2)")
+            problems.append("no account specified (account_1 / account_2)")
 
         self._check_panels(problems)
 
         dev = self._d.get("device")
         if dev is not None and not isinstance(dev, dict):
-            problems.append("device musi byc obiektem, np. "
+            problems.append("device must be an object, e.g. "
                             "{\"port_path\": \"3.4\"}")
         elif isinstance(dev, dict) and "location" in dev:
-            # Selektor `location` bral z rejestru "Port_#0004.Hub_#0005", gdzie
-            # `Hub_#NNNN` jest licznikiem enumeracji, nie sprzetem. Przeskoczyl
-            # przy nieruszonej wtyczce i panel przestal sie odnajdywac. Cicha
-            # migracja odpada: wymagalaby zgadywania, ktore modul ma na mysli,
-            # a to jest dokladnie to, czego sie tu pozbywamy.
+            # The `location` selector took "Port_#0004.Hub_#0005" from the registry,
+            # where `Hub_#NNNN` is an enumeration counter, not hardware. It jumped
+            # with the plug untouched and the panel stopped finding itself. A silent
+            # migration is out: it would require guessing which module was meant, and
+            # that is exactly what is being got rid of here.
             problems.append(
-                "device.location (\"%s\") nie jest juz obslugiwane — czlon "
-                "Hub_# to licznik enumeracji, ktory przeskakuje bez ruszania "
-                "wtyczki. Uruchom `python -m panel --list` i wpisz podany "
-                "port_path" % dev.get("location"))
-        # Gorna granica TYLKO tam, gdzie ja cos podaje: 0..7 to zakres wlasciwosci
-        # PROPERTY_BRIGHTNESS z firmware'u AX206. Reszta dostaje sama podloge,
-        # bo sufit musialbym wymyslic — a wymyslony prog, ktory odrzuca poprawna
-        # konfiguracje, jest gorszy niz brak progu.
+                "device.location (\"%s\") is no longer supported — the Hub_# "
+                "part is an enumeration counter that jumps without the plug "
+                "being touched. Run `python -m panel --list` and enter the "
+                "port_path it reports" % dev.get("location"))
+        # An upper bound ONLY where something states one: 0..7 is the range of the
+        # PROPERTY_BRIGHTNESS property in the AX206 firmware. The rest get the floor
+        # alone, because a ceiling would have to be invented — and an invented
+        # threshold that rejects a correct configuration is worse than no threshold.
         #
         # In the new shape brightness is per panel and the scales differ, so the
         # top-level key is checked only where it can still mean the AX206 range.
@@ -275,31 +280,31 @@ class Config:
 
         if "panels" in self._raw and "device" in self._raw:
             problems.append(
-                "panel.json ma naraz `device` (stary ksztalt) i `panels` (nowy) "
-                "— zostaw jedno; scalanie ich znaczyloby zgadywanie")
+                "panel.json has both `device` (the old shape) and `panels` (the "
+                "new one) — leave one; merging them would mean guessing")
         if "panels" in self._raw and "brightness" in self._raw:
             problems.append(
-                "jasnosc jest teraz per panel, w kazdym wpisie `panels` — skale "
-                "sterownikow sa rozne, wiec gorne `brightness` byloby dwuznaczne")
+                "brightness is now per panel, in each `panels` entry — driver "
+                "scales differ, so a top-level `brightness` would be ambiguous")
 
         raw = self._raw.get("panels")
         if raw is not None and not isinstance(raw, list):
-            problems.append("panels musi byc lista obiektow")
+            problems.append("panels must be a list of objects")
             return
         entries = self._d.get("panels") or []
         if not entries:
-            problems.append("nie wskazano zadnego panelu (`panels`)")
+            problems.append("no panel specified (`panels`)")
             return
 
         seen = {}
         for i, entry in enumerate(entries):
             where = "panels[%d]" % i
             if not isinstance(entry, dict):
-                problems.append("%s musi byc obiektem" % where)
+                problems.append("%s must be an object" % where)
                 continue
             backend = entry.get("backend")
             if backend not in REGISTRY:
-                problems.append("%s: nieznany backend %r (znam: %s)"
+                problems.append("%s: unknown backend %r (known: %s)"
                                 % (where, backend, ", ".join(known())))
                 continue
             mod = REGISTRY[backend]
@@ -309,10 +314,11 @@ class Config:
                 # migrate: `Hub_#NNNN` inside it is an enumeration counter that
                 # jumped without anyone touching a plug.
                 problems.append(
-                    "%s.location (\"%s\") nie jest juz obslugiwane — czlon Hub_# "
-                    "to licznik enumeracji, ktory przeskakuje bez ruszania "
-                    "wtyczki. Uruchom `python -m panel --list` i wpisz podany "
-                    "port_path" % (where, entry.get("location")))
+                    "%s.location (\"%s\") is no longer supported — the Hub_# "
+                    "part is an enumeration counter that jumps without the "
+                    "plug being touched. Run `python -m panel --list` and "
+                    "enter the port_path it reports"
+                    % (where, entry.get("location")))
                 continue
 
             extra = [k for k in entry
@@ -322,14 +328,14 @@ class Config:
                 # only device there is" - a typo quietly aimed the client at
                 # whatever happened to be plugged in.
                 problems.append(
-                    "%s: nieznane klucze %s; dla %s wolno: %s"
+                    "%s: unknown keys %s; for %s the allowed ones are: %s"
                     % (where, ", ".join(sorted(extra)), backend,
                        ", ".join(mod.SELECTOR_KEYS)))
 
             key = (backend, tuple(sorted((k, str(v)) for k, v in entry.items()
                                          if k in mod.SELECTOR_KEYS)))
             if key in seen and key[1]:
-                problems.append("%s wskazuje to samo urzadzenie co %s"
+                problems.append("%s points at the same device as %s"
                                 % (where, seen[key]))
             seen.setdefault(key, where)
 
@@ -364,14 +370,14 @@ class Config:
         try:
             value = int(raw)
         except (TypeError, ValueError, OverflowError):
-            problems.append("%s.rotate musi byc liczba stopni (jest: %r)"
+            problems.append("%s.rotate must be a number of degrees (got: %r)"
                             % (where, raw))
             return
         if value not in ROTATIONS:
             problems.append(
-                "%s.rotate=%r — wolno tylko %s. Cwierc obrotu wymagalaby ukladu "
-                "pionowego (320x480), a rysowany jest jeden uklad 3:2"
-                % (where, raw, " albo ".join(str(v) for v in ROTATIONS)))
+                "%s.rotate=%r — only %s allowed. A quarter turn would require a "
+                "portrait layout (320x480), and only one 3:2 layout is drawn"
+                % (where, raw, " or ".join(str(v) for v in ROTATIONS)))
 
     @staticmethod
     def _panel_number(problems, name, raw, scale):
@@ -383,73 +389,73 @@ class Config:
         try:
             value = int(raw)
         except (TypeError, ValueError, OverflowError):
-            problems.append("%s musi byc liczba (jest: %r)" % (name, raw))
+            problems.append("%s must be a number (got: %r)" % (name, raw))
             return
         if not (scale.lo <= value <= scale.hi):
-            problems.append("%s poza zakresem %s dla tego sterownika"
+            problems.append("%s is out of the range %s for this driver"
                             % (name, scale.describe()))
 
     def _number(self, problems, name, kind, low, high=None):
-        """Jedno pole liczbowe: DOPISUJE problem, nigdy nie rzuca.
+        """One numeric field: APPENDS a problem, never raises.
 
-        Golo `int(self.brightness)` w tresci validate() bylo pulapka. Ta funkcja
-        obiecuje zwrocic liste problemow, a przy `"brightness": "jasno"`
-        w panel.json wychodzil z niej ValueError. Excepthook jest wtedy juz
-        ustawiony, wiec zamiast jednego zdania o tym, co poprawic, zostawal
-        traceback i restart zadania co minute — pod pythonw, bez konsoli,
-        ktora by go komukolwiek pokazala.
+        A bare `int(self.brightness)` in the body of validate() was a pitfall. This
+        function promises to return a list of problems, and with
+        `"brightness": "bright"` in panel.json a ValueError came out of it instead.
+        The excepthook is installed by then, so instead of one sentence about what
+        to fix there was a traceback and a task restart every minute — under
+        pythonw, with no console to show it to anyone.
         """
         raw = self._d.get(name)
         try:
             value = kind(raw)
         except (TypeError, ValueError, OverflowError):
-            # OverflowError, bo json.load przyjmuje gole `Infinity` i `NaN`,
-            # a int(float("inf")) nie jest ani TypeError, ani ValueError.
-            problems.append("%s musi byc liczba (jest: %r)" % (name, raw))
+            # OverflowError, because json.load accepts bare `Infinity` and `NaN`,
+            # and int(float("inf")) is neither a TypeError nor a ValueError.
+            problems.append("%s must be a number (got: %r)" % (name, raw))
             return
         if isinstance(value, float) and not math.isfinite(value):
-            # `Infinity` i `NaN` przechodza przez float() i przez KAZDE porownanie
-            # zakresu, wiec bez tej linii wpadaja do petli ticku: wait(inf) rzuca
-            # tam OverflowError, a wait(nan) wraca natychmiast i zamienia pomiar
-            # czasu w busy-loop.
-            problems.append("%s musi byc liczba skonczona (jest: %r)" % (name, raw))
+            # `Infinity` and `NaN` pass through float() and through EVERY range
+            # comparison, so without this line they fall into the tick loop:
+            # wait(inf) raises OverflowError there, and wait(nan) returns at once
+            # and turns the timing into a busy loop.
+            problems.append("%s must be a finite number (got: %r)" % (name, raw))
             return
         if value < low:
-            problems.append("%s musi byc >= %s" % (name, low))
+            problems.append("%s must be >= %s" % (name, low))
             return
         if high is not None and value > high:
-            problems.append("%s poza zakresem %s..%s" % (name, low, high))
+            problems.append("%s is out of the range %s..%s" % (name, low, high))
             return
-        # Zapisujemy wartosc PO konwersji. Bez tego sprawdzenie bylo pozorne:
-        # "width": "480" przechodzilo walidacje, bo int("480") sie udaje — a potem
-        # Layout liczyl `"480" - 1` i pekal TypeError-em juz PO tym, jak validate()
-        # obwiescilo, ze konfiguracja jest zdatna do uzycia.
+        # The value is stored AFTER conversion. Without this the check was only
+        # apparent: "width": "480" passed validation, because int("480") succeeds —
+        # and then Layout computed `"480" - 1` and broke with a TypeError AFTER
+        # validate() had announced the configuration usable.
         self._d[name] = value
 
 
 def load(path=CONFIG_PATH):
-    """Wczytuje konfiguracje. Brak pliku i zly JSON to DWA rozne bledy —
-    pierwszy znaczy 'jeszcze nie zainstalowane', drugi 'zepsute przy edycji'."""
+    """Loads the configuration. A missing file and bad JSON are TWO different
+    errors — the first means 'not installed yet', the second 'broken while editing'."""
     if not os.path.exists(path):
-        raise ConfigError("brak pliku konfiguracji: %s" % path)
+        raise ConfigError("missing configuration file: %s" % path)
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except ValueError as e:
-        raise ConfigError("panel.json jest niepoprawnym JSON-em: %s" % e) from e
+        raise ConfigError("panel.json is invalid JSON: %s" % e) from e
     except OSError as e:
-        raise ConfigError("nie moge odczytac %s: %s" % (path, e)) from e
+        raise ConfigError("cannot read %s: %s" % (path, e)) from e
     if not isinstance(data, dict):
-        raise ConfigError("panel.json musi zawierac obiekt JSON")
+        raise ConfigError("panel.json must contain a JSON object")
     return Config(data, path)
 
 
 def example():
-    """Wzor do wklejenia — uzywany przez --list i README."""
+    """A template to paste in — used by --list and the README."""
     return json.dumps({
         "stream_url": DEFAULTS["stream_url"],
-        "stream_token": "<wpis z STREAM_TOKENS o etykiecie panel>",
-        "account_1": {"uuid": "<uuid konta>", "name": "you@example.org"},
-        "account_2": {"uuid": "<uuid konta>", "name": "billing@example.org"},
+        "stream_token": "<the STREAM_TOKENS entry labeled panel>",
+        "account_1": {"uuid": "<account uuid>", "name": "you@example.org"},
+        "account_2": {"uuid": "<account uuid>", "name": "billing@example.org"},
         "panels": [{"backend": "ax206", "port_path": "3.4", "brightness": 5}],
     }, indent=2, ensure_ascii=False)

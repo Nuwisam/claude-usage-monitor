@@ -1,15 +1,15 @@
-/** Kontrakt /api — odbicie 1:1 backend/app/schemas.py, opisane w docs/API.md. */
+/** The /api contract — a 1:1 reflection of backend/app/schemas.py, described in docs/API.md. */
 
-/** Musi isc w tym samym commicie co `CONTRACT_VERSION` w services/status.py — Nav
- *  porownuje obie i przy rozjezdzie zapala ostrzezenie w naglowku. */
+/** Must ship in the SAME COMMIT as the contract-version constant in services/status.py —
+ *  Nav compares the two and on a mismatch lights a warning in the header. */
 export const CONTRACT_VERSION = 3;
 
-/** live — pomiar swiezszy niz FRESH_WINDOW_SEC · stale — brak potwierdzenia od 5 min ·
- *  inferred_reset — wnioskowanie, nie pomiar · unknown — brak probek serii, awaria.
+/** live — a measurement fresher than FRESH_WINDOW_SEC · stale — no confirmation for 5 min ·
+ *  inferred_reset — inference, not measurement · unknown — no samples for the series, a failure.
  *
- *  To jest kontrakt DANYCH, nie cztery rysunki: UI zleja `live`/`stale`/`unknown` w jeden
- *  wyglad, bo wszystkie trzy niosa ostatnia prawdziwa wartosc, a rozni je tylko wiek odczytu
- *  (`lib/freshness.ts`). Osobny rysunek ma wylacznie `inferred_reset`. */
+ *  This is a contract of DATA, not four drawings: the UI merges `live`/`stale`/`unknown` into
+ *  one appearance, because all three carry the last true value and only the reading age tells
+ *  them apart (`lib/freshness.ts`). Only `inferred_reset` gets a drawing of its own. */
 export type Freshness = "live" | "stale" | "inferred_reset" | "unknown";
 
 export type SeriesSource = "bucket" | "limit" | "extra_usage" | "spend";
@@ -20,41 +20,43 @@ export interface SeriesStatus {
   label: string;
   source: SeriesSource;
   sortOrder: number;
-  /** Semantyka serii — po to jest, zeby UI nie zgadywalo po nazwie klucza. */
+  /** The series' semantics — it is here so the UI does not guess from the key's name. */
   kind: string | null;
   group: string | null;
   bucketKey: string | null;
-  /** null, gdy nie ma czego pokazac — przy `unknown` albo gdy miernik jest WYCOFANY
-   *  (patrz `unavailableReason`). Nigdy nie renderuj tego jako 0. */
+  /** null when there is nothing to show — on `unknown`, or when the meter is WITHDRAWN
+   *  (see `unavailableReason`). Never render this as 0. */
   utilization: number | null;
-  /** Ostatnia ZMIERZONA wartosc, bez wnioskowania.
+  /** The last MEASURED value, with no inference.
    *
-   *  Regula UI to `utilization ?? rawUtilization`, NIGDY `utilization ?? 0`: przy `unknown`
-   *  pokazujemy ostatni pomiar z jego wiekiem, bo procent jest znany i prawdziwy. Slowa
-   *  „nie wiem" zostaja tylko wtedy, gdy oba pola sa null — pomiaru nie bylo nigdy. */
+   *  The UI's rule is `utilization ?? rawUtilization`, NEVER `utilization ?? 0`: on `unknown`
+   *  we show the last measurement with its age, because the percentage is known and true. The
+   *  words "unknown" stay only when both fields are null — there was never a measurement. */
   rawUtilization: number | null;
-  /** Powod, dla ktorego tej serii NIE DA SIE zmierzyc — doslownie od Anthropic
-   *  (zaobserwowane: `org_level_disabled_until`, `org_spend_cap_reached`). Zbior JEST
-   *  otwarty, wiec rozgałeziaj sie na `!== null`, nigdy na tresci (zasada 5).
+  /** The reason this series CANNOT be measured — verbatim from Anthropic
+   *  (observed: `org_level_disabled_until`, `org_spend_cap_reached`). The set IS
+   *  open, so branch on `!== null`, never on the contents (rule 5).
    *
-   *  Gdy jest ustawiony, OBA pola wartosci sa null — to nie jest pomiar 0%, tylko brak
-   *  miernika. Rozroznia dwa stany, ktore w payloadzie wygladaja identycznie: konto,
-   *  ktore kredytow nigdy nie mialo, i konto, ktoremu organizacja wlasnie je odcieła. */
+   *  When it is set, `utilization` is null — this is not a 0% measurement, it is a missing
+   *  meter. `rawUtilization` survives: it holds the last MEASURED percent, so the reading
+   *  stays on screen with its age. It tells apart two states that look identical in the
+   *  payload: an account that never had credits, and one whose organization has just cut
+   *  them off. */
   unavailableReason: string | null;
   resetsAt: string | null;
   secondsToReset: number | null;
-  /** Ostatnia zapisana PROBKA. Dedup pomija niezmienione, wiec bywa starsze niz pomiar. */
+  /** The last SAMPLE written. Dedup skips unchanged ones, so it can be older than the measurement. */
   capturedAt: string | null;
-  /** Kiedy ostatnio POTWIERDZONO te wartosc. Z tego liczy sie swiezosc. */
+  /** When this value was last CONFIRMED. Freshness is counted from this. */
   confirmedAt: string | null;
-  /** Odkad wartosc jest niezmienna. */
+  /** Since when the value has been unchanged. */
   valueSince: string | null;
   freshness: Freshness;
   isActive: boolean | null;
   severity: string | null;
   deltaPct1h: number | null;
-  /** Od ktorej PROBKI liczy sie deltaPct1h — baseline jest przyciety do biezacego okna,
-   *  wiec rozpietosc bywa krotsza niz godzina. Null razem z deltaPct1h. */
+  /** Which SAMPLE deltaPct1h is counted from — the baseline is clipped to the current window,
+   *  so the span is sometimes shorter than an hour. Null together with deltaPct1h. */
   deltaFrom: string | null;
   primary: boolean;
   duplicateOf: string | null;
@@ -66,15 +68,15 @@ export type RungState = "on" | "off" | "unknown";
 
 export interface CascadeRung {
   key: RungKey;
-  /** "off" (wylaczone) i "unknown" (nie wiemy) to DWIE ROZNE rzeczy. */
+  /** "off" (turned off) and "unknown" (we do not know) are TWO DIFFERENT things. */
   state: RungState;
-  /** Dlaczego szczebel jest wylaczony — ten sam lancuch co `SeriesStatus.unavailableReason`.
-   *  `state` NIE ma czwartej wartosci: wycofane kredyty to nadal "off". */
+  /** Why the rung is off — the same string as `SeriesStatus.unavailableReason`.
+   *  `state` does NOT get a fourth value: withdrawn credits are still "off". */
   reason: string | null;
   isCurrent: boolean;
   utilization: number | null;
   seriesKey: string | null;
-  /** Kwoty w jednostkach mniejszych z wykladnikiem — formatuje je UI, nie backend. */
+  /** Amounts in minor units with an exponent — the UI formats them, not the backend. */
   usedMinor: number | null;
   limitMinor: number | null;
   currency: string | null;
@@ -101,7 +103,7 @@ export interface AccountStatus {
 
 export interface StatusResponse {
   contractVersion: number;
-  /** Kotwica wszystkich countdownow. Zegar przegladarki NIE jest zrodlem prawdy. */
+  /** The anchor of every countdown. The browser clock is NOT the source of truth. */
   serverNow: string;
   accounts: AccountStatus[];
   warnings: string[];
@@ -144,8 +146,8 @@ export interface HistoryPoint {
   n: number;
 }
 
-/** client_silent — nie pracowales; no_samples — klient raportowal, ale bez probek TEJ
- *  serii, czyli awaria. Dwa cieniowania; zlanie ich robi z awarii zwykla przerwe. */
+/** client_silent — the client sent nothing; no_samples — the client reported, but with no samples
+ *  for THIS series, i.e. a failure. Two shadings; merging them turns a failure into a plain break. */
 export type GapKind = "client_silent" | "no_samples";
 
 export interface HistoryGap {
@@ -161,8 +163,8 @@ export interface HistoryResponse {
   gaps: HistoryGap[];
 }
 
-/** Koperta bledu z FastAPI. Backend zwraca DWIE: `{detail:{reason}}` z HTTPException
- *  i gole `{reason}` z handlera 500. Klient musi obsluzyc obie. */
+/** The FastAPI error envelope. The backend returns TWO: `{detail:{reason}}` from HTTPException
+ *  and a bare `{reason}` from the 500 handler. The client has to handle both. */
 export interface ApiErrorBody {
   detail?: { reason?: string; redirect_url?: string | null } | string;
   reason?: string;

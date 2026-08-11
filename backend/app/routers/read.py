@@ -1,8 +1,8 @@
-"""Endpointy odczytu — wszystkie za SSO.
+"""Read endpoints — all of them behind SSO.
 
-Backend sam jest brama SSO (nie ma frontendu z nginx auth_request), wiec brak sesji daje
-401 {reason, redirect_url}, a nie 302. UI musi na to zareagowac przekierowaniem — to jest
-czesc kontraktu, nie szczegol implementacji.
+The backend is its own SSO gate (there is no frontend with nginx auth_request), so a missing
+session gives 401 {reason, redirect_url}, not a 302. The UI has to answer that with a
+redirect — this is part of the contract, not an implementation detail.
 """
 from __future__ import annotations
 
@@ -122,8 +122,8 @@ Interval = tuple[datetime, datetime]
 
 def _quiet_intervals(times: list[datetime], from_: datetime, to: datetime,
                      threshold: timedelta) -> list[Interval]:
-    """Przerwy dluzsze niz `threshold` w ciagu znacznikow, wliczajac poczatek i koniec
-    zakresu. Pusta lista znacznikow => cisza na calym zakresie."""
+    """Gaps longer than `threshold` in a sequence of timestamps, including the start and the
+    end of the range. An empty list of timestamps => silence over the whole range."""
     out: list[Interval] = []
     prev = from_
     for t in times:
@@ -137,8 +137,8 @@ def _quiet_intervals(times: list[datetime], from_: datetime, to: datetime,
 
 def _subtract(spans: list[Interval], holes: list[Interval],
               min_len: timedelta) -> list[Interval]:
-    """spans minus holes. Odcinki krotsze niz `min_len` odrzucamy — inaczej na styku
-    dwoch okresow ciszy zostawaly kilkusekundowe drzazgi udajace awarie."""
+    """spans minus holes. Segments shorter than `min_len` are dropped — otherwise the
+    seam between two quiet periods left few-second slivers pretending to be failures."""
     out: list[Interval] = []
     for a, b in spans:
         cur = a
@@ -156,16 +156,16 @@ def _subtract(spans: list[Interval], holes: list[Interval],
 
 
 def _reset_boundaries(rows: list[tuple[datetime, datetime | None]]) -> list[datetime]:
-    """Momenty, w ktorych okno sie zresetowalo — czyli w ktorych zmienil sie `resets_at`.
+    """The moments at which the window reset — that is, at which `resets_at` changed.
 
-    Liczone z probek, a NIE wewnatrz konkretnego koszyka: wczesniej siedzialo to w gale zi
-    trybu `raw`, wiec kazdy zakres powyzej 6 h (w tym domyslne 24 h) wracal bez ani jednej
-    granicy. Pierwsza zaobserwowana wartosc nie jest resetem — to tylko punkt odniesienia.
+    Computed from the samples, and NOT inside a given bucket: it used to sit in the `raw`
+    mode branch, so every range above 6 h (including the default 24 h) came back without a
+    single boundary. The first observed value is not a reset — only a reference point.
 
-    Porownanie idzie przez `same_reset_window`, czyli Z TOLERANCJA — granica podawana przez
-    Anthropic kolysze sie o okolo 2 s w obrebie jednego okna. Na rownosc historia rysowala
-    granice resetu przy kazdej probce: zmierzone 61 "resetow" na dobe dla okna, ktore
-    resetuje sie 5 razy.
+    The comparison goes through `same_reset_window`, that is WITH TOLERANCE — the boundary
+    Anthropic reports drifts by about 2 s within a single window. On exact equality the
+    history drew a reset boundary at every sample: 61 "resets" a day measured for a window
+    that resets 5 times.
     """
     out: list[datetime] = []
     prev: datetime | None = None
@@ -177,22 +177,22 @@ def _reset_boundaries(rows: list[tuple[datetime, datetime | None]]) -> list[date
             continue
         if not same_reset_window(prev, resets_at, settings.reset_window_eps_sec):
             out.append(captured_at)
-        # Punkt odniesienia przesuwamy zawsze, zeby powolne kolysanie nie sumowalo sie
-        # do przekroczenia progu po kilku godzinach.
+        # The reference point always moves, so that slow drift does not add up and cross
+        # the threshold after a few hours.
         prev = resets_at
     return out
 
 
 def _find_gaps(from_: datetime, to: datetime, batch_times: list[datetime],
                sample_times: list[datetime], threshold: timedelta) -> list[HistoryGap]:
-    """Dwa rodzaje dziur, bo znacza dwie rozne rzeczy.
+    """Two kinds of gap, because they mean two different things.
 
-    `client_silent` — nie bylo batchy. Nie pracowales, wiec nie ma czego mierzyc.
-    `no_samples`    — batche przychodzily, ale dla TEJ serii nie bylo ani jednej probki.
+    `client_silent` — there were no batches. No work was going on, so nothing to measure.
+    `no_samples`    — batches did arrive, but for THIS series there was not one sample.
 
-    Drugi przypadek to AWARIA, dokladnie ta sama, ktora w /status daje `unknown`. Wykres,
-    ktory maluje oba tak samo, klamie w jedynym miejscu, w ktorym to narzedzie klamac nie
-    moze — bo bezczynnosc wyglada wtedy identycznie jak zepsuty klient.
+    The second case is a FAILURE, exactly the one that shows up as `unknown` in /status. A
+    chart that paints both the same way lies in the one place where this tool must not
+    lie — because idleness then looks identical to a broken client.
     """
     silent = _quiet_intervals(batch_times, from_, to, threshold)
     no_samples = _subtract(
@@ -208,9 +208,9 @@ def _find_gaps(from_: datetime, to: datetime, batch_times: list[datetime],
 async def history(
     account: str = Query(..., description="account_uuid"),
     series_id: int = Query(..., alias="seriesId"),
-    # NaiveUtcDt, nie datetime: przegladarka wysyla `toISOString()`, czyli czas ZE STREFA,
-    # a baza i `utcnow()` sa naiwne. Zwykly `datetime` przepuszcza to do srodka i wybucha
-    # dopiero przy odejmowaniu, kilka warstw dalej.
+    # NaiveUtcDt, not datetime: the browser sends `toISOString()`, i.e. a time WITH A TIMEZONE,
+    # while the database and `utcnow()` are naive. A plain `datetime` lets that through and
+    # only blows up at the subtraction, several layers further on.
     from_: NaiveUtcDt | None = Query(None, alias="from"),
     to: NaiveUtcDt | None = Query(None),
     bucket: str = Query("auto"),
@@ -248,7 +248,7 @@ async def history(
             u = float(r.utilization) if r.utilization is not None else None
             points.append(HistoryPoint(t=r.captured_at, min=u, max=u, avg=u, last=u, n=1))
     else:
-        # Downsampling z min/max, zeby piki przezyly agregacje — bez tego wykres klamie.
+        # Downsampling with min/max so peaks survive aggregation — without it the chart lies.
         slot = func.floor(func.unix_timestamp(LimitSample.captured_at) / width) * width
         rows = (await db.execute(
             select(slot.label("slot"),
@@ -274,9 +274,9 @@ async def history(
                 last=float(last) if last is not None else None,
                 n=int(n)))
 
-    # Granice resetow: z KAZDEJ probki w zakresie, niezaleznie od koszyka. Wczesniej
-    # liczylo sie to tylko w trybie `raw`, wiec kazdy zakres powyzej 6 h (czyli domyslne
-    # 24 h) wracal bez ani jednej granicy — a to najwazniejsza linia na tym wykresie.
+    # Reset boundaries: from EVERY sample in the range, regardless of the bucket. This used
+    # to be computed only in `raw` mode, so every range above 6 h (that is, the default
+    # 24 h) came back without a single boundary — the most important line on this chart.
     sample_rows = (await db.execute(
         select(LimitSample.captured_at, LimitSample.resets_at)
         .where(LimitSample.account_id == acc.id,
@@ -330,10 +330,11 @@ async def batches(
     rows = (await db.execute(
         select(IngestBatch).order_by(IngestBatch.id.desc()).limit(limit)
     )).scalars().all()
-    # Pola opisujace odpowiedz HTTP od Anthropic znikly wraz z wersja 3 sondy — nie ma juz
-    # zadania, ktore mialyby opisywac. W ich miejsce idzie proweniencja pomiaru: skad zostal
-    # wziety i jak stary byl w chwili wyslania. To jedyne miejsce, w ktorym widac roznice
-    # miedzy `cli_merged` (swieze procenty ze stdout) a `cli_usage_cache` (sam cache).
+    # The fields describing Anthropic's HTTP response went away with version 3 of the
+    # probe — there is no request left for them to describe. In their place comes the
+    # provenance of the measurement: where it was taken from and how old it was when sent.
+    # This is the one place where `cli_merged` (fresh percents from stdout) and
+    # `cli_usage_cache` (the cache alone) can be told apart.
     return [{"id": b.id, "receivedAt": b.received_at, "accountId": b.account_id,
              "machineId": b.machine_id, "clientHost": b.client_host,
              "hookEvent": b.hook_event, "scriptVersion": b.script_version,

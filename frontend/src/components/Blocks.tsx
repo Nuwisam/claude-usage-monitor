@@ -3,16 +3,16 @@ import { ApiError } from "../api/client";
 export function LoadingBlock() {
   return (
     <div className="state-block">
-      <h4>Czytam stan…</h4>
+      <h4>Reading state…</h4>
     </div>
   );
 }
 
-/** Błędy pokazujemy W MIEJSCU. Przekierowanie robi wyłącznie `handle401`, i tylko wtedy,
- *  gdy backend poda adres logowania.
+/** Errors are shown IN PLACE. Only `handle401` redirects, and only when the backend gives
+ *  a login address.
  *
- *  403 (adres poza allowlistą) i 503 (usługa tożsamości nieosiągalna) skierowane na
- *  logowanie dałyby pętlę: logowanie odsyła zalogowanego użytkownika, backend znów odmawia. */
+ *  403 (email outside the allowlist) and 503 (identity service unreachable) pointed at the
+ *  login would loop: the login sends a signed-in user back, the backend refuses again. */
 export function ErrorBlock({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   const api = error instanceof ApiError ? error : null;
 
@@ -21,26 +21,26 @@ export function ErrorBlock({ error, onRetry }: { error: unknown; onRetry?: () =>
       case "not-authenticated":
       case 401:
         return [
-          "Nie jesteś zalogowany",
-          "Backend odmówił dostępu i nie podał adresu logowania. Przy AUTH_MODE=header brakuje nagłówka od proxy; przy AUTH_MODE=verify ustaw AUTH_LOGIN_URL, żeby było dokąd odesłać.",
+          "You are not signed in",
+          "The backend refused access and gave no login address. With AUTH_MODE=header the header from the proxy is missing; with AUTH_MODE=verify set AUTH_LOGIN_URL so there is somewhere to send you.",
         ];
       case "email-not-allowed":
       case 403:
         return [
-          "Twój adres nie jest na liście",
-          "Uwierzytelnienie się powiodło, ale backend nie dopuszcza tego adresu. Dopisz go do ALLOWED_EMAILS w .env i podnieś kontener.",
+          "Your address is not on the list",
+          "Authentication succeeded, but the backend does not allow this address. Add it to ALLOWED_EMAILS in .env and restart the container.",
         ];
       case "sso-unreachable":
       case "sso-unavailable":
       case 503:
         return [
-          "Nie mogę potwierdzić sesji",
-          "Backend nie dosięga usługi tożsamości z AUTH_VERIFY_URL. Sprawdź, czy adres jest poprawny i czy backend ma do niego drogę siecią.",
+          "The session cannot be confirmed",
+          "The backend cannot reach the identity service at AUTH_VERIFY_URL. Check that the address is correct and that the backend has a network route to it.",
         ];
       default:
         return [
-          "Nie udało się odczytać danych",
-          api ? `Backend odpowiedział ${api.status}${api.reason ? ` (${api.reason})` : ""}.` : String(error),
+          "The data could not be read",
+          api ? `The backend returned ${api.status}${api.reason ? ` (${api.reason})` : ""}.` : String(error),
         ];
     }
   })();
@@ -51,7 +51,7 @@ export function ErrorBlock({ error, onRetry }: { error: unknown; onRetry?: () =>
       <p>{body}</p>
       {onRetry && (
         <button className="btn btn-primary" onClick={onRetry} style={{ alignSelf: "flex-start" }}>
-          Spróbuj ponownie
+          Try again
         </button>
       )}
     </div>

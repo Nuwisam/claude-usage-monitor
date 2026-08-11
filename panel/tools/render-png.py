@@ -1,9 +1,9 @@
-"""Render sceny do PNG — bez panelu i bez sieci.
+"""Render a scene to PNG — no panel and no network.
 
     python tools/render-png.py --scene base --out out.png --zoom 3
 
-`--rgb565` przepuszcza obraz przez pakowanie panelu i z powrotem, wiec PNG
-pokazuje faktyczna kwantyzacje 5/6/5, a nie ladniejsza prawde z pulpitu.
+`--rgb565` pushes the image through the panel's packing and back, so the PNG
+shows the real 5/6/5 quantization, not the prettier truth of a desktop screen.
 """
 import argparse
 import os
@@ -24,38 +24,38 @@ def blocked(key, reason, project, tool, machine, ago_s, **kw):
                           account_uuid=None, **kw)
 
 
-# Dane demonstracyjne w ksztalcie makiety: te same powody, narzedzia, dlugosci nazw
-# i stemple, zeby PNG dalo sie przylozyc do projektu. Nazwy projektow sa WYMYSLONE —
-# tak samo jak adresy kont w fixtures.py sa z example.org. Kotwica czasu: fixtures.NOW_ISO.
+# Demo data shaped like the mockup: the same reasons, tools, name lengths
+# and stamps, so a PNG can be laid against the design. The project names are MADE UP —
+# just as the account addresses in fixtures.py come from example.org. Time anchor: fixtures.NOW_ISO.
 def alert_scene(kind, now_ms, flood=False):
-    """Warianty karty alertu — po jednym na uklad."""
-    kb = dict(key="a", reason="question", project="panel-raportow",
+    """Alert card variants — one per layout."""
+    kb = dict(key="a", reason="question", project="reporting-panel",
               tool="AskUserQuestion", machine="desktop", ago_s=245,
-              detail="Zakres zrzutu: tylko sesja, sesja i tydzień, czy wszystkie "
-                     "okna limitów",
+              detail="Dump scope: session only, session and week, or all the "
+                     "limit windows",
               permission_mode="default")
     cum = dict(key="b", reason="plan", project="claude-usage-monitor",
                tool="ExitPlanMode", machine="laptop", ago_s=610,
-               detail="Plan na 6 kroków: layout.Alert, render._alert, AlertState, "
-                      "testy geometrii i kwantyzacji",
+               detail="A 6-step plan: layout.Alert, render._alert, AlertState, "
+                      "geometry and quantization tests",
                agent_type="general-purpose", permission_mode="plan")
-    gps = dict(key="c", reason="permission", project="synchronizator-zdjec-worktree",
+    gps = dict(key="c", reason="permission", project="photo-synchronizer-worktree",
                tool="Bash", machine="desktop", ago_s=20, detail="git status")
 
     if kind == "solo":
         items = [blocked(**kb)]
     elif kind == "pair":
-        # W makiecie ta blokada czeka "chwilę" — te same napisy po obu stronach
-        # pozwalaja porownac render z projektem litera w litere.
+        # In the mockup this block waits "a moment" — the same strings on both sides
+        # let the render be compared to the design letter by letter.
         items = [blocked(**cum), blocked(**dict(kb, ago_s=28))]
     elif kind == "list":
         items = [blocked(**cum), blocked(**kb), blocked(**gps)]
     else:
         items = [blocked(**cum), blocked(**kb), blocked(**gps),
-                 blocked("d", "permission", "cms-migracja", "Edit", "laptop", 150),
+                 blocked("d", "permission", "cms-migration", "Edit", "laptop", 150),
                  blocked("e", "question", "notes-sync", "AskUserQuestion", "desktop", 98)]
-    # Ta sama kolejnosc co w produkcji (`status.parse_frame`): od najmlodszej. Scena
-    # omija parser, wiec bez tego PNG-i uczylyby porzadku, ktorego panel nie rysuje.
+    # The same order the running client uses (`status.parse_frame`): newest first. The
+    # scene skips the parser, so without this the PNGs would teach an order the panel never draws.
     items.sort(key=lambda b: (b.since is None,
                               -b.since.timestamp() if b.since else 0.0,
                               b.key))
@@ -68,7 +68,7 @@ def _shift(iso, seconds):
 
 
 def unpack_rgb565(payload, size):
-    """Odwrotnosc image_to_rgb565 — pokazuje, co panel naprawde wyswietli."""
+    """The inverse of image_to_rgb565 — shows what the panel will really display."""
     w, h = size
     img = Image.new("RGB", size)
     px = img.load()
@@ -99,22 +99,22 @@ def main():
     ap.add_argument("--out", default="panel.png")
     ap.add_argument("--zoom", type=int, default=1)
     ap.add_argument("--rgb565", action="store_true",
-                    help="pokaz obraz po kwantyzacji panelu")
+                    help="show the image after the panel's quantization")
     ap.add_argument("--link", default="live",
                     choices=("live", "reconnecting", "down"))
-    ap.add_argument("--message", help="zamiast pasow: pelnoekranowa karta stanu")
+    ap.add_argument("--message", help="instead of the bands: a full-screen status card")
     ap.add_argument("--alert", choices=("solo", "pair", "list", "many"),
-                    help="zamiast pasow: karta zablokowanej sesji")
+                    help="instead of the bands: a blocked-session card")
     ap.add_argument("--flood", action="store_true",
-                    help="klatka PELNA: pasmo zalane akcentem plus rail")
+                    help="FULL frame: banner flooded with the accent plus the rail")
     ap.add_argument("--marker", choices=("upper", "lower", "both"),
-                    help="pasy ze znacznikiem alertu na krawedzi wskazanego pasa")
+                    help="bands with the alert marker on the edge of the chosen band")
     args = ap.parse_args()
 
     now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
     state = build(args.scene, now_ms, args.link)
     if args.marker:
-        # Ten sam slownik co w panelu: `status.SHORT`, nie napis wpisany tutaj.
+        # The same dictionary as in the panel: `status.SHORT`, not a string typed in here.
         which = {"upper": (0,), "lower": (1,), "both": (0, 1)}[args.marker]
         for i in which:
             if state.bands[i] is not None:
@@ -132,7 +132,7 @@ def main():
         img = img.resize((img.width * args.zoom, img.height * args.zoom),
                          Image.NEAREST)
     img.save(args.out)
-    print("%s  %dx%d  ladunek %d B" % (args.out, frame.image.width,
+    print("%s  %dx%d  payload %d B" % (args.out, frame.image.width,
                                        frame.image.height, len(frame.rgb565("be"))))
 
 

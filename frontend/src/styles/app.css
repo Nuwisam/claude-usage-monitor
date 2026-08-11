@@ -1,6 +1,6 @@
-/* Klasy wyjete z inline'ow makiety v2 (2a/2b/2c/2d). Wymiary sa przepisane — jesli cos
-   tu nie zgadza sie z makieta, makieta ma racje. Ukladu 2b nie budujemy osobno: ten sam
-   DOM, przelacznik w jednym @media na koncu pliku. */
+/* Classes lifted out of mockup v2's inline styles (2a/2b/2c/2d). The dimensions are
+   transcribed — if anything here disagrees with the mockup, the mockup is right. Layout 2b
+   is not built separately: the same DOM, one @media switch at the end of the file. */
 
 @keyframes noctPulse {
   0%,
@@ -12,9 +12,10 @@
   }
 }
 
-/* ─── rama aplikacji ───────────────────────────────────────────────────── */
-/* Calosc jest JEDNA karta na ciemniejszym plotnie, jak w makiecie — nie luzem w korzeniu.
-   Karta wypelnia okno; `overflow: hidden` przycina do niej siatke kont i kreski sekcji. */
+/* ─── app frame ────────────────────────────────────────────────────────── */
+/* The whole thing is ONE card on a darker canvas, as in the mockup — not loose in the root.
+   The card fills the window; `overflow: hidden` clips the account grid and the section
+   rules to it. */
 .app {
   margin: var(--space-4);
   min-height: calc(100vh - 2 * var(--space-4));
@@ -30,7 +31,8 @@
   gap: var(--space-4);
   padding: var(--space-4) var(--space-8);
 }
-/* NIE kasuj `margin-right: auto` z .nav-brand — razem z `auto` prawej grupy centruje linki. */
+/* Do NOT remove `margin-right: auto` from .nav-brand — together with the right group's
+   `auto` it centers the links. */
 .app-nav .nav-brand,
 .app-nav a {
   white-space: nowrap;
@@ -72,14 +74,14 @@
   background: var(--color-accent);
   animation: noctPulse 2.4s ease-in-out infinite;
 }
-/* Odswiezanie stoi (blad, utracone polaczenie) — kropka gasnie i przestaje pulsowac,
-   zeby "zywy" wskaznik nigdy nie klamal o swiezosci danych. */
+/* Refreshing has stopped (an error, a lost connection) — the dot goes dim and stops pulsing,
+   so that the "live" indicator never lies about the freshness of the data. */
 .live-dot[data-stalled="true"]::before {
   background: var(--color-neutral-600);
   animation: none;
 }
 
-/* ─── baner ostrzezen ─────────────────────────────────────────────────── */
+/* ─── warning banner ──────────────────────────────────────────────────── */
 .banner {
   display: flex;
   align-items: flex-start;
@@ -108,10 +110,10 @@
   color: color-mix(in srgb, var(--color-text) 50%, transparent);
 }
 
-/* ─── siatka kont ─────────────────────────────────────────────────────── */
-/* Szczeline maluje cien JEDNEJ karty (lewo/gora), nie pelny pierscien obu sasiadow —
-   dwa pierscienie sumuja sie w szczelinie 1px na podwojna jasnosc. `overflow: hidden`
-   scina cienie skrajnych kart, wiec siatka nie dostaje obwodki. */
+/* ─── account grid ────────────────────────────────────────────────────── */
+/* The gap is painted by the shadow of ONE card (left/top), not by the full ring of both
+   neighbors — two rings add up in a 1px gap to double the brightness. `overflow: hidden`
+   cuts off the shadows of the outermost cards, so the grid gets no outline. */
 .accounts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
@@ -166,7 +168,7 @@
   font-size: 10px;
 }
 
-/* ─── hero: sesja 5 h ─────────────────────────────────────────────────── */
+/* ─── hero: 5 h session ───────────────────────────────────────────────── */
 .hero {
   gap: var(--space-3);
   padding: var(--space-6);
@@ -175,9 +177,9 @@
   display: flex;
   align-items: baseline;
   gap: var(--space-3);
-  /* Odkad `hero-fresh` niesie godzine ORAZ wiek („potwierdzone w śr. o 11:58 · 3 d 4 h temu"),
-     w wezszej kolumnie konta nie zmiesci sie obok kickera i „wiaze teraz". Zawiniecie do
-     drugiej linii jest lepsze niz sciskanie kickera. */
+  /* Ever since `hero-fresh` has carried the time AND the age ("confirmed on Wed. at 11:58 ·
+     3 d 4 h ago"), it no longer fits next to the kicker and "limiting now" in a narrower account
+     column. Wrapping to a second line beats squeezing the kicker. */
   flex-wrap: wrap;
 }
 .hero-binds {
@@ -232,7 +234,7 @@
   font-size: 20px;
   color: color-mix(in srgb, var(--color-text) 55%, transparent);
 }
-/* Hero bez liczby (unknown) — ten sam blok, ale slowami. Nigdy zero. */
+/* A hero with no number (unknown) — the same block, but in words. Never zero. */
 .hero-nodata {
   font-size: 24px;
   color: color-mix(in srgb, var(--color-text) 55%, transparent);
@@ -244,7 +246,7 @@
   flex-wrap: wrap;
   margin-top: var(--space-1);
 }
-/* Makieta daje `margin-top` osobno paskowi (2a:119, 2b:264), nie tylko stopce. */
+/* The mockup gives the bar its own `margin-top` (2a:119, 2b:264), not just the footer. */
 .bar-hero {
   margin-top: var(--space-1);
 }
@@ -261,7 +263,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ─── naglowek sekcji z kreska ────────────────────────────────────────── */
+/* ─── section header with a rule ──────────────────────────────────────── */
 .section-label {
   display: flex;
   align-items: center;
@@ -281,7 +283,7 @@
   background: var(--color-divider);
 }
 
-/* ─── kaskada ─────────────────────────────────────────────────────────── */
+/* ─── cascade ─────────────────────────────────────────────────────────── */
 .cascade {
   display: flex;
   align-items: stretch;
@@ -310,9 +312,9 @@
   color: color-mix(in srgb, var(--color-text) 45%, transparent);
   font-variant-numeric: normal;
 }
-/* Szczebel wylaczony, ktory mimo to niesie KWOTY (kredyty odciete przez organizacje —
-   ostatni pomiar zostaje). Skreslenie na liczbach czyta sie jako „te liczby sa
-   nieprawdziwe", a one sa prawdziwe; nieprawdziwe byloby tylko uznanie ich za biezace. */
+/* An off rung that nevertheless carries AMOUNTS (credits cut off by the organization — the
+   last measurement stays). A strikethrough on numbers reads as "these numbers are untrue",
+   and they are true; untrue would only be taking them for current ones. */
 .rung[data-state="off"][data-plain] .rung-value {
   text-decoration: none;
   color: var(--color-text);
@@ -322,27 +324,27 @@
   color: color-mix(in srgb, var(--color-text) 55%, transparent);
   font-variant-numeric: normal;
 }
-/* Szczebel, ktory ogranicza CIEBIE teraz. Krotka kreska akcentu — w tym systemie akcent
-   jest linia i poswiata, nie zalewa. */
+/* The rung that is limiting YOU right now. A short accent mark — in this system the accent
+   is a line and a glow, not a flood fill. */
 .rung-current {
   height: 2px;
   border-radius: 1px;
   background: var(--color-accent);
 }
 
-/* ─── wiersz serii ────────────────────────────────────────────────────── */
+/* ─── series row ──────────────────────────────────────────────────────── */
 .series-list {
   display: flex;
   flex-direction: column;
 }
-/* Cztery obszary, bo waski uklad (2b) przestawia je bez zmiany DOM:
-   szeroko   [etykieta | tor | liczba]      z notatka pod etykieta
-   wasko     [etykieta | liczba] / tor / notatka                      */
+/* Four areas, because the narrow layout (2b) rearranges them without touching the DOM:
+   wide     [label | track | number]      with the note under the label
+   narrow   [label | number] / track / note                           */
 .series-row {
-  /* Kotwica panelu „?" jest WIERSZEM, nie kropka. Kropka stoi za etykieta, a etykiety siegaja
-     do wielokropka — panel przypiety do niej wyjezdzalby za prawa krawedz karty i zostawal
-     scinany przez `overflow: hidden` na `.accounts`. Przypiety do wiersza ma z definicji jego
-     szerokosc i nie ma jak wyjechac. */
+  /* The anchor of the "?" panel is the ROW, not the dot. The dot sits after the label, and
+     labels run all the way to an ellipsis — a panel pinned to it would run past the card's
+     right edge and get clipped by `overflow: hidden` on `.accounts`. Pinned to the row it
+     has the row's width by definition and no way to run out. */
   position: relative;
   display: grid;
   grid-template-columns: 1fr 104px 62px;
@@ -353,7 +355,7 @@
   row-gap: 3px;
   align-items: center;
   padding: var(--space-3) 0;
-  /* Regula gasnie na koncach — sygnatura Nocturne, tu 12px zamiast 48px z systemu. */
+  /* The rule fades at the ends — a Nocturne signature, 12px here, not the system's 48px. */
   background: linear-gradient(
       to right,
       transparent,
@@ -402,9 +404,9 @@
   color: var(--color-accent-200);
 }
 
-/* ─── „?" przy wierszu wydatkow ───────────────────────────────────────────
-   Jedyny element interaktywny w karcie konta. Nosi to, czego pasek pokazac nie umie:
-   czyj to limit i dlaczego kredyty nie dzialaja (patrz lib/credits.ts). */
+/* ─── the "?" at the spend row ────────────────────────────────────────────
+   The only interactive element in an account card. It carries what the bar cannot show:
+   whose limit this is and why the credits do not work (see lib/credits.ts). */
 .series-help {
   display: inline-flex;
   flex: none;
@@ -429,9 +431,10 @@
   border-color: var(--color-accent);
   color: var(--color-accent);
 }
-/* Panel OTWIERA SIE W GORE, i to nie jest kwestia gustu: wiersz wydatkow lezy w ostatniej
-   sekcji karty, wiec w dol wyjezdzalby poza `.accounts` z `overflow: hidden`. Nad nim stoi
-   zawsze hero i kaskada, wiec miejsce tam JEST — bez mierzenia czegokolwiek w JS. */
+/* The panel OPENS UPWARDS, and that is not a matter of taste: the spend row lies in the
+   card's last section, so downwards it would run outside `.accounts` with `overflow: hidden`.
+   The hero and the cascade always sit above it, so the room IS there — without measuring
+   anything in JS. */
 .series-help-panel {
   position: absolute;
   z-index: 2;
@@ -460,8 +463,8 @@
   column-gap: var(--space-4);
   row-gap: 3px;
 }
-/* Kazdy fakt jest wlasnym `display: contents`, zeby para termin-wartosc trafila w dwie
-   kolumny siatki nadrzednej bez dodatkowego wiersza DOM na sztuke. */
+/* Every fact is its own `display: contents`, so that the term-value pair lands in the two
+   columns of the parent grid without an extra DOM row per item. */
 .help-fact {
   display: contents;
 }
@@ -471,8 +474,8 @@
 .help-value {
   font-variant-numeric: tabular-nums;
 }
-/* Powodu nie tlumaczymy (zasada 5) — kod od Anthropic idzie doslownie, wiec musi wygladac
-   jak kod, a nie jak zdanie. */
+/* We do not spell the reason out (rule 5) — the code from Anthropic goes through verbatim,
+   so it has to look like code and not like a sentence. */
 .help-code {
   margin-left: var(--space-2);
   font-family: var(--font-mono);
@@ -498,13 +501,13 @@
   color: color-mix(in srgb, var(--color-text) 55%, transparent);
 }
 
-/* ─── tor wypelnienia: dwa rysunki, nie cztery ────────────────────────── */
-/* To jest miejsce, w ktorym zasada "unknown nie jest zerem" zamienia sie w piksele — i po
-   zmianie modelu zamienia sie MOCNIEJ, nie slabiej. Kazdy realny pomiar dostaje ten sam
-   pelny tor, bo pokazujemy ostatnia ZMIERZONA wartosc, a nie zero; ile ta liczba jest warta,
-   mowi etykieta wieku odczytu pod wierszem. Brak wypelnienia zostaje wylacznie tam, gdzie
-   liczby nie ma: `inferred_reset` (kontur bez masy, kikut przy zerze) i seria, ktorej nigdy
-   nie zmierzono (kontur ze skosem). Tam pusty tor czytaloby sie jako zero. */
+/* ─── fill track: two drawings, not four ──────────────────────────────── */
+/* This is the place where the rule "unknown is never zero" turns into pixels — and after the
+   model change it turns into them STRONGER, not weaker. Every real measurement gets the same
+   full track, because we show the last MEASURED value and not zero; the reading-age label under the
+   row says how much that number is worth. No fill is left only where there is
+   no number: `inferred_reset` (an outline without mass, a stub at zero) and a series that has
+   NEVER been measured (an outline with hatching). There an empty track would read as zero. */
 .bar {
   position: relative;
   height: 8px;
@@ -536,7 +539,7 @@
     transparent 3px 8px
   );
 }
-/* inferred_reset: kikut przy zerze — ksztalt pomiaru, ale bez masy. */
+/* inferred_reset: a stub at zero — the shape of a measurement, but without mass. */
 .bar-stub {
   position: absolute;
   top: 2px;
@@ -567,7 +570,7 @@
   background: var(--color-accent);
 }
 
-/* Konto, ktore raportuje, ale nie ma ani jednej serii z wartoscia. */
+/* An account that reports but has not a single series with a value. */
 .empty-slot {
   display: flex;
   align-items: center;
@@ -581,7 +584,7 @@
   color: color-mix(in srgb, var(--color-text) 55%, transparent);
 }
 
-/* ─── historia: sterowanie ────────────────────────────────────────────── */
+/* ─── history: controls ───────────────────────────────────────────────── */
 .hist-controls {
   display: flex;
   align-items: flex-end;
@@ -590,7 +593,7 @@
   padding: var(--space-2) var(--space-8) var(--space-6);
   border-bottom: 1px solid var(--color-divider);
 }
-/* Pin, bo dziedziczona interlinia dawala segment o 1px wyzszy niz makieta (36px). */
+/* Fixed: the inherited line height gave a segment 1px taller than the mockup (36px). */
 .hist-controls .seg-opt {
   line-height: 20px;
 }
@@ -612,7 +615,7 @@
   color: color-mix(in srgb, var(--color-text) 50%, transparent);
 }
 
-/* ─── historia: facet per konto ───────────────────────────────────────── */
+/* ─── history: one facet per account ──────────────────────────────────── */
 .facet {
   padding: var(--space-6) var(--space-8) var(--space-8);
   border-bottom: 1px solid var(--color-divider);
@@ -671,9 +674,9 @@
   gap: 3px;
   min-width: 0;
 }
-/* Kontener kursora i dymka. Musi obejmowac SAM wykres, bez podzialki pod nim — pozycja
-   kropki jest liczona w procentach wysokosci viewBoxa (0..200), wiec kazdy dodatkowy
-   piksel w tym pudelku przesuwalby ja wzgledem sciezki. */
+/* Container for the cursor and the tooltip. It has to cover the chart ITSELF, without the
+   scale below it — the dot's position is computed as a percentage of the viewBox height
+   (0..200), so every extra pixel in this box would shift it against the path. */
 .chart-plot {
   position: relative;
 }
@@ -685,8 +688,8 @@
 }
 .chart-cursor {
   position: absolute;
-  top: 11%;                     /* y=22 w viewBoxie 0..200 */
-  height: 84%;                  /* do osi na y=190 */
+  top: 11%;                     /* y=22 in the 0..200 viewBox */
+  height: 84%;                  /* down to the axis at y=190 */
   width: 1px;
   background: color-mix(in srgb, var(--color-text) 28%, transparent);
   pointer-events: none;
@@ -713,7 +716,7 @@
 .chart-tip {
   position: absolute;
   z-index: 2;
-  pointer-events: none;         /* dymek nie moze przechwytywac wlasnego hovera */
+  pointer-events: none;         /* the tooltip must not capture its own hover */
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -741,7 +744,7 @@
   font-variant-numeric: tabular-nums;
   color: color-mix(in srgb, var(--color-text) 40%, transparent);
 }
-/* Dziura to nie odczyt — dymek nad nia nie moze wygladac jak wartosc. */
+/* A gap is not a reading — the tooltip over it must not look like a value. */
 .chart-tip[data-muted] b {
   font-size: 11px;
   color: color-mix(in srgb, var(--color-text) 62%, transparent);
@@ -777,7 +780,7 @@
   text-wrap: pretty;
 }
 
-/* ─── historia: legenda ───────────────────────────────────────────────── */
+/* ─── history: legend ─────────────────────────────────────────────────── */
 .legend {
   display: flex;
   align-items: center;
@@ -830,7 +833,7 @@
   text-wrap: pretty;
 }
 
-/* ─── stany calego widoku ─────────────────────────────────────────────── */
+/* ─── whole-view states ───────────────────────────────────────────────── */
 .state-block {
   display: flex;
   flex-direction: column;
@@ -856,9 +859,9 @@
   color: color-mix(in srgb, var(--color-text) 70%, transparent);
 }
 
-/* ═══ 2b — waska kolumna. Ten sam DOM, inne proporcje. ═════════════════ */
+/* ═══ 2b — narrow column. The same DOM, different proportions. ═════════ */
 @media (max-width: 900px) {
-  /* Na telefonie karta idzie od krawedzi do krawedzi — margines kosztowalby 22 z 390 px. */
+  /* On a phone the card goes edge to edge — a margin would cost 22 of 390 px. */
   .app {
     margin: 0;
     min-height: 100vh;
@@ -872,7 +875,7 @@
   .app-nav .nav-brand {
     font-size: 15px;
   }
-  /* Wersja kontraktu znika, ALE tylko gdy sie zgadza — rozjazd musi byc widoczny zawsze. */
+  /* The contract version goes away, BUT only when it matches — a mismatch must always show. */
   .pill-contract[data-mismatch="false"] {
     display: none;
   }
@@ -895,7 +898,7 @@
     box-shadow: none;
     border-top: 1px solid var(--color-divider);
   }
-  /* Makieta 2b schodzi tu z naglowka na tekst tresci — `h5` zostaje dla semantyki. */
+  /* Mockup 2b steps down here from a heading to body text — `h5` stays for semantics. */
   .account-title h5 {
     font-family: var(--font-body);
     font-size: 14px;
@@ -907,7 +910,7 @@
     font-size: 9px;
     padding: 2px 7px;
   }
-  /* Host, seatTier i naglowki sekcji odpadaja (makieta 2b) — kazde kosztuje caly wiersz. */
+  /* Host, seatTier and section headers drop out (mockup 2b) — each costs a whole row. */
   .account-machine,
   .tag-seat,
   .section-label {
@@ -926,22 +929,23 @@
   .hero-note {
     display: none;
   }
-  /* Stopka hero schodzi do jednej linii „{odczyt} · {delta}", bez pigulek (2b:268). */
+  /* The hero footer drops to a single line "{reading} · {delta}", without pills (2b:268). */
   .hero-fresh-narrow {
     display: inline;
   }
   .hero-foot {
-    /* Odstep niesie spacja w tekscie separatora, wiec `gap` musi byc zerowy — inaczej
-       po „·" jest o pikselu wiecej niz przed nim. */
+    /* The gap is carried by the space in the separator text, so `gap` has to be zero —
+       otherwise there is one pixel more after the "·" than before it. */
     gap: 0;
     margin-top: 0;
     font-size: 11px;
     font-variant-numeric: tabular-nums;
     color: color-mix(in srgb, var(--color-text) 55%, transparent);
   }
-  /* Separator nalezy do DELTY, nie do odczytu: etykieta odczytu urosla o wiek i stopka
-     zaczyna sie zawijac, a wtedy „·" na koncu pierwszej linii zostaje sierota. Jako
-     `::before` schodzi w dol razem z tym, co oddziela. `pre` chroni same spacje. */
+  /* The separator belongs to the DELTA, not to the reading: the reading label grew by the age
+     and the footer starts to wrap, and then the "·" at the end of the first line is left an
+     orphan. As a `::before` it goes down together with what it separates. `pre` protects the
+     spaces themselves. */
   .hero-foot .tag-delta::before {
     content: " · ";
     white-space: pre;
@@ -953,7 +957,7 @@
     background: none;
     color: inherit;
   }
-  /* 2b zmniejsza wewnetrzne odstepy z 3 na 2 px. */
+  /* 2b shrinks the inner gaps from 3 to 2 px. */
   .hero-labels,
   .hero-value,
   .rung {
@@ -981,7 +985,7 @@
     border-radius: 5px;
   }
 
-  /* Kaskada 2x2 — cztery szczeble w wezszej kolumnie nadal czytelne. */
+  /* A 2x2 cascade — four rungs still legible in the narrower column. */
   .cascade {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -999,8 +1003,8 @@
     font-size: 11px;
   }
 
-  /* Wiersz serii przestaje byc trojkolumnowy: etykieta z liczba w jednej linii,
-     tor pod nia, notatka na dole (makieta 2b). Cel dotkniecia >= 44px. */
+  /* The series row stops being three-column: the label with the number on one line,
+     the track under it, the note at the bottom (mockup 2b). Touch target >= 44px. */
   .series-row {
     grid-template-columns: 1fr auto;
     grid-template-areas:
@@ -1022,9 +1026,9 @@
   .series-row .series-title {
     align-items: baseline;
   }
-  /* Cel dotkniecia 44px bez rozpychania wiersza: kropka zostaje 15px, powiekszamy sam
-     obszar trafienia pseudoelementem. Inaczej albo wiersz rosnie o 30px, albo na telefonie
-     w to „?" po prostu nie da sie trafic. */
+  /* A 44px touch target without stretching the row: the dot stays 15px, only the hit area
+     is enlarged with a pseudo-element. Otherwise either the row grows by 30px, or on a
+     phone that "?" is simply impossible to hit. */
   .series-help-dot::after {
     content: "";
     position: absolute;
@@ -1040,7 +1044,8 @@
   .series-pct {
     font-size: 15px;
   }
-  /* Znak procentu tylko wasko (2b:300) — szeroko makieta zostawia sama liczbe (2a:205). */
+  /* The percent sign only when narrow (2b:300) — wide, the mockup leaves the bare number
+     (2a:205). */
   .series-pct::after {
     content: "%";
   }
@@ -1050,8 +1055,8 @@
     padding-left: var(--space-4);
     padding-right: var(--space-4);
   }
-  /* Etykiety serii sa dlugie („Tydzien (wszystkie modele)") i przy 390 px lamia sie na
-     trzy wiersze. Zamiast lamac — przewijamy segment w poziomie. */
+  /* Series labels are long ("Week (all models)") and at 390 px they break onto three
+     lines. Instead of breaking — we scroll the segment horizontally. */
   .hist-controls .field {
     max-width: 100%;
     min-width: 0;

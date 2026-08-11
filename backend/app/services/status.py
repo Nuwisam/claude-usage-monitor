@@ -1,9 +1,9 @@
-"""Skladanie /api/status — jedno tanie zapytanie po series_state, nie groupwise-max.
+"""Composing /api/status — one cheap query over series_state, not a groupwise-max.
 
-Tu spina sie najwazniejsza regula projektu: stan `unknown` NIE moze zostac wyrenderowany
-jako 0%. Dlatego `utilization` jest tam None, a obok jedzie `raw_utilization` z ostatnia
-ZMIERZONA wartoscia — zeby UI moglo pokazac "ostatnio widziane 42%, ale nie wiemy co teraz"
-bez udawania, ze to pomiar biezacy.
+This is where the project's most important rule comes together: the `unknown` state MUST
+NOT be rendered as 0%. That is why `utilization` is None there, with `raw_utilization`
+riding alongside it carrying the last MEASURED value — so the UI can show "last seen 42%,
+but not what it is right now" without pretending it is a current measurement.
 """
 from __future__ import annotations
 
@@ -21,12 +21,13 @@ from app.schemas import AccountStatus, SeriesStatus, StatusResponse
 from app.services.cascade import SeriesFacts, build_cascade
 from app.services.ingest import utcnow
 
-# v2: czas na drucie z offsetem (bylo bez), kind/group/bucketKey w seriach, cascade[]
-# przy koncie, gaps[] w dwoch rodzajach.
-# v3: confirmedAt + valueSince w seriach — swiezosc liczy sie od POTWIERDZENIA, nie od
-#     zapisu probki. Bez tego dedup sprawia, ze niezmienna wartosc udaje utracona lacznosc.
-# Podbicie = aktualizacja docs/API.md.
-# deltaFrom doszlo PO v3 i wersji NIE podbija — dodanie pola nie lamie zgodnosci.
+# v2: wire time carries an offset (it did not before), kind/group/bucketKey in series,
+# cascade[] on the account, gaps[] in two flavors.
+# v3: confirmedAt + valueSince in series — freshness counts from CONFIRMATION, not from the
+#     sample write. Without it dedup makes an unchanged value look like lost connectivity.
+# A bump = an update to docs/API.md.
+# deltaFrom arrived AFTER v3 and does NOT bump the version — adding a field does not break
+# compatibility.
 CONTRACT_VERSION = 3
 
 
@@ -55,8 +56,8 @@ async def last_batch_time(db: AsyncSession, account_id: int) -> datetime | None:
 
 async def _recent_samples(db: AsyncSession, account_id: int,
                           since: datetime) -> dict[int, list[Sample]]:
-    """Przebieg serii konta z ostatniej godziny, jednym zapytaniem — baseline delty trzeba
-    przyciac do biezacego okna, wiec pojedynczy wiersz i tak nie wystarcza."""
+    """The account's series over the last hour, in one query — the delta baseline has to be
+    clipped to the current window, so a single row would not be enough anyway."""
     rows = (await db.execute(
         select(LimitSample.series_id, LimitSample.captured_at,
                LimitSample.utilization, LimitSample.resets_at)
@@ -74,19 +75,20 @@ async def _recent_samples(db: AsyncSession, account_id: int,
 
 async def _last_measured(db: AsyncSession, account_id: int,
                          series_id: int) -> tuple[float, dict | None, datetime] | None:
-    """Ostatnia probka tej serii, ktora byla PRAWDZIWYM pomiarem — wartosc, kwoty i czas.
+    """The last sample of this series that was a REAL measurement — value, amounts and time.
 
-    Potrzebne wylacznie dla serii z wycofanym miernikiem. Sam stan biezacy tego nie da:
-    `series_state` trzyma OSTATNI zapis, a przy zamknietej bramie ostatni zapis to wlasnie
-    brak pomiaru — z wyzerowanymi kwotami z payloadu wycofania. Bez tego siegniecia wiersz
-    traci jedyna liczbe, ktora o zuzyciu cokolwiek mowi, i to jest strata informacji,
-    a nie ochrona przed nia (zasada 4: pokazujemy ostatni ZMIERZONY procent, nie zero).
+    Needed only for series with a withdrawn meter. The current state alone cannot give it:
+    `series_state` holds the LAST write, and with the gate closed the last write is exactly
+    the absence of a measurement — with the amounts zeroed by the withdrawal payload.
+    Without this lookup the row loses the only number that says anything about usage, and
+    that is a loss of information, not protection from it (rule 4: show the last MEASURED
+    percent, not a zero).
 
-    Warunek jest caly w SQL, bo "pomiar" ma tu jedno znaczenie: niepusta wartosc, ktorej
-    guard nie uznal za cofnieta. Wycofany miernik NIE zapisuje wartosci (`parse_usage`
-    zwraca None), wiec wiersz z wartoscia jest z definicji wierszem sprzed blokady.
-    Jedno trafienie w `ix_samples_series_time`, i tylko dla serii z powodem — w praktyce
-    zera albo dwoch na konto.
+    The condition lives entirely in SQL, because "measurement" has one meaning here: a
+    non-empty value that the guard did not judge to have gone backwards. A withdrawn meter
+    does NOT write a value (`parse_usage` returns None), so a row with a value is by
+    definition a row from before the block. One hit on `ix_samples_series_time`, and only
+    for series that have a reason — in practice zero or two per account.
     """
     row = (await db.execute(
         select(LimitSample.utilization, LimitSample.extra, LimitSample.captured_at)
@@ -102,40 +104,43 @@ async def _last_measured(db: AsyncSession, account_id: int,
 
 def _delta_1h(rows: Sequence[Sample], *, now: datetime, current: float | None,
               resets_at: datetime | None) -> tuple[float | None, datetime | None]:
-    """Przyrost zuzycia i czas probki, od ktorej go liczymy.
+    """The rise in usage and the time of the sample it is counted from.
 
-    Baseline PRZYCIETY DO BIEZACEGO OKNA: bez tego zaraz po resecie punktem odniesienia byla
-    probka z poprzedniego okna i UI pisalo "-46 pp w ciagu godziny" przez cala godzine.
+    Baseline CLIPPED TO THE CURRENT WINDOW: without it, right after a reset the reference
+    point was a sample from the previous window and the UI showed "-46 pp in the last hour"
+    for a whole hour.
     """
     if current is None:
         return None, None
     if resets_at is not None and now > resets_at:
-        # Wszystkie probki naleza do POPRZEDNIEGO okna. Warunek bez tolerancji, dokladnie jak
-        # w freshness() — inaczej jedna karta pokazalaby "~0%" i delte ze starego okna.
+        # Every sample belongs to the PREVIOUS window. No tolerance in the condition,
+        # exactly as in freshness() — otherwise one card would show "~0%" and a delta
+        # from the old window.
         return None, None
     i = window_start_index(rows, settings.reset_window_eps_sec, settings.monotonic_eps)
     in_window = [(t, u) for t, u, _ in rows[i:] if u is not None]
     if len(in_window) < 2:
-        return None, None      # jedna probka to nie rozpietosc
+        return None, None      # one sample is not a span
     t0, u0 = in_window[0]
     return round(current - u0, 4), t0
 
 
 def _mark_duplicates(series: list[SeriesStatus]) -> None:
-    """API podaje te same limity dwukrotnie: `five_hour` i `limits[kind=session]`,
-    `seven_day` i `limits[kind=weekly_all]`, `seven_day_<model>` i `weekly_scoped`.
+    """The API reports the same limits twice: `five_hour` and `limits[kind=session]`,
+    `seven_day` and `limits[kind=weekly_all]`, `seven_day_<model>` and `weekly_scoped`.
 
-    Nie mapujemy ich na sztywno — hardkodowanie zestawu bucketow juz raz okazalo sie bledne
-    (5 z 17 kluczy bylo nieznanych). Zamiast tego parujemy po DANYCH: identyczne
-    (utilization, resets_at) oznacza ten sam limit. Wpis z `limits[]` wygrywa, bo niesie
-    `is_active` i `severity`, ktorych bucket nie ma.
+    We do not map them rigidly — hardcoding the set of buckets already turned out wrong once
+    (5 of 17 keys were unknown). Instead we pair them by DATA: an identical
+    (utilization, resets_at) means the same limit. The entry from `limits[]` wins, because it
+    carries `is_active` and `severity`, which a bucket does not have.
 
-    Gdy wartosci sie rozjada — a repo referencyjne opisuje, ze nowsze odpowiedzi zeruja
-    starsze pola per-model — pary po prostu nie powstana i obie serie beda widoczne.
-    To wlasciwe zachowanie: wolimy pokazac rozjazd niz go ukryc.
+    When the values drift apart — and the reference repo describes newer responses zeroing
+    the older per-model fields — the pairs simply will not form and both series stay visible.
+    That is the right behavior: better to show the divergence than to hide it.
 
-    DRUGA PARA jest innego rodzaju i dlatego ma osobna petle, a nie rozluzniony warunek
-    pierwszej: `spend` i `extra_usage` to dwa WIDOKI TEJ SAMEJ PULI kredytow, nie dwa limity.
+    THE SECOND PAIR is of a different kind, and that is why it has its own loop instead of a
+    loosened first condition: `spend` and `extra_usage` are two VIEWS OF THE SAME credit
+    pool, not two limits.
     """
     limits = [s for s in series if s.source == "limit"]
     for s in series:
@@ -150,24 +155,24 @@ def _mark_duplicates(series: list[SeriesStatus]) -> None:
                 s.duplicate_of = l.series_key
                 break
 
-    # Tu parujemy po TOZSAMOSCI ZRODLA, a nie po wartosci jak wyzej — i to nie jest wyjatek
-    # od tamtej zasady, tylko konsekwencja tego, ze te dwie serie NIE MOGA sie zgodzic
-    # liczbowo: `spend.percent` jest zaokraglony do int (93), `extra_usage.utilization`
-    # niesie pelna precyzje (92.656). Parowanie po danych nie zlapaloby ich nigdy.
-    # Zadna nazwa bucketu tu nie pada (zasada 5) — `source` jest enumem kontraktu.
+    # Here we pair by SOURCE IDENTITY, not by value as above — and this is not an exception
+    # to that rule, only a consequence of the fact that these two series CANNOT agree
+    # numerically: `spend.percent` is rounded to an int (93), `extra_usage.utilization`
+    # carries full precision (92.656). Pairing by data would never catch them.
+    # No bucket name appears here (rule 5) — `source` is an enum of the contract.
     #
-    # `spend` wygrywa, bo niesie kwoty w typie pienieznym i `severity`. Przegrany ZOSTAJE
-    # w odpowiedzi i nie wolno go stad usunac: jego `utilization` jest jedyna precyzyjna
-    # kopia tej liczby, a `extra` jedynym miejscem, w ktorym UI widzi `spend_limit_reached`,
-    # `user_disabled` i `credits_ever_enabled`. Gasnie tylko jego WIERSZ, bo UI rysuje
-    # `primary`.
+    # `spend` wins, because it carries the amounts in a monetary type and `severity`. The
+    # loser STAYS in the response and must not be removed from here: its `utilization` is
+    # the only precise copy of that number, and `extra` the only place where the UI sees
+    # `spend_limit_reached`, `user_disabled` and `credits_ever_enabled`. Only its ROW goes
+    # dark, because the UI draws `primary`.
     #
-    # Kaskada jest na to odporna z osobnego powodu: `facts` zbieramy PRZED tym filtrem
-    # (patrz `build_account_status`), wiec `build_cascade` czyta `source="extra_usage"`
-    # niezaleznie od tego, co tu ustawimy — nawet dla serii, ktora do `series[]` nie weszla.
+    # The cascade is immune to this for a separate reason: `facts` are collected BEFORE this
+    # filter (see `build_account_status`), so `build_cascade` reads `source="extra_usage"`
+    # no matter what is set here — even for a series that never made it into `series[]`.
     #
-    # Brak partnera => zostaje widoczny. Ta sama zasada co wyzej: wolimy pokazac rozjazd
-    # niz go ukryc.
+    # No partner => stays visible. The same rule as above: better to show the divergence
+    # than to hide it.
     spend = next((s for s in series if s.source == "spend"), None)
     if spend is not None:
         for s in series:
@@ -209,22 +214,22 @@ async def build_account_status(
     facts: list[SeriesFacts] = []
     for st, s in rows:
         raw_all = float(st.last_utilization) if st.last_utilization is not None else None
-        # Powod odtwarzamy z `last_extra`, a nie z osobnej kolumny: `enabled` i
-        # `disabled_reason` juz tam sa, wiec stan zapisany przed ta zmiana czyta sie
-        # poprawnie i zadna migracja nie jest potrzebna.
+        # The reason is rebuilt from `last_extra` rather than from a separate column:
+        # `enabled` and `disabled_reason` are already there, so state written before this
+        # change reads back correctly and no migration is needed.
         reason = meter_withdrawn(st.last_extra)
-        # Przy wycofanym mierniku CALY wiersz opisuje ostatni prawdziwy pomiar: jego
-        # wartosc, jego kwoty i jego czas. Payload wycofania nie niesie zadnej z tych
-        # rzeczy — ma wyzerowane `used`, `limit: null` i `percent: 0`.
+        # With a withdrawn meter the WHOLE row describes the last real measurement: its
+        # value, its amounts and its time. The withdrawal payload carries none of those
+        # things — it has `used` zeroed, `limit: null` and `percent: 0`.
         measured = await _last_measured(db, a.id, s.id) if reason else None
         raw_all = measured[0] if measured else (None if reason else raw_all)
         extra = measured[1] if measured else st.last_extra
 
-        # Fakty dla kaskady zbieramy PRZED filtrem widoku: `extra:usage` na koncie bez
-        # kredytow ma utilization = null i za chwile wypadnie, a kaskada z niego czyta.
-        # Kwoty ida z ostatniego pomiaru, wiec kaskada pokazuje, GDZIE stanales; `enabled`
-        # z tamtego `extra` mowi jeszcze `true`, ale powod ma nad nim pierwszenstwo
-        # (`cascade.build_cascade`) — inaczej zamknieta brama wygladalaby na otwarta.
+        # Facts for the cascade are collected BEFORE the view filter: `extra:usage` on an
+        # account without credits has utilization = null and is about to drop out, and the
+        # cascade reads from it. Amounts come from the last measurement, so the cascade shows
+        # WHERE the work stopped; `enabled` in that `extra` still says `true`, but the reason
+        # outranks it (`cascade.build_cascade`) — otherwise a closed gate would look open.
         facts.append(SeriesFacts(
             series_key=s.series_key, source=s.source, kind=s.kind,
             bucket_key=s.bucket_key, utilization=raw_all,
@@ -232,21 +237,21 @@ async def build_account_status(
             unavailable_reason=reason,
         ))
 
-        # Serie, ktore nigdy nie mialy wartosci (np. seven_day_opus na koncie bez Opusa)
-        # rejestrujemy, ale nie zasmiecamy nimi widoku.
+        # Series that never had a value (e.g. seven_day_opus on an account without Opus)
+        # are registered, but they do not clutter the view.
         if not s.ever_non_null and st.last_utilization is None:
             continue
 
-        # Fallback na last_captured_at dla wierszy sprzed migracji dodajacej
-        # last_confirmed_at — dla nich oba znaczenia sa i tak tozsame.
+        # Fallback to last_captured_at for rows predating the migration that added
+        # last_confirmed_at — for those the two meanings are identical anyway.
         confirmed = st.last_confirmed_at or st.last_captured_at
         captured, value_since = st.last_captured_at, st.value_since
         if measured:
-            # Znaczniki opisuja LICZBE, ktora stoi w wierszu. Ta liczba zostala ostatnio
-            # potwierdzona przed wycofaniem miernika i od tego czasu nikt jej nie
-            # potwierdzil — potem potwierdzalismy juz tylko, ze pomiaru nie ma. Zostawienie
-            # tu swiezego `confirmed_at` znaczyloby "zmierzone przed chwila" i bylo by
-            # dokladnie ta falszywa pewnoscia, przed ktora broni sie cale to narzedzie.
+            # The timestamps describe the NUMBER that appears in the row. That number was last
+            # confirmed before the meter was withdrawn and nobody has confirmed it since —
+            # after that the only thing confirmed was that there is no measurement. Leaving
+            # a fresh `confirmed_at` here would mean "measured a moment ago" and would be
+            # exactly the false certainty this whole tool defends against.
             captured = confirmed = value_since = measured[2]
         state = freshness(
             now=now,
@@ -257,16 +262,17 @@ async def build_account_status(
             client_silent_sec=settings.client_silent_sec,
         )
         raw_u = raw_all
-        # `utilization` to liczba BIEZACA, a przy wycofanym mierniku zadnej biezacej nie ma
-        # — nawet gdy ostatni pomiar jest sprzed minuty i `freshness` mowi `live`.
-        # `rawUtilization` zostaje, bo to ostatni ZMIERZONY procent, i to jest jedyne, co
-        # o zuzyciu wiemy. UI liczy `utilization ?? rawUtilization`, wiec zobaczy wlasnie
-        # jego — z wiekiem odczytu i powodem obok, nigdy jako pomiar biezacy.
+        # `utilization` is the CURRENT number, and with a withdrawn meter there is no current
+        # one — not even when the last measurement is a minute old and `freshness` says
+        # `live`. `rawUtilization` stays, because it is the last MEASURED percent, and that
+        # is all that is known about usage. The UI computes `utilization ?? rawUtilization`,
+        # so it sees exactly that — with the reading's age and the reason beside it, never as
+        # a current measurement.
         shown = None if reason else display_utilization(state, raw_u)
         secs = (int((st.last_resets_at - now).total_seconds())
                 if st.last_resets_at is not None else None)
-        # `shown`, nie `raw_u`: delta towarzyszy liczbie widocznej na ekranie, a przy
-        # `unknown` liczby nie ma.
+        # `shown`, not `raw_u`: the delta accompanies the number visible on screen, and
+        # with `unknown` there is no number.
         d_pct, d_from = _delta_1h(recent.get(s.id, ()), now=now, current=shown,
                                   resets_at=st.last_resets_at)
 
@@ -285,11 +291,12 @@ async def build_account_status(
 
     _mark_duplicates(series)
 
-    # Bylo tu ostrzezenie "czesc serii na koncie X jest w stanie unknown". Zniklo razem
-    # z samym pojeciem `unknown` w UI: widok pokazuje teraz ostatni ZMIERZONY procent, a to,
-    # ile jest wart, mowi etykieta wieku odczytu przy kazdej serii. Baner powtarzal wiec
-    # nazwa stanu to, co obok stalo juz liczba minut. `warnings[]` zostaje w kontrakcie —
-    # dzis nikt go nie zapelnia i to jest poprawny stan, nie brak implementacji.
+    # There used to be a warning here: "some series on account X are in the unknown state".
+    # It went away together with the very notion of `unknown` in the UI: the view now shows
+    # the last MEASURED percent, and the reading-age label next to each series says how much
+    # it is worth. So the banner restated with a state name what was already shown
+    # beside it as a number of minutes. `warnings[]` stays in the contract — nobody fills
+    # it today, and that is the correct state, not a missing implementation.
 
     card = AccountStatus(
         uuid=a.account_uuid, label=a.label, email=a.email,

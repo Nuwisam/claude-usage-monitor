@@ -1,24 +1,24 @@
-"""POST /api/session-alert — sesje Claude Code, ktore stanely i czekaja na czlowieka.
+"""POST /api/session-alert — Claude Code sessions that have halted and await a human.
 
-Drugi endpoint bez SSO, po `/ingest`, i z ta sama para warstw: filtr brzegowy
-`X-Ingest-Key` w Apache oraz Bearer per maszyna tutaj. Token identyfikuje MASZYNE,
-a nie konto — dokladnie jak przy ingescie.
+The second endpoint without SSO, after `/ingest`, and with the same pair of layers: the
+edge filter `X-Ingest-Key` in Apache plus a per-machine Bearer here. The token identifies
+the MACHINE, not the account — exactly as with ingest.
 
-Czym ten endpoint rozni sie od `/ingest`, i dlaczego to jest wlasciwe:
+How this endpoint differs from `/ingest`, and why that is the right call:
 
-  * NIE dotyka bazy. Ani sesji, ani transakcji, ani `_WRITE_LOCK` — stan trafia do
-    slownika w pamieci procesu. Blokada jest z definicji chwilowa: gasnie, gdy ktos
-    kliknie "tak". Tabela oznaczalaby migracje i cykl zycia wierszy dla czegos, po
-    czym nie ma sie zostac zaden slad.
-  * Nie serializuje zapisow. Nie ma czego serializowac: kazdy POST ZASTEPUJE wpis
-    swojej maszyny w calosci, wiec dwa nakladajace sie zadania z tej samej maszyny
-    daja ten sam wynik co jedno pozniejsze.
-  * Publikuje przez `broker.publish_all`, nie `publish` — alert nie nalezy do zadnego
-    pojedynczego konta, a ta sama ramka ma dojsc do panelu niezaleznie od tego, na
-    ktore konta jest zapisany.
+  * It does NOT touch the database. No session, no transaction, no `_WRITE_LOCK` — the
+    state goes into a dictionary in process memory. A block is ephemeral by definition:
+    it dies the moment someone clicks "yes". A table would mean migrations and a row
+    lifecycle for something that is meant to leave no trace behind.
+  * It does not serialize writes. There is nothing to serialize: every POST REPLACES its
+    machine's entry whole, so two overlapping requests from the same machine give the
+    same result as the later one alone.
+  * It publishes through `broker.publish_all`, not `publish` — an alert belongs to no
+    single account, and the same frame has to reach the panel no matter which accounts
+    the panel is subscribed to.
 
-Ciezar rozmiaru sprawdzamy PRZED parsowaniem JSON, tak samo jak w `/ingest`: endpoint
-jest wystawiony w internecie.
+The size cap is checked BEFORE the JSON is parsed, the same as in `/ingest`: this endpoint
+is exposed to the internet.
 """
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ from app.services.ingest import utcnow
 
 router = APIRouter()
 
-# Panel pokazuje jedna karte i garstke wierszy "inne:". Zbior wiekszy niz to jest
-# objawem awarii zamiatania po stronie klienta, nie stanem do wyswietlenia.
+# The panel shows one card and a handful of "other:" rows. A set larger than that is a
+# symptom of a sweep failure on the client side, not a state worth displaying.
 MAX_ALERTS = 64
 
 
@@ -70,19 +70,19 @@ async def session_alert(
         if not isinstance(item, dict):
             continue
         try:
-            # `machine` nadaje SERWER z tokenu, nigdy klient: nazwa maszyny jest
-            # etykieta widoczna na panelu i jedynym miejscem, w ktorym ktos moglby
-            # sie podszyc pod cudzy wpis, gdyby wolno ja bylo przyslac.
+            # `machine` is set by the SERVER from the token, never by the client: the
+            # machine name is the label shown on the panel, and the only place where
+            # someone could impersonate another's entry if it were allowed to be sent.
             alerts.append(SessionAlert(**dict(item, machine=machine)))
         except ValidationError:
-            # Pojedynczy zepsuty wpis nie moze skasowac calego zbioru maszyny —
-            # to byloby zgaszenie alertu przez blad formatowania.
-            logger.warning("session-alert: maszyna {} przyslala wpis nie do przyjecia",
+            # A single broken entry must not wipe the machine's whole set — that would
+            # mean a formatting error silencing the alert.
+            logger.warning("session-alert: machine {} sent an invalid entry",
                            machine)
 
     set_alerts(machine, alerts)
     reached = broker.publish_all(alert_frame(now=utcnow()))
-    logger.info("session-alert: {} — {} wpis(ow), {} odbiorca(ow)",
+    logger.info("session-alert: {} — {} entries, {} subscribers",
                 machine, len(alerts), reached)
     return SessionAlertResult(ok=True, machine=machine, accepted=len(alerts),
                               subscribers=reached)

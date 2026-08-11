@@ -1,201 +1,207 @@
 # Claude Usage Monitor
 
-Podgląd **aktualnych limitów Claude** dla wielu kont (Max i Team), z historią w bazie.
+A live view of **current Claude limits** across multiple accounts (Max and Team), with history in a database.
 
-Dane zbiera sonda uruchamiana z hooka Claude Code **na maszynie użytkownika**. Sonda
-**nie wysyła żadnego żądania do `api.anthropic.com`** — pomiar zleca samemu Claude Code
-(`claude -p "/usage"`, zero zużycia limitu) i czyta wynik z dysku, po czym wysyła do monitora
-sam wynik pomiaru.
+Data is collected by a probe run from a Claude Code hook **on the user's machine**. The probe
+**sends no request to `api.anthropic.com`** — the measurement is delegated to Claude Code itself
+(`claude -p "/usage"`, zero limit consumption), and the probe reads the result off disk, then sends
+the monitor just that measurement.
 
-Żaden token nie opuszcza maszyny i **żaden nie jest używany do uwierzytelniania czegokolwiek**
-po naszej stronie: żądanie wykonuje pierwszorzędny klient własnym, samodzielnie odświeżanym
-tokenem. Endpoint tokenowy nie jest wołany nigdy, więc nie ma tu głównego wektora utraty
-konta — rotacji jednorazowego refresh tokenu.
+No token ever leaves the machine, and **none is used to authenticate anything** on our side: the
+request is made by the first-party client with its own, self-refreshing token. The token endpoint
+is never called, so the main vector for losing an account — rotation of the one-time refresh
+token — does not apply here at all.
 
-## Stan
+## Status
 
-| Element | Stan |
+| Piece | State |
 |---|---|
-| Sonda + hooki (12 zdarzeń, `async`) | działa |
-| Backend + MariaDB w Compose | działa |
-| Brama autoryzacji: `none` / `header` / `verify` | działa |
-| API odczytu, kontrakt v3 | działa |
-| UI — **Live** i **Historia** | działa |
-| Panele biurkowe przez SSE — AX206 i Turing rev A | działa |
-| Alert „Claude czeka na Ciebie" — toast + karta i znacznik na panelu | działa; cztery układy karty zależne od liczby blokad |
+| Probe + hooks (12 events, `async`) | working |
+| Backend + MariaDB in Compose | working |
+| Authorization gate: `none` / `header` / `verify` | working |
+| Read API, contract v3 | working |
+| UI — **Live** and **History** | working |
+| Desk panels over SSE — AX206 and Turing rev A | working |
+| "Claude is waiting for you" alert — toast plus card, and a marker on the panel | working; four card layouts depending on the number of blocks |
 
-Diagnostyka (zdarzenia, batche, maszyny, surowe payloady) została świadomie przy `curl` —
-patrz [docs/API.md](docs/API.md) § 10.
+Diagnostics (events, batches, machines, raw payloads) were deliberately left at `curl` —
+see [docs/API.md](docs/API.md) § 10.
 
-Panele: instalacja, `panel.json` i **wskazanie modułu po łańcuchu portów USB** (`port_path`,
-`--list`, `--identify`) — [`panel/README.md` → Instalacja](panel/README.md#instalacja).
+Panels: installation, `panel.json`, and **identifying a unit by its USB port chain** (`port_path`,
+`--list`, `--identify`) — [`panel/README.md` → Installation](panel/README.md#installation).
 
-Typowe wdrożenie stawia to za reverse proxy z SSO, ale to jedna z trzech możliwości, nie założenie
-projektu. Instalacja na własnej maszynie nie wymaga niczego przed backendem.
+A typical deployment puts this behind a reverse proxy with SSO, but that's one of three options,
+not a project assumption. Installing it on your own machine needs nothing in front of the backend.
 
-## Architektura
+## Architecture
 
 ```
-maszyna z Claude Code                              serwer
-┌──────────────────────────────┐
-│ 12 hooków (async), m.in.     │
-│ PostToolUse, PermissionRequest│
-│        ↓                     │      HTTPS + Bearer + X-Ingest-Key
-│ client/usage-probe.py        │ ───────────────────────────────────►  Apache
-│  · zleca `claude -p /usage`  │                                         │
-│  · czyta cache + stdout      │       /claude-usage/api/ingest        ──► backend
-│  · throttle 60 s             │       /claude-usage/api/session-alert ──► backend
-│  · spool przy awarii         │       /claude-usage/api/*             ──► backend (brama)
-│  · alert zablokowanej sesji  │       /claude-usage/                  ──► backend (statyki)
-└──────────────────────────────┘                          ┌──────────────┴──────────────┐
-                                                          │ backend  FastAPI :8000       │
-                                                          │   + zbudowany frontend       │
-                                                          │ mariadb  (sieć internal)     │
-                                                          └──────────────────────────────┘
+machine running Claude Code                          server
+┌───────────────────────────────┐
+│ 12 hooks (async), incl.       │
+│PostToolUse, PermissionRequest │
+│        ↓                      │      HTTPS + Bearer + X-Ingest-Key
+│ client/usage-probe.py         │ ───────────────────────────────────►  Apache
+│ · delegates `claude -p /usage`│                                         │
+│ · reads cache + stdout        │       /claude-usage/api/ingest        ──► backend
+│ · 60 s throttle               │       /claude-usage/api/session-alert ──► backend
+│ · spool on failure            │       /claude-usage/api/*             ──► backend (gate)
+│ · blocked-session alert       │       /claude-usage/                  ──► backend (statics)
+└───────────────────────────────┘                          ┌──────────────┴──────────────┐
+                                                            │ backend  FastAPI :8000       │
+                                                            │   + built frontend           │
+                                                            │ mariadb  (internal network)  │
+                                                            └──────────────────────────────┘
 ```
 
-**Dwa kontenery, nie trzy.** Statyki UI serwuje backend (etap `node` w jego Dockerfile).
-Osobny nginx z `auth_request` niesie pułapkę, w której `$scheme` w kontenerze to `http`,
-a `$request_uri` nie zawiera prefiksu — przez co powrót po zalogowaniu wyrzuca na korzeń
-serwisu. Tu bramą zostaje backend, budujący `redirect_url` z jawnych `PUBLIC_ORIGIN`
-+ `APP_BASE_PATH`.
+**Two containers, not three.** The backend serves the UI statics (the `node` stage in its
+Dockerfile builds them). A separate nginx with `auth_request` hides a trap: `$scheme`
+inside the container is `http` and `$request_uri` carries no prefix — so the return after login
+lands on the service's root. Here the gate is the backend itself, building `redirect_url` from
+explicit `PUBLIC_ORIGIN` + `APP_BASE_PATH`.
 
-## Dlaczego tak, a nie inaczej
+## Why this way, not another
 
-Podejścia sprawdzone i odrzucone:
+Approaches tried and rejected:
 
-- **Statusline hook** — byłby darmowy (zero wywołań API), ale **nie działa w rozszerzeniu
-  VS Code**; to funkcja wyłącznie CLI/TUI ([#55643](https://github.com/anthropics/claude-code/issues/55643),
-  zamknięte jako `not_planned`). Repo referencyjne stoi właśnie na tym mechanizmie i dlatego
-  nie jest dla nas ścieżką. Daje też wyłącznie `five_hour` i `seven_day` — bez kaskady, kwot
-  w USD, `is_active` i `severity`.
-- **Poller na serwerze** — wymagałby trzymania tokenów i **rotowania refresh tokenu**, czyli
-  dokładnie tego, co powoduje utratę konta.
-- **Parsowanie lokalnych JSONL** — niedokładne; zgłoszenie CCUM #202 dokumentuje rozjazd
-  1.4% vs 12% wobec serwera.
-- **Własne wołanie `/api/oauth/usage`** — działało (wersja 2 sondy), ale wymagało użycia
-  tokena OAuth i podszycia się pod `User-Agent: claude-code/…`. Warunki Anthropic zakazują
-  używania tych tokenów *„in any other product, tool, or service"*, bez wyjątku dla odczytu.
-- **`--debug api` jako źródło** — sprawdzone, **nie zrzuca ciała odpowiedzi** endpointu.
-  Gdyby zrzucał, cała dwuźródłowość niżej byłaby zbędna.
+- **Statusline hook** — would be free (zero API calls), but **does not work in the VS Code
+  extension**; it's a CLI/TUI-only feature ([#55643](https://github.com/anthropics/claude-code/issues/55643),
+  closed as `not_planned`). The reference repo is built on exactly this mechanism, which is
+  precisely why it isn't a path for us. It also only gives `five_hour` and `seven_day` — no
+  cascade, no dollar quotas, no `is_active` and no `severity`.
+- **Server-side poller** — would require holding tokens and **rotating the refresh token**,
+  which is exactly what causes account loss.
+- **Parsing local JSONL** — inaccurate; CCUM issue #202 documents a 1.4% vs 12% gap against
+  the server.
+- **Calling `/api/oauth/usage` directly** — worked (probe version 2), but required using the
+  OAuth token and impersonating `User-Agent: claude-code/…`. Anthropic's terms forbid using
+  those tokens *"in any other product, tool, or service"*, with no exception for read-only use.
+- **`--debug api` as a source** — checked, **does not dump the response body** of the endpoint.
+  If it did, the whole two-source setup below would be unnecessary.
 
-### Co robimy zamiast tego
+### What we do instead
 
-Pomiar zleca **sam Claude Code**: `claude -p "/usage"`. Komenda jest zarejestrowana dwukrotnie
-i wariant `supportsNonInteractive` zwraca `{type:"text"}` → `shouldQuery=false`, więc **żaden
-turn modelu się nie odbywa**. Zmierzone: `num_turns=0`, `duration_api_ms=0`,
-`total_cost_usd=0`, ~3,4 s na wywołanie. Pomiar limitu nie zużywa limitu.
+The measurement is delegated to **Claude Code itself**: `claude -p "/usage"`. The command is
+registered twice, and the `supportsNonInteractive` variant returns `{type:"text"}` →
+`shouldQuery=false`, so **no model turn happens at all**. Measured: `num_turns=0`,
+`duration_api_ms=0`, `total_cost_usd=0`, ~3.4 s per call. Measuring the limit does not consume
+the limit.
 
-Sonda czyta wynik z dwóch miejsc, bo świeżość i kompletność leżą gdzie indziej:
+The probe reads the result from two places, because freshness and completeness live in
+different spots:
 
-| Źródło | Świeżość | Zawartość |
+| Source | Freshness | Content |
 |---|---|---|
-| stdout `/usage` | świeże przy każdym wywołaniu | procenty głównych okien |
-| `~/.claude.json` → `cachedUsageUtilization` | ≤ 5 min | pełne surowe ciało odpowiedzi |
+| stdout of `/usage` | fresh on every call | percentages of the main windows |
+| `~/.claude.json` → `cachedUsageUtilization` | ≤ 5 min | the full raw response body |
 
-Pięciominutowy throttle w Claude Code dotyczy **zapisu na dysk**, nie pobrania — stąd ten
-rozdział. Sonda scala jedno z drugim, a wynik ma dokładnie ten sam kształt co dawna odpowiedź
-HTTP, więc parser backendu nie wymagał zmian.
+Claude Code's five-minute throttle applies to **writing to disk**, not to fetching — hence this
+section. The probe merges one with the other, and the result has exactly the same shape as the
+old HTTP response, so the backend's parser needed no changes.
 
-## Kluczowe decyzje projektowe
+## Key design decisions
 
-**Otwarty zbiór serii.** Odpowiedź ma 17 kluczy najwyższego poziomu, z czego 5 nie było znanych
-ani z walidatora w binarce Claude Code, ani z repo referencyjnego. Serie są wierszami w tabeli,
-nie kolumnami — nowy bucket u Anthropic nie wymaga migracji.
+**An open set of series.** The response has 17 top-level keys, 5 of which were known neither
+from the validator inside the Claude Code binary nor from the reference repo. Series are rows
+in the table, not columns — a new bucket at Anthropic's end needs no migration.
 
-**Limity są kaskadą.** Okno 5 h / tygodniowe → po wyczerpaniu kredyty (`extra_usage` / `spend`)
-→ twardy blok. Dlatego `spend` jest serią pierwszej kategorii, a `limits[].is_active` mówi,
-co realnie ogranicza *teraz*.
+**Limits are a cascade.** 5-hour window / weekly window → after exhaustion, credits
+(`extra_usage` / `spend`) → hard block. That's why `spend` is a first-class series, and
+`limits[].is_active` says what is really constraining *right now*.
 
-**Cztery stany świeżości, a `unknown` nigdy nie jest zerem.** Najgorszy tryb awarii to pokazanie
-fałszywego, pewnie wyglądającego 0% — bo na tej podstawie odpalisz duże zadanie i trafisz
-w ścianę. `ingest_batches` odróżnia „cisza klienta" (można wnioskować reset) od „klient działa,
-ale brak próbek" (awaria — mówimy „nie wiem").
+**Four freshness states, and `unknown` is never zero.** The worst failure mode is showing a
+false, confident-looking 0% — because that's the basis on which you'd launch a big task and
+hit a wall. `ingest_batches` distinguishes "the client is quiet" (a reset can be inferred) from
+"the client is running, but there are no samples" (a failure — we say "I don't know").
 
-**Tożsamość konta z `oauthAccount.accountUuid`, nie z konfiguracji.** Na jednej maszynie
-przełączasz konta przez `/login`, a `settings.json` jest wspólny — statyczny label przypisywałby
-połowę próbek do złego konta i cicho zatruwał historię obu.
+**Account identity from `oauthAccount.accountUuid`, never from configuration.** On one machine
+you switch accounts through `/login`, and `settings.json` is shared — a static label would
+assign half the samples to the wrong account and silently poison both histories.
 
-**Zablokowana sesja to sygnał, nie dana.** Gdy Claude czeka na Twoją zgodę, odpowiedź albo
-akceptację planu, tura po prostu stoi — i nic Ci tego nie powie, jeśli odszedłeś od biurka.
-Sonda podnosi wtedy toast lokalnie i wysyła alert na panel. Idzie on
-przez backend, bo **sesja może chodzić na maszynie zdalnej, a panel stoi lokalnie**, ale
-**nie trafia do bazy**: blokada gaśnie, gdy klikniesz „tak", więc tabela oznaczałaby migrację
-i cykl życia wierszy dla stanu, po którym nie ma zostać żaden ślad. Szczegóły:
-[docs/API.md § 3.2](docs/API.md), instalacja: [`client/README.md`](client/README.md#instalacja).
+**A blocked session is a signal, not a datum.** When Claude is waiting on your approval, your
+reply, or acceptance of a plan, the turn simply stalls — and if you have stepped away from
+the desk, nothing tells you. The probe then raises a toast locally and sends an alert to the panel. It
+travels through the backend, because **the session may be running on a remote machine while the
+panel sits locally**, but **it never reaches the database**: the block clears the moment you
+click "yes", so a table would mean migrations and a row lifecycle for a state that is meant to
+leave no trace behind. Details: [docs/API.md § 3.2](docs/API.md), installation:
+[`client/README.md`](client/README.md#installation).
 
-## Instalacja klienta na nowej maszynie
+## Installing the client on a new machine
 
-**[`client/README.md` → Instalacja](client/README.md#instalacja).** Tam jest cała
-procedura: wymagania, wydanie tokenu maszyny po stronie serwera, konfiguracja, handshake
-sprawdzający sekrety przed dotknięciem `settings.json`, przekierowanie, hooki i weryfikacja.
-Streszczenia tutaj celowo nie ma — rozjechałoby się z oryginałem.
+**[`client/README.md` → Installation](client/README.md#installation).** The whole procedure is
+there: requirements, issuing a machine token on the server, configuration, a handshake that
+checks the secrets before touching `settings.json`, the redirect, the hooks, and verification.
+There is deliberately no summary here — it would drift out of sync with the original.
 
-Sonda bez konfiguracji **nie wysyła nic na zewnątrz**: mierzy i pisze do lokalnego
-`usage-samples.jsonl`, i nie potrzebuje serwera. Do obejrzenia tego logu wystarczy
-`python client/analyze-samples.py` — monitor nie jest do tego konieczny.
+Without configuration the probe **sends nothing outward**: it measures and writes to a local
+`usage-samples.jsonl`, and needs no server. To look at that log, `python client/analyze-samples.py`
+is enough — the monitor isn't required for that.
 
-Jedno zastrzeżenie, bo bywa niespodzianką: **sygnalizator zablokowanej sesji działa też bez
-konfiguracji** i na Windows podnosi wtedy toasty. Wysyłka milczy, powiadomienia nie. Gasi je
-`"session_status": false` w `config.json`, a sam toast `"toast": false`.
+One caveat, because it tends to surprise people: **the blocked-session signaller also works
+without configuration**, and on Windows it raises toasts even then. Sending stays silent, but
+notifications don't. `"session_status": false` in `config.json` turns those off, and the toast
+alone is turned off by `"toast": false`.
 
-## Wdrożenie serwera
+## Server deployment
 
 ```bash
 cp .env.example .env      # MARIADB_*, AUTH_MODE, INGEST_TOKENS
 docker compose up -d --build
 ```
 
-`AUTH_MODE` jest **wymagane i nie ma wartości domyślnej**. Bez niego kontener nie wstanie —
-tak ma być, bo tylko Ty wiesz, czy przed backendem cokolwiek stoi.
+`AUTH_MODE` is **required and has no default**. Without it the container will not start —
+that's deliberate, because only you know whether anything sits in front of the backend.
 
-**Lokalnie, bez niczego przed backendem.** `AUTH_MODE=none`. Port ląduje na
-`127.0.0.1:8080`, więc UI działa pod <http://127.0.0.1:8080/claude-usage/> i nie jest
-osiągalne z sieci. Nie zmieniaj `BACKEND_BIND` na `0.0.0.0`, dopóki trybem jest `none`.
+**Locally, with nothing in front of it.** `AUTH_MODE=none`. The port lands on
+`127.0.0.1:8080`, so the UI works at <http://127.0.0.1:8080/claude-usage/> and is unreachable
+from the network. Do not change `BACKEND_BIND` to `0.0.0.0` while the mode is still `none`.
 
-**Za reverse proxy.** `AUTH_MODE=header` (proxy podaje adres w nagłówku — musi go *usuwać*
-z żądań przychodzących) albo `AUTH_MODE=verify` (backend pyta usługę tożsamości).
-W obu razach zdejmij publikowany port, bo proxy sięga kontenera po sieci dockerowej —
-`BACKEND_BIND=` **nie wystarczy**, `:-` odpala się także na pustej wartości:
+**Behind a reverse proxy.** `AUTH_MODE=header` (the proxy supplies the address in a header — it
+must *strip* that header from incoming requests) or `AUTH_MODE=verify` (the backend asks an
+identity service). In both cases remove the published port, because the proxy reaches the
+container over the Docker network — `BACKEND_BIND=` **isn't enough**, since `:-` fires on an
+empty value too:
 
 ```yaml
-# docker-compose.override.yml (nieśledzony)
+# docker-compose.override.yml (untracked)
 services:
   claude_usage_monitor_backend:
     ports: !reset []
 ```
 
-Przykładowy `Include` dla Apache leży w
+A sample Apache `Include` sits in
 [deploy/apache/](deploy/apache/claude-usage-monitor-include.conf.example);
-`__INGEST_EDGE_KEY__` podstawiasz przy deployu. Krok po kroku:
+you substitute `__INGEST_EDGE_KEY__` at deploy time. Step by step:
 [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
-## Testy
+## Tests
 
 ```bash
 cd backend
 pip install -e ".[dev]"
-pytest                    # zmienne środowiskowe ustawia tests/conftest.py
+pytest                    # env vars are set by tests/conftest.py
 
 cd ../frontend && npm run typecheck
 cd ../panel && pytest
 ```
 
-324 testy backendu i 319 panelu, w tym normalizator i ścieżka zapisu uruchamiane na
-**realnym payloadzie** z konta Max (`backend/tests/fixtures/usage_max.json`), nie na
-wymyślonym. Kwoty rozliczeniowe w fixture'ach są przeskalowane; procenty zostały
-oryginalne, więc `spend.percent` dalej zgadza się z `used/limit` obok.
+364 backend tests and 371 panel tests, including the normalizer and the write path, which run
+against a **real payload** from a Max account (`backend/tests/fixtures/usage_max.json`), not an
+invented one. Billing amounts in the fixtures are rescaled; the percentages stayed
+original, so `spend.percent` still agrees with the `used/limit` pair beside it.
 
-Kilka z nich pilnuje błędów, które raz już przeszły niezauważone na produkcję — dedup i guard
-monotoniczności przy kołyszącym się `resets_at`, fallback SPA zjadający błędy API, czas ze
-strefą w parametrach `/history`, `unknown` renderowane jako zero, endpointy diagnostyczne
-czytające kolumny usunięte migracją. Przy zmianach w tych okolicach zacznij od przeczytania ich nazw.
+Several of them guard against bugs that once already reached a live deployment unnoticed — dedup and
+the monotonicity guard against a wobbling `resets_at`, the SPA fallback swallowing API errors,
+a timezone-bearing time in `/history` parameters, `unknown` rendered as zero, diagnostic
+endpoints reading columns a migration had dropped. When changing code near these, start by
+reading their names.
 
-## Licencja
+## License
 
-MIT. Projekt nie jest powiązany z Anthropic.
+MIT. This project is not affiliated with Anthropic.
 
-Sonda nie wysyła żadnego żądania do `api.anthropic.com` i nie używa tokena OAuth do
-uwierzytelniania czegokolwiek — pomiar zleca Claude Code własnym kanałem. Kształt danych,
-które czytamy z jego cache, pozostaje jednak nieudokumentowany i może się zmienić bez
-ostrzeżenia — stąd archiwum surowych odpowiedzi i tolerancyjny parser.
+The probe sends no request to `api.anthropic.com` and does not use the OAuth token to
+authenticate anything — the measurement is delegated to Claude Code through its own channel.
+The shape of the data we read from its cache, however, remains undocumented and may change
+without warning — hence the archive of raw responses and the tolerant parser.

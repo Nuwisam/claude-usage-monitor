@@ -8,7 +8,7 @@ Three decisions that are not obvious:
    that surface closed and is cheaper anyway: one frame instead of a full multi-account
    response plus, under AUTH_MODE=verify, a round-trip to the identity service.
 
-2. THE KEY IS `account_uuid`, NEVER THE EMAIL. One address really does point at several
+2. THE KEY IS `account_uuid`, NEVER THE EMAIL. One email address really does point at several
    accounts (Pro and a Team seat under the same address), and `Account.email` is
    overwritten on every ingest from the payload. Addressing by email would mean the set of
    accounts under a subscription changes without the subscriber knowing — silently.
@@ -16,7 +16,7 @@ Three decisions that are not obvious:
    this (rule 7).
 
 3. PUBLISHING NEVER WAITS. `put_nowait` only; on a full queue we drain it and insert a
-   `lag` frame. Ingest sits in the path of your actual work — a slow consumer must not
+   `lag` frame. Ingest sits on the critical path of your actual work — a slow consumer must not
    slow the probe down, and losing intermediate frames is harmless because every frame is
    the account's FULL state, not a delta.
 
@@ -78,25 +78,26 @@ def bye_frame(reason: str) -> str:
 
 
 # --------------------------------------------------------------------------- alerts
-# Sesje, ktore stanely i czekaja na czlowieka. IN-PROCESS, bez bazy — stan z definicji
-# chwilowy, a tabela oznaczalaby migracje i cykl zycia wierszy dla czegos, co gasnie,
-# gdy ktos kliknie "tak".
+# Sessions that have stalled and are waiting for a human. IN-PROCESS, no database — the
+# state is ephemeral by definition, and a table would mean a migration and a row lifecycle
+# for something that disappears the moment somebody clicks "yes".
 #
-# UWAGA, restart procesu NIE jest tu przezroczysty i wczesniej stalo tu zdanie, ze jest.
-# Mapa idzie do zera, ale sonda o tym nie wie: ona porownuje swoj znacznik z WLASNYM
-# katalogiem stanu, a te sie zgadzaja, wiec nie ma powodu wysylac czegokolwiek. Zywa blokada
-# nie zostaje wiec ogloszona ponownie — az do najblizszej ZMIANY zbioru na maszynie.
-# Zeby to naprawic, serwer musialby powiedziec sondzie, co ma (np. w odpowiedzi na POST
-# pomiaru, ktory i tak leci co minute) — dopoki tego nie ma, jest to znane ograniczenie.
+# NOTE, a process restart is NOT transparent here, and a sentence claiming otherwise used
+# to be here. The map goes to zero, but the probe does not know that: it compares
+# its own timestamp against its OWN state directory, and those two agree, so it has no reason
+# to send anything. A live block is therefore not announced again — not until the next CHANGE
+# of the set on that machine. To fix it, the server would have to tell the probe what it
+# holds (e.g. in the reply to the measurement POST, which goes out every minute anyway) —
+# until that exists, this is a known limitation.
 #
-# Klucz to NAZWA MASZYNY z tokenu ingestu, a wartoscia jest CALY biezacy zbior tej
-# maszyny. Kazdy POST zastepuje wpis maszyny w calosci, wiec nie ma tu stanu do
-# uzgadniania i nie ma sposobu, zeby zgubione "wyjscie" zostawilo sierote.
+# The key is the MACHINE NAME from the ingest token, and the value is that machine's ENTIRE
+# current set. Every POST replaces the machine's entry as a whole, so there is no state to
+# reconcile here and no way for a lost "exit" to leave an orphan behind.
 ALERTS: dict[str, list[SessionAlert]] = {}
 
-# Sufit wieku przy skladaniu snapshotu. Writer ma wlasny TTL (`blocked_ttl_sec`), ale
-# maszyna, ktora zniknela w trakcie blokady, nigdy juz nie przysle korekty — bez tego
-# jej wpis wisialby do restartu procesu.
+# Age ceiling applied when the snapshot is assembled. The writer has its own TTL
+# (`blocked_ttl_sec`), but a machine that vanished mid-block will never send a correction —
+# without this its entry would hang there until the process restarts.
 ALERT_MAX_AGE_SEC = 86400.0
 
 
@@ -112,9 +113,9 @@ def _aware(v: datetime) -> datetime:
 
 
 def current_alerts(*, now: datetime) -> list[SessionAlert]:
-    """Zbior ze wszystkich maszyn, najstarsze pierwsze. Wpis bez `since` przechodzi:
-    brak stempla znaczy 'nie wiem, jak dlugo', nie 'przeterminowany' — i laduje na
-    koncu, bo o kolejnosci ma decydowac wiek, a nie brak wiedzy o nim."""
+    """The set from every machine, oldest first. An entry without `since` gets through:
+    a missing timestamp means 'no idea how long', not 'expired' — and it lands at the
+    end, because order is to be decided by age, not by the absence of knowledge about it."""
     ref = _aware(now)
     out: list[SessionAlert] = []
     for alerts in ALERTS.values():
@@ -219,7 +220,7 @@ class Broker:
         Deliberately NOT a second subscription axis. The alternative (index by machine,
         subscribe the panel to machines) was designed and dropped: it rested on the
         premise that routing by account would leak project names to OTHER subscribers,
-        and that premise is false here. `ALLOWED_EMAILS` holds one address, sso.py
+        and that premise is false here. `ALLOWED_EMAILS` holds one email address, sso.py
         rejects every other one with 403 even if the proxy lets it through, and
         `STREAM_TOKENS` holds a single entry labelled `panel`. There is no second
         person for anything to leak to.

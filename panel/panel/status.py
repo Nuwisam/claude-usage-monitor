@@ -1,34 +1,36 @@
-"""Ramka `alert` -> obiekty, ktore panel umie narysowac.
+"""The `alert` frame -> objects the panel knows how to draw.
 
-Parser LADUNKU RAMKI, nie katalogu. Pliki stanu leza na maszynie z sesja, a ta bywa
-zdalna — panel widzi wylacznie to, co przyszlo strumieniem.
+A parser of the FRAME PAYLOAD, not of a directory. State files live on the machine
+running the session, and that machine may be remote — the panel sees only what
+arrived over the stream.
 
-Regula jak w reszcie klienta: zepsuty wpis nie moze zabic panelu. Kazda funkcja tutaj
-albo zwraca sensowna wartosc, albo None; nigdy nie rzuca.
+Same rule as in the rest of the client: a broken entry must not kill the panel. Every
+function here either returns a sensible value or None; it never raises.
 """
 
-# Napisy na karcie. Wersalikami, bo to jest baner, a nie zdanie.
+# Card captions. Uppercase, because this is a banner, not a sentence.
 REASONS = {
-    "permission": "CZEKA NA ZGODĘ",
-    "question": "PYTANIE DO CIEBIE",
-    "plan": "PLAN DO ZATWIERDZENIA",
+    "permission": "NEEDS PERMISSION",
+    "question": "QUESTION FOR YOU",
+    "plan": "PLAN TO APPROVE",
 }
 
-# Ten sam powod skrotem — do listy, gdzie na zdanie nie ma miejsca. Wersalikami
-# sklada je dopiero renderer, bo to samo slowo stoi tez w pasie konta po zwinieciu.
+# The same reason in short form — for the list, where a sentence does not fit.
+# The renderer is what uppercases it, because the same word also appears in the
+# account band once the card collapses.
 SHORT = {
-    "permission": "zgoda",
-    "question": "pytanie",
+    "permission": "allow",
+    "question": "question",
     "plan": "plan",
 }
 
-SHORT_UNKNOWN = "czeka"
+SHORT_UNKNOWN = "waiting"
 
-UNKNOWN = "CLAUDE CZEKA"
+UNKNOWN = "CLAUDE IS WAITING"
 
 
 class Blocked:
-    """Jedna zablokowana sesja."""
+    """A single blocked session."""
 
     __slots__ = ("key", "machine", "reason", "project", "tool", "detail",
                  "since", "account_uuid", "session_id", "agent_id", "agent_type",
@@ -44,7 +46,7 @@ class Blocked:
         self.project = project
         self.tool = tool
         self.detail = detail
-        self.since = since                  # datetime z tzinfo albo None
+        self.since = since                  # datetime with tzinfo, or None
         self.account_uuid = account_uuid
         self.session_id = session_id
         self.agent_id = agent_id
@@ -53,21 +55,21 @@ class Blocked:
 
     @property
     def title(self):
-        """Naglowek karty. Nieznany `reason` NIE jest bledem — writer moze byc nowszy
-        niz panel, a "CLAUDE CZEKA" jest prawda w kazdym takim przypadku."""
+        """Card heading. An unknown `reason` is NOT an error — the writer may be newer
+        than the panel, and "CLAUDE IS WAITING" is true in every such case."""
         return REASONS.get(self.reason, UNKNOWN)
 
     @property
     def short(self):
-        """Powod w jednym slowie. Ta sama zasada co przy `title`: nieznany `reason`
-        dostaje slowo, ktore jest prawdziwe zawsze."""
+        """The reason in a single word. Same rule as for `title`: an unknown `reason`
+        gets a word that is always true."""
         return SHORT.get(self.reason, SHORT_UNKNOWN)
 
     @property
     def mode_label(self):
-        """Listwa diagnostyczna: tryb uprawnien, a przy blokadzie w subagencie takze
-        jego typ. Bez tego "czemu on w ogole pyta" jest pytaniem bez odpowiedzi —
-        tryby auto-zatwierdzajace rozstrzygaja wywolanie PRZED warstwa promptu."""
+        """Diagnostic strip: the permission mode, plus the subagent type when the block
+        happened inside one. Without it, "why is it even asking" has no answer —
+        auto-approving modes settle a call BEFORE the prompt layer."""
         bits = [b for b in (self.permission_mode, self.agent_type) if b]
         return " · ".join(bits)
 
@@ -76,7 +78,7 @@ class Blocked:
 
 
 def parse_entry(raw):
-    """Jeden wpis z ramki. Zwraca Blocked albo None."""
+    """One entry from the frame. Returns Blocked or None."""
     from . import fmt
 
     if not isinstance(raw, dict):
@@ -102,18 +104,19 @@ def parse_entry(raw):
 
 
 def parse_frame(payload):
-    """Ladunek ramki `alert` -> lista Blocked, uporzadkowana do wyswietlenia.
+    """The `alert` frame payload -> a list of Blocked, ordered for display.
 
-    Kolejnosc: NAJMLODSZE PIERWSZE. Powod nie ma na nia wplywu — kazda blokada byla
-    juz pokazana solo, gdy wchodzila (otworzyla wtedy wlasne okno przejecia), wiec
-    przy obcieciu karty do trzech wierszy warte pokazania sa te, ktorych jeszcze nie
-    widziales. Wczesniej rzadzila ranga powodu (plan, pytanie, zgoda) i to bylo
-    nieszkodliwe tylko dopoki wszystko na karcie mialo ponizej pieciu minut; odkad
-    okno nalezy do ZBIORU, ranga wypychala z wierszy wlasnie te blokade, ktora
-    przejela ekran.
+    Order: YOUNGEST FIRST. The reason has no say in it — every block was already
+    shown solo when it arrived (it opened its own takeover window then), so when the
+    card is cut down to three rows, the ones worth showing are the ones you have not
+    seen yet. Reason rank (plan, question, allow) used to govern the order, and that
+    was harmless only while everything on the card was under five minutes old; once
+    the window came to belong to the SET, rank pushed out of the rows exactly the
+    block that had just taken over the screen.
 
-    Wpis bez stempla laduje na koncu — brak wiedzy o wieku nie moze udawac swiezosci
-    ani starosci. Remis rozstrzyga `key`, zeby kolejnosc byla deterministyczna.
+    An entry without a timestamp lands last — not knowing its age must not pass for
+    either freshness or staleness. Ties are settled by `key`, so the order is
+    deterministic.
     """
     if not isinstance(payload, dict):
         return []

@@ -1,7 +1,7 @@
-/** Historia z makiety 2c: dwa facety, dwa rodzaje dziur, pieć granic resetu na dobe.
+/** History from mockup 2c: two facets, two kinds of gap, five reset boundaries per day.
  *
- *  Punkty powstaja z interpolacji miedzy kotwicami — ta sama metoda i te same kotwice,
- *  co w prototypie, zeby wykres dal sie porownac z makieta piksel w piksel.
+ *  The points come from interpolation between anchors — the same method and the same anchors
+ *  as in the prototype, so that the chart can be compared with the mockup pixel for pixel.
  */
 import type { HistoryQuery } from "../api/client";
 import type { HistoryPoint, HistoryResponse } from "../api/types";
@@ -11,7 +11,7 @@ const STEP = 15 * 60_000;
 
 type Anchor = [hoursAgo: number, value: number];
 
-/** Kotwice liczone w godzinach WSTECZ od `to`, zeby wykres byl zawsze aktualny. */
+/** Anchors counted in hours BACK from `to`, so that the chart is always current. */
 const MAX_ANCHORS: Anchor[] = [
   [24, 62], [23.1, 66], [23.05, 0], [20, 18], [19.15, 18], [19.1, 0],
   [9.6, 0], [9.15, 14], [9.1, 0], [6.5, 48], [4.15, 48], [4.1, 0],
@@ -25,12 +25,12 @@ const TEAM_ANCHORS: Anchor[] = [
 const MAX_GAPS = [{ fromH: 1.2, toH: 0.13, kind: "client_silent" as const }];
 const TEAM_GAPS = [{ fromH: 7.05, toH: 3.6, kind: "no_samples" as const }];
 
-/** Granice resetu okna 5 h — pieć w dobie, nie o pelnej dobie. */
+/** Reset boundaries of the 5 h window — five within a day, not at a whole-day mark. */
 const MAX_RESETS = [23.1, 19.1, 14.1, 9.1, 4.1];
 const TEAM_RESETS = [23.1, 18.1, 13.1, 8.1, 3.1];
 
 function interp(anchors: Anchor[], hoursAgo: number): number {
-  const asc = [...anchors].sort((a, b) => b[0] - a[0]); // od najstarszej
+  const asc = [...anchors].sort((a, b) => b[0] - a[0]); // from the oldest
   const first = asc[0]!;
   if (hoursAgo >= first[0]) return first[1];
   for (let i = 1; i < asc.length; i++) {
@@ -54,7 +54,7 @@ export function mockHistory(q: HistoryQuery): HistoryResponse {
   const toMs = q.to.getTime();
   const fromMs = q.from.getTime();
   const spanH = (toMs - fromMs) / H;
-  const scale = spanH / 24; // kotwice sa opisane na dobie; dluzsze zakresy rozciagamy
+  const scale = spanH / 24; // anchors are described over one day; longer ranges we stretch
 
   const gaps = gapDefs
     .map((g) => ({

@@ -183,7 +183,7 @@ class TiledSurface:
     def __init__(self, caps, tile=TILE):
         width, height = caps.native
         if width % tile or height % tile:
-            raise ValueError("plotno %dx%d nie dzieli sie przez kafel %d"
+            raise ValueError("canvas %dx%d is not divisible by the tile %d"
                              % (width, height, tile))
         self.caps = caps
         self.tile = tile
@@ -236,5 +236,5 @@ def for_caps(caps, log=None):
         # width/height are user-editable, and degrading loudly beats drawing a
         # partial-tile rectangle nobody ever tested.
         if log:
-            log("%s: %s — wysylam pelne klatki" % (caps.name, e))
+            log("%s: %s — sending full frames" % (caps.name, e))
         return FullFrameSurface(caps)

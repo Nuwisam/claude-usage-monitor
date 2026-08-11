@@ -1,32 +1,33 @@
-"""Endpointy diagnostyczne — regresja na to, ze migracja `0002_cli_source` je wywrocila.
+"""Diagnostic endpoints — a regression on migration `0002_cli_source` breaking them.
 
-Wersja 3 sondy nie wysyla zadnego zadania do Anthropic, wiec migracja usunela kolumny
-opisujace odpowiedz HTTP (`http_status`, `request_id`, `rl_status`) oraz `cc_version`,
-ktora i tak trzymala stala z kodu. `routers/read.py` czytal je dalej — czyli `/api/machines`
-i `/api/batches` oddawaly 500 od momentu wdrozenia migracji.
+Version 3 of the probe sends no request at all to Anthropic, so the migration dropped the
+columns describing the HTTP response (`http_status`, `request_id`, `rl_status`) and
+`cc_version`, which held a constant out of the code anyway. `routers/read.py` kept reading
+them — so `/api/machines` and `/api/batches` returned 500 from the moment the migration
+was deployed.
 
-Nie zlapal tego zaden test, bo tych endpointow nie dotykal ZADEN. Diagnostyka zostala
-swiadomie przy `curl` (README, `docs/API.md` § 10), tylko z tej decyzji wyszlo
-milczaco, ze nikt jej nie sprawdza. Ten plik zamyka luke: wola kazdy endpoint odczytu
-i sprawdza, ze w ogole odpowiada.
+No test caught it, because NO test touched these endpoints. Diagnostics were deliberately
+left to `curl` (README, `docs/API.md` § 10); it simply followed from that decision, in
+silence, that nobody checks them. This file closes the hole: it calls every read endpoint
+and checks that it answers at all.
 
-Dlatego asercje sa celowo plytkie — to nie jest test ksztaltu odpowiedzi diagnostycznej,
-tylko strazak na "kolumna znikla z modelu, a router nadal ja czyta". Taki blad zawsze
-wychodzi juz przy pierwszym wywolaniu.
+That is why the assertions are deliberately shallow — this is not a test of the shape of a
+diagnostic response, but a lookout for "a column vanished from the model and the router
+still reads it". Such a bug always shows up on the very first call.
 """
 from datetime import timedelta
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from tests.test_ingest_e2e import (  # noqa: F401 — fixture `db` przychodzi razem z nimi
+from tests.test_ingest_e2e import (  # noqa: F401 — the `db` fixture comes along with these
     ACCOUNT_MAX, db, ingest_one, payload, utcnow,
 )
 
 
 @pytest_asyncio.fixture
 async def api(db):
-    """Aplikacja z podmieniona sesja i pominietym SSO — jak w test_history_endpoint."""
+    """The app with a swapped session and SSO skipped — as in test_history_endpoint."""
     import app.main as main
     from app.db import get_session
     from app.sso import CurrentUser, require_authorized_user
@@ -42,7 +43,7 @@ async def api(db):
 
 
 @pytest_asyncio.fixture
-async def dane(db):
+async def data(db):
     now = utcnow()
     for offset in (120, 0):
         await ingest_one(db, machine_name="desktop",
@@ -50,31 +51,31 @@ async def dane(db):
     await db.commit()
 
 
-async def test_kazdy_endpoint_odczytu_odpowiada(api, dane):
-    """Jedna petla po wszystkich — 500 z martwej kolumny wychodzi tu natychmiast."""
+async def test_every_read_endpoint_responds(api, data):
+    """One loop over them all — a 500 from a dead column shows up here immediately."""
     for path in ("/api/me", "/api/accounts", "/api/machines", "/api/series",
                  "/api/batches", "/api/events", "/api/stats"):
         r = await api.get(path)
         assert r.status_code == 200, "%s -> %s %s" % (path, r.status_code, r.text)
 
 
-async def test_batches_niosa_proweniencje_pomiaru_zamiast_kodow_http(api, dane):
-    """To jest jedyne miejsce, w ktorym widac, czy pomiar mial swieze procenty ze stdout
-    (`cli_merged`), czy poszedl sam cache (`cli_usage_cache`, do 5 min stary). Bez tego
-    spadek rozdzielczosci z minuty do pieciu jest niewykrywalny — dane nadal plyna."""
+async def test_batches_carry_measurement_provenance_instead_of_http_codes(api, data):
+    """The only place that shows whether a measurement had fresh percentages from stdout
+    (`cli_merged`) or only the cache went out (`cli_usage_cache`, up to 5 min old). Without
+    it a resolution drop from one minute to five is undetectable — data keeps flowing."""
     b = (await api.get("/api/batches")).json()
-    assert b, "ingest musial zostawic batche"
+    assert b, "ingest must have left batches behind"
     assert b[0]["measurementSource"] == "cli_merged"
     assert b[0]["cacheAgeS"] == 42 and b[0]["freshAgeS"] == 7
     assert b[0]["scriptVersion"] == 5
-    # Pola po martwych kolumnach nie moga wrocic tylnymi drzwiami jako None.
+    # Fields left by the dead columns must not come back through a side door as None.
     assert not ({"httpStatus", "requestId", "rlStatus", "ccVersion"} & set(b[0]))
 
 
-async def test_machines_nie_udaje_ze_zna_wersje_claude_code(api, dane):
-    """`cc_version` bralo sie z UA_VERSION sondy, czyli ze stalej zaszytej w kodzie —
-    ta sama wartosc dla kazdej maszyny, niezalezna od tego, co tam faktycznie chodzi.
-    `scriptVersion` zostaje, bo mowi prawde: po tym poznajemy stan wdrozenia sondy."""
+async def test_machines_does_not_pretend_to_know_claude_code_version(api, data):
+    """`cc_version` came from the probe's UA_VERSION, i.e. from a constant baked into the
+    code — the same value for every machine, independent of what actually runs there.
+    `scriptVersion` stays because it tells the truth: it shows the probe's rollout state."""
     m = (await api.get("/api/machines")).json()
     assert m and m[0]["scriptVersion"] == 5
     assert "ccVersion" not in m[0]

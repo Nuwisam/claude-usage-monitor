@@ -1,10 +1,10 @@
-"""Kaskada limitow: 5 h -> tydzien -> kredyty -> twardy blok.
+"""The limit cascade: 5 h -> week -> credits -> hard block.
 
-WSZYSTKIE przypadki stoja na REALNYCH payloadach: Max na `usage_max.json`, Team na trzech
-zrzutach z jednego konta (`tests/team.py`) — kredyty dzialajace, wlasna pula wyczerpana,
-miernik wycofany przez organizacje. Wczesniej Team byl tu wymyslony (USD, prog 9000),
-bo w chwili pisania nie dalo sie zaobserwowac wlaczonych kredytow; teraz sie da, wiec
-syntetyk znika razem z liczbami, ktorych nikt nigdy nie zmierzyl.
+EVERY case rests on REAL payloads: Max on `usage_max.json`, Team on three dumps from one
+account (`tests/team.py`) — credits working, the account's own pool exhausted, the meter withdrawn
+by the organization. Team used to be made up here (USD, a threshold of 9000), because at
+the time of writing there was no way to observe credits switched on; now there is, so the
+synthetic case goes away together with numbers nobody has ever measured.
 """
 import json
 from pathlib import Path
@@ -19,7 +19,7 @@ REAL = json.loads((Path(__file__).parent / "fixtures" / "usage_max.json").read_t
 
 
 def facts_from_payload(payload) -> list[SeriesFacts]:
-    """Ta sama droga, ktora chodzi produkcja: parse_usage -> fakty o seriach."""
+    """The same path the running system takes: parse_usage -> facts about series."""
     return [SeriesFacts(series_key=o.series_key, source=o.source, kind=o.kind,
                         bucket_key=o.bucket_key, utilization=o.utilization,
                         is_active=o.is_active, extra=o.extra,
@@ -33,39 +33,39 @@ def by_key(rungs):
 
 def current(rungs):
     cur = [r.key for r in rungs if r.is_current]
-    assert len(cur) <= 1, "dokladnie jeden szczebel moze wiazac"
+    assert len(cur) <= 1, "exactly one rung can be current"
     return cur[0] if cur else None
 
 
 # --------------------------------------------------------------------------- Max
-def test_max_kredyty_wylaczone_blok_zaraz_za_tygodniowym():
+def test_max_credits_off_hard_block_right_behind_weekly():
     c = by_key(build_cascade(facts_from_payload(REAL)))
 
     assert c[SESSION].state == ON and c[SESSION].utilization == 20.0
     assert c[WEEKLY].state == ON and c[WEEKLY].utilization == 30.0
-    # spend.enabled = false => kredyty WYLACZONE, a nie "nie wiem"
+    # spend.enabled = false => credits SWITCHED OFF, and not "unknown"
     assert c[CREDITS].state == OFF
-    # bez kredytow twardy blok stoi zaraz za tygodniowym — brak kwoty progu
+    # without credits the hard block sits right behind the weekly one — no threshold amount
     assert c[HARD_BLOCK].state == ON and c[HARD_BLOCK].limit_minor is None
 
 
-def test_max_wiaze_tygodniowy_bo_ma_is_active():
+def test_max_current_is_weekly_because_it_has_is_active():
     rungs = build_cascade(facts_from_payload(REAL))
     assert current(rungs) == WEEKLY
 
 
-def test_szczeble_okien_wskazuja_swoja_serie():
+def test_window_rungs_point_at_their_own_series():
     c = by_key(build_cascade(facts_from_payload(REAL)))
-    # UI podswietla serie, z ktorej wzieta jest wartosc — musi dostac jej klucz
+    # the UI highlights the series the value was taken from — it has to get its key
     assert c[SESSION].series_key.startswith("limit:session")
     assert c[WEEKLY].series_key.startswith("limit:weekly_all")
 
 
 # --------------------------------------------------------------------------- Team
-def test_team_tygodniowy_na_100_procent_zsuwa_biezacy_szczebel_na_kredyty():
-    """Najwazniejszy przypadek: `is_active` wskazuje tygodniowy, ale on jest wyczerpany,
-    wiec realnie praca idzie z kredytow. Pokazanie tygodniowego jako biezacego bylo by
-    myleniem 'to mnie ogranicza' z 'tu sie skonczylo'."""
+def test_team_weekly_at_100_percent_slides_current_rung_to_credits():
+    """The most important case: `is_active` points at the weekly one, but that one is
+    exhausted, so the work really runs off credits. Showing the weekly one as current would
+    confuse 'this is what limits you' with 'this is where it ran out'."""
     rungs = build_cascade(facts_from_payload(usage(USAGE_ACTIVE)))
     c = by_key(rungs)
 
@@ -74,32 +74,32 @@ def test_team_tygodniowy_na_100_procent_zsuwa_biezacy_szczebel_na_kredyty():
     assert current(rungs) == CREDITS
 
 
-def test_team_kwoty_kredytow_w_jednostkach_mniejszych_bez_splaszczania():
+def test_team_credit_amounts_in_minor_units_without_flattening():
     c = by_key(build_cascade(facts_from_payload(usage(USAGE_ACTIVE))))
     k = c[CREDITS]
     assert (k.used_minor, k.limit_minor, k.currency, k.exponent) == (27795, 30000, "EUR", 2)
-    # twardy blok stoi na tym samym progu, ktory limituje kredyty
+    # the hard block is pinned to the same threshold that limits credits
     assert c[HARD_BLOCK].limit_minor == 30000
 
 
-def test_wyczerpana_pula_zsuwa_na_twardy_blok_mimo_spend_limit_reached_false():
-    """Wyczerpanie WLASNEJ puli nie zapala zadnej flagi: `spend_limit_reached` stalo na
-    `false` przy used 300,04 / limit 300,00 EUR. Jedyne, co ten stan wykrywa, to porownanie
-    kwot — i dlatego ta galaz `_exhausted` ma tu wlasny test, zeby nie zniknela przy
-    porzadkach jako 'martwy kod'."""
+def test_exhausted_pool_slides_to_hard_block_despite_spend_limit_reached_false():
+    """Exhausting the account's OWN pool lights no flag at all: `spend_limit_reached` was
+    `false` with used 300.04 / limit 300.00 EUR. The only thing that detects this state is
+    comparing the amounts — which is why the `_exhausted` branch has its own test here, so
+    that a cleanup does not make it disappear as 'dead code'."""
     p = usage(USAGE_POOL_EXHAUSTED)
     assert p["extra_usage"]["spend_limit_reached"] is False
 
     rungs = build_cascade(facts_from_payload(p))
     c = by_key(rungs)
-    assert c[CREDITS].state == ON, "brama otwarta — kredyty sa wlaczone, tylko puste"
+    assert c[CREDITS].state == ON, "gate open — credits are on, just empty"
     assert c[CREDITS].used_minor >= c[CREDITS].limit_minor
     assert current(rungs) == HARD_BLOCK
 
 
-def test_zuzycie_ponad_limit_nie_wywraca_kaskady_ani_kwot():
-    """300,04 EUR z 300,00 to nadwyzka, nie blad. Kwoty nie moga byc przyciete ani ujemne,
-    a procent zostaje na 100 — Anthropic tez go tam scina."""
+def test_usage_over_limit_does_not_break_cascade_or_amounts():
+    """300.04 EUR out of 300.00 is overage, not an error. The amounts must not be clipped
+    or negative, and the percentage stays at 100 — Anthropic clips it there too."""
     c = by_key(build_cascade(facts_from_payload(usage(USAGE_POOL_EXHAUSTED))))
     k = c[CREDITS]
     assert (k.used_minor, k.limit_minor, k.currency, k.exponent) == (30004, 30000, "EUR", 2)
@@ -108,10 +108,10 @@ def test_zuzycie_ponad_limit_nie_wywraca_kaskady_ani_kwot():
         assert r.utilization is None or 0.0 <= r.utilization <= 100.0
 
 
-def test_cap_money_jest_czytany_gdy_limit_nie_przyszedl():
-    """`cap` w realnej odpowiedzi jest ZAGNIEZDZONY: {"credits": null, "money": {...}}.
-    Plaski odczyt bral sam zewnetrzny slownik, wiec fallback nigdy nie zadzialal na
-    produkcyjnych danych — mimo ze test na wymyslonym, plaskim `cap` by go przepuscil."""
+def test_nested_cap_money_is_read_when_the_limit_key_is_missing():
+    """`cap` in the real response is NESTED: {"credits": null, "money": {...}}.
+    A flat read took the outer dictionary itself, so the fallback never fired on real
+    data — even though a test on a made-up, flat `cap` would have let it through."""
     p = usage(USAGE_ACTIVE)
     del p["spend"]["limit"]
     assert p["spend"]["cap"]["money"]["amount_minor"] == 30000
@@ -122,26 +122,27 @@ def test_cap_money_jest_czytany_gdy_limit_nie_przyszedl():
     assert c[HARD_BLOCK].limit_minor == 30000
 
 
-# ------------------------------------------------- wycofany miernik (sufit organizacji)
-def test_kaskada_na_wycofanym_mierniku_nie_obiecuje_sciezki_wyjscia():
-    """Kredyty wycofane przez organizacje: szczebel jest `off`, bez liczby i bez progu —
-    a `reason` mowi, dlaczego. Bez niego ten stan bylby nieodrozninalny od konta, ktore
-    kredytow nigdy nie mialo, i UI obiecywaloby 'wlacz kredyty', gdy wlaczyc sie nie da."""
+# ----------------------------------------- withdrawn meter (the organization's ceiling)
+def test_cascade_on_withdrawn_meter_does_not_promise_a_way_out():
+    """Credits withdrawn by the organization: the rung is `off`, with no number and no
+    threshold — and `reason` says why. Without it this state would be indistinguishable from
+    an account that never had credits, and the UI would promise 'switch credits on' when
+    switching them on is impossible."""
     c = by_key(build_cascade(facts_from_payload(usage(USAGE_WITHDRAWN))))
 
     assert c[CREDITS].state == OFF
     assert c[CREDITS].utilization is None
     assert c[CREDITS].limit_minor is None
     assert c[CREDITS].reason == "org_level_disabled_until"
-    # Prog istnieje, ale jest poza kontraktem — kwoty dla niego nie ma zadnej.
+    # The threshold exists, but it is outside the contract — there is no amount for it.
     assert c[HARD_BLOCK].state == ON and c[HARD_BLOCK].limit_minor is None
     assert c[HARD_BLOCK].reason == "org_level_disabled_until"
 
 
-def test_wycofane_kredyty_sa_pomijane_takze_bez_flagi_spend_limit_reached():
-    """`spend_limit_reached` bywa `true` przy wycofaniu, ale opieranie sie na nim jest
-    zgadywaniem: przy wyczerpanej wlasnej puli stoi `false`. Zsuniecie na twardy blok ma
-    wynikac z tego, ze szczebel jest WYLACZONY, a nie z flagi."""
+def test_withdrawn_credits_are_skipped_even_without_spend_limit_reached_flag():
+    """`spend_limit_reached` is sometimes `true` on withdrawal, but relying on it is
+    guesswork: with the account's own pool exhausted it reads `false`. Sliding down to the hard
+    block has to follow from the rung being SWITCHED OFF, not from the flag."""
     p = usage(USAGE_WITHDRAWN)
     p["extra_usage"]["spend_limit_reached"] = False
     for lim in p["limits"]:
@@ -153,18 +154,18 @@ def test_wycofane_kredyty_sa_pomijane_takze_bez_flagi_spend_limit_reached():
     assert current(rungs) == HARD_BLOCK
 
 
-def test_konto_bez_kredytow_nie_dostaje_powodu():
-    """Max, ktory kredytow nigdy nie wlaczyl: ten sam ksztalt payloadu, ale `reason` jest
-    `null` — i tylko po tym da sie te dwa stany odroznic."""
+def test_account_without_credits_gets_no_reason():
+    """A Max that never switched credits on: the same payload shape, but `reason` is
+    `null` — and that is the only thing by which the two states can be told apart."""
     c = by_key(build_cascade(facts_from_payload(REAL)))
     assert c[CREDITS].state == OFF and c[CREDITS].reason is None
     assert c[HARD_BLOCK].reason is None
 
 
-# ----------------------------------------------------------- brak danych != wylaczone
-def test_brak_informacji_o_kredytach_daje_unknown_a_nie_off():
-    """"Kredyty wylaczone" to informacja, "nie wiem, czy masz kredyty" to jej brak.
-    Zlanie ich pokazywaloby sciezke wyjscia z limitu, ktorej moze nie byc."""
+# ------------------------------------------------------------ no data != switched off
+def test_no_credit_information_gives_unknown_not_off():
+    """"Credits are off" is information, "we do not know whether you have credits" is the
+    absence of it. Merging them would show a way out of the limit that may not exist."""
     p = json.loads(json.dumps(REAL))
     del p["spend"], p["extra_usage"]
     c = by_key(build_cascade(facts_from_payload(p)))
@@ -173,16 +174,16 @@ def test_brak_informacji_o_kredytach_daje_unknown_a_nie_off():
     assert c[HARD_BLOCK].state == UNKNOWN
 
 
-def test_pusty_zbior_serii_nie_wywala_i_daje_cztery_szczeble_unknown():
+def test_empty_series_set_does_not_blow_up_and_gives_four_unknown_rungs():
     rungs = build_cascade([])
     assert [r.key for r in rungs] == [SESSION, WEEKLY, CREDITS, HARD_BLOCK]
     assert all(r.state == UNKNOWN for r in rungs)
-    assert current(rungs) is None       # nie zgadujemy, na czym stoisz
+    assert current(rungs) is None       # we do not guess what you are standing on
 
 
-def test_nieznany_szczebel_zatrzymuje_zsuwanie():
-    """Tygodniowy wyczerpany, o kredytach nic nie wiemy — biezacym szczeblem jest
-    wtedy 'nie wiem', a nie twardy blok wybrany przez optymizm."""
+def test_unknown_rung_stops_the_slide():
+    """The weekly one is exhausted, about credits we know nothing — the current rung is
+    then 'unknown', and not a hard block picked out of optimism."""
     p = json.loads(json.dumps(REAL))
     for lim in p["limits"]:
         if lim["kind"] == "weekly_all":
@@ -194,8 +195,8 @@ def test_nieznany_szczebel_zatrzymuje_zsuwanie():
     assert by_key(rungs)[CREDITS].state == UNKNOWN
 
 
-def test_bucket_zastepuje_brakujacy_wpis_z_limits():
-    """Gdyby Anthropic przestal podawac limits[], kaskada nadal ma dzialac z bucketow."""
+def test_bucket_replaces_missing_entry_from_limits():
+    """Were Anthropic to stop supplying limits[], the cascade must still work off buckets."""
     p = json.loads(json.dumps(REAL))
     del p["limits"]
     c = by_key(build_cascade(facts_from_payload(p)))
@@ -205,15 +206,15 @@ def test_bucket_zastepuje_brakujacy_wpis_z_limits():
     assert c[WEEKLY].series_key == "bucket:seven_day"
 
 
-def test_powod_bez_flagi_enabled_to_nadal_wylaczone_a_nie_nieznane():
-    """Gdy blok przyjdzie okrojony — powod jest, flagi `enabled` nie ma — sam powod musi
-    wystarczyc. Bez tego kaskada mowilaby 'nie wiem, czy masz kredyty' w chwili, gdy
-    Anthropic wprost napisal, dlaczego ich nie masz."""
+def test_reason_without_enabled_flag_is_still_off_not_unknown():
+    """When the block arrives truncated — the reason is there, the `enabled` flag is not —
+    the reason alone has to be enough. Without that the cascade would say 'we do not know
+    whether you have credits' at the moment Anthropic wrote plainly why you do not."""
     facts = [SeriesFacts(series_key="spend:org", source="spend", utilization=None,
                          extra={"disabled_reason": "org_level_disabled_until"},
                          unavailable_reason="org_level_disabled_until")]
     c = by_key(build_cascade(facts))
 
-    assert c[CREDITS].state == OFF, "powod bez flagi nie moze dawac UNKNOWN"
+    assert c[CREDITS].state == OFF, "a reason without the flag must not give UNKNOWN"
     assert c[CREDITS].reason == "org_level_disabled_until"
     assert c[HARD_BLOCK].state == ON

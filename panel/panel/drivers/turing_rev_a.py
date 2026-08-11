@@ -1,6 +1,6 @@
-"""Turing Smart Screen rev A over a USB serial port (VID 1A86 / PID 5722).
+r"""Turing Smart Screen rev A over a USB serial port (VID 1A86 / PID 5722).
 
-Measured on the unit on this desk, because none of it is documented:
+Measured on this display model, because none of it is documented:
 
   * 320x480 portrait natively. Our 480x320 layout is rotated 90 degrees HOST-SIDE
     and fills it exactly. SET_ORIENTATION is never sent - see below.
@@ -41,10 +41,10 @@ That last point shapes the whole driver. Two consequences worth stating:
      derived from the measured throughput.
 
 RESET (101) is deliberately not used: unmeasured, and it cannot help anyway,
-because a firmware mid-payload would eat its bytes as pixels. SET_ORIENTATION
-(121) is deliberately not used either: rotation host-side is measured to work,
-and with no acknowledgement a coordinate-space mistake would show up as a
-scrambled screen rather than an error.
+because firmware in the middle of a payload would eat its bytes as pixels.
+SET_ORIENTATION (121) is deliberately not used either: rotation host-side is
+measured to work, and with no acknowledgement a coordinate-space mistake would
+show up as a scrambled screen rather than an error.
 """
 import time
 
@@ -134,7 +134,7 @@ def caps_for(canvas=None):
 
 def unavailable(options=None):
     if serial is None:
-        return ("brak pakietu pyserial (uruchom "
+        return ("the pyserial package is missing (run "
                 "pip install -r panel/requirements.txt)")
     return None
 
@@ -172,8 +172,8 @@ def open_panel(selector, options=None):
         # would mean writing bitmap commands into whatever answered.
         targets = [t for t in targets if t.handle == com]
         if not targets:
-            raise DriverError("nie widze ekranu %s na porcie %s" % (NAME, com))
-    picked = select(targets, selector, what="ekran %s" % NAME)
+            raise DriverError("no %s screen on port %s" % (NAME, com))
+    picked = select(targets, selector, what="screen %s" % NAME)
     release(targets, keep=picked)
     return Turing(picked.handle).open()
 
@@ -199,10 +199,10 @@ class Turing:
             if isinstance(e.__cause__, PermissionError) or "Access is denied" in str(e):
                 # The same words the AX206 path uses for a module held by another
                 # program, because the installer greps for exactly this phrase and
-                # the advice ("stop that program, we retry by ourselves") is the
+                # the advice ("stop that program, we retry on our own") is the
                 # same. A COM holder is worse than a USB one: it is invisible in
                 # Device Manager.
-                raise DriverError("%s: panel zajety przez inny proces (%s)"
+                raise DriverError("%s: panel held by another process (%s)"
                                   % (self.com, e)) from e
             raise DriverError("%s: %s" % (self.com, e)) from e
         except OSError as e:
@@ -267,7 +267,7 @@ class Turing:
 
     def _send(self, cmd, payload=b"", expect=0):
         if self.port is None:
-            raise DriverError("port nie jest otwarty")
+            raise DriverError("the port is not open")
         self._write_all(cmd, tail=expect)
         if payload:
             self._write_all(payload)
@@ -292,11 +292,11 @@ class Turing:
             except serial.SerialTimeoutException as e:
                 sent += self._transferred()
                 self._pad(total - sent + tail)
-                raise DriverError("zapis przeterminowany po %d z %d B (%s)"
+                raise DriverError("write timed out after %d of %d B (%s)"
                                   % (sent, total, e)) from e
             except serial.SerialException as e:
                 self._pad(total - sent + tail)
-                raise DriverError("zapis nieudany po %d z %d B (%s)"
+                raise DriverError("write failed after %d of %d B (%s)"
                                   % (sent, total, e)) from e
             if written is None:
                 written = len(chunk)
@@ -306,12 +306,12 @@ class Turing:
                 # only for exceptions would tear the payload silently.
                 sent += written
                 self._pad(total - sent + tail)
-                raise DriverError("zapis skrocony: %d z %d B" % (sent, total))
+                raise DriverError("write cut short: %d of %d B" % (sent, total))
             sent += written
         try:
             self.port.flush()
         except Exception as e:
-            raise DriverError("flush nieudany: %s" % e) from e
+            raise DriverError("flush failed: %s" % e) from e
 
     def _transferred(self):
         """How many bytes the last timed-out write actually delivered.

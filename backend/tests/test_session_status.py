@@ -1,15 +1,29 @@
-"""Testy sygnalizatora zablokowanej sesji — sekcja "alert" w client/usage-probe.py.
+"""Tests for the blocked-session signaller — the "alert" section of client/usage-probe.py.
 
-Tutaj, a nie w `client/`, z tego samego powodu co `test_probe_parsing.py`: to jest kod
-dzialajacy w sciezce Twojej pracy, ktory NIGDY nie rzuca wyjatkiem — czyli kazdy jego
-blad jest z definicji cichy, a to jedyne miejsce, gdzie cokolwiek go sprawdza.
+Here rather than in `client/`, for the same reason as `test_probe_parsing.py`: this is code
+running on the critical path that NEVER raises — meaning every one of its bugs is silent by
+definition, and this is the only place where anything checks it at all.
 
-Sygnalizator byl osobnym skryptem do czasu, gdy pomiar pokazal, ze doklejenie go do
-procesu sondy kosztuje 2,7 ms wobec 41,9 ms za osobny proces. Testy zostaly, zmienil sie
-tylko plik, z ktorego sa ladowane.
+The signaller was a separate script until measurement showed that folding it into the probe
+process costs 2.7 ms against 41.9 ms for a separate process. The tests stayed; only the file
+they are loaded from changed.
 
-Kazdy przypadek odpowiada zmierzonemu zachowaniu harnessu, nie wyobrazeniu o nim.
-Metodyka pomiaru siedzi w docstringu samego skryptu.
+Every case matches measured harness behavior, not an idea of it. The measurement methodology
+lives in the script's own docstring.
+
+Three things in this file are bytes, not text. This module is the only surviving record
+of a cp1250 bug, and the record is made of those bytes:
+
+  * the mojibake `'umieraÄ‡'` and the note that `Ł` is `C5 81` — what the failure LOOKED
+    like. Retype either and the evidence is gone;
+  * four `Z:\\projects\\...` literals in the `cwd` fixtures. A Windows drive path is what
+    the hook really receives, and the cp1250 crash happened on exactly such a path;
+  * the accented file path and shell command fed as tool input. Those characters are
+    the input under test — replace them with ASCII and the test still passes while
+    exercising nothing.
+
+Verify by bytes, never by console: a terminal rendering these as garbage is its codepage,
+not corruption. Four separate reviewers reported that false alarm.
 """
 import importlib.util
 import io
@@ -26,8 +40,8 @@ SRC = Path(__file__).resolve().parents[2] / "client" / "usage-probe.py"
 
 @pytest.fixture
 def ss(tmp_path, monkeypatch):
-    """Swiezy modul z katalogiem stanu w tmp_path. Modul, nie instancja, bo sciezki
-    sa w nim stalymi modulu — dokladnie tak, jak widzi je hook."""
+    """A fresh module with its state directory in tmp_path. The module, not an instance,
+    because the paths are module constants in it — exactly as the hook sees them."""
     spec = importlib.util.spec_from_file_location("usage_probe_alert", SRC)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -35,28 +49,28 @@ def ss(tmp_path, monkeypatch):
     mod.STATEDIR = str(tmp_path / "session-status")
     mod.POSTED = str(tmp_path / "posted.txt")
     mod.CONFIG = str(tmp_path / "config.json")
-    # Rejestr sesji harnessu tez do tmp_path. Domyslnie katalog NIE ISTNIEJE, czyli zbior
-    # zywych sesji jest "nie wiem" i regula smierci nie biegnie — testy, ktore jej nie
-    # dotycza, przechodza ta sama sciezka co dotad.
+    # The harness session registry goes to tmp_path too. By default the directory DOES NOT
+    # EXIST, so the set of live sessions is "unknown" and the death rule does not run — tests
+    # that do not concern it take the same path as before.
     mod.REGDIR = str(tmp_path / "sessions")
-    # Sciezki sondy tez do tmp_path: `main()` jest tu wolane i nie ma prawa dotknac
-    # prawdziwego stanu maszyny ani odpalic `claude -p`.
+    # The probe paths go to tmp_path as well: `main()` is called here and must not touch
+    # the real machine state or fire `claude -p`.
     mod.THROTTLE_FILE = str(tmp_path / "last-probe.txt")
     mod.LOG = str(tmp_path / "usage-samples.jsonl")
     mod.SPOOL = str(tmp_path / "spool.jsonl")
     mod.CLI_OUT = str(tmp_path / "usage-cli.json")
-    # Zadnych toastow, zadnej sieci, zadnych procesow potomnych w testach.
+    # No toasts, no network, no child processes in tests.
     monkeypatch.setattr(mod, "toast", lambda *a, **kw: None)
     monkeypatch.setattr(mod, "spawn_refresh", lambda cfg: None)
-    mod.wyslane = []
+    mod.sent = []
     monkeypatch.setattr(mod, "post",
-                        lambda cfg, url, body: (mod.wyslane.append(body), (200, "{}"))[1])
+                        lambda cfg, url, body: (mod.sent.append(body), (200, "{}"))[1])
     return mod
 
 
 CFG = {"alert_url": "https://example.org/api/session-alert", "ingest_token": "t"}
 
-SID = "sesja-1"
+SID = "session-1"
 
 
 def hook(event, **kw):
@@ -73,11 +87,11 @@ def names(ss):
     return sorted(n for n, _ in ss.entries())
 
 
-def rejestr(ss, *session_ids):
-    """Rekordy `<pid>.json` w podstawionym rejestrze harnessu.
+def seed_registry(ss, *session_ids):
+    """`<pid>.json` records in the substituted harness registry.
 
-    Wypelniamy PRZED `alert_dispatch`: `registry_seen` zapisuje sie w `enter()`, a `O_EXCL`
-    nie pozwoli tego potem poprawic."""
+    Filled in BEFORE `alert_dispatch`: `registry_seen` is written in `enter()`, and `O_EXCL`
+    will not let it be corrected afterwards."""
     os.makedirs(ss.REGDIR, exist_ok=True)
     for i, sid in enumerate(session_ids):
         pid = 1000 + i
@@ -86,21 +100,21 @@ def rejestr(ss, *session_ids):
                        "cwd": r"Z:\projects\x", "version": "2.1.223"}, f)
 
 
-# --------------------------------------------------------------------- maszyna stanow
-def test_permission_request_zaklada_wpis(ss):
+# ---------------------------------------------------------------------- state machine
+def test_permission_request_creates_entry(ss):
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
                           tool_input={"command": "git status"}))
     assert len(names(ss)) == 1
-    wpis = ss.snapshot()[0]
-    assert wpis["reason"] == "permission"
-    assert wpis["detail"] == "git status"
-    assert wpis["project"] == "claude-usage-monitor"
+    entry = ss.snapshot()[0]
+    assert entry["reason"] == "permission"
+    assert entry["detail"] == "git status"
+    assert entry["project"] == "claude-usage-monitor"
 
 
-def test_pretooluse_zwyklego_narzedzia_nie_robi_nic(ss):
-    """Sciezka goraca. `PermissionRequest` odpala WYLACZNIE przy realnym pytaniu do
-    czlowieka (zmierzone: Read/Grep/Write/echo — zero wystapien), wiec `PreToolUse`
-    nie ma tu nic do roboty i nie wolno mu dotknac dysku."""
+def test_pretooluse_for_ordinary_tool_does_nothing(ss):
+    """Hot path. `PermissionRequest` fires ONLY on a real question put to the human
+    (measured: Read/Grep/Write/echo — zero occurrences), so `PreToolUse` has nothing
+    to do here and must not touch the disk."""
     ss.alert_dispatch(CFG, hook("PreToolUse", tool_name="Read",
                           tool_input={"file_path": "a.py"}, tool_use_id="toolu_1"))
     assert names(ss) == []
@@ -109,19 +123,19 @@ def test_pretooluse_zwyklego_narzedzia_nie_robi_nic(ss):
 
 @pytest.mark.parametrize("tool,reason", [("AskUserQuestion", "question"),
                                          ("ExitPlanMode", "plan")])
-def test_dwa_narzedzia_wchodza_przez_pretooluse(ss, tool, reason):
-    """Te dwa ZAWSZE blokuja, wiec `PreToolUse` nie daje przy nich falszywek —
-    a niesie `tool_use_id`, ktorego `PermissionRequest` nie ma."""
+def test_two_tools_enter_via_pretooluse(ss, tool, reason):
+    """These two ALWAYS block, so `PreToolUse` produces no false positives for them —
+    and it carries the `tool_use_id` that `PermissionRequest` does not have."""
     ss.alert_dispatch(CFG, hook("PreToolUse", tool_name=tool, tool_input={},
                           tool_use_id="toolu_9"))
     assert ss.snapshot()[0]["reason"] == reason
     assert names(ss) == ["%s__main__toolu_9.json" % SID]
 
 
-def test_permission_request_nie_dubluje_wejscia_tych_dwoch(ss):
-    """Kolejnosc `PreToolUse` vs `PermissionRequest` jest NIEGWARANTOWANA (zmierzone
-    20% inwersji), wiec dwa zrodla wejscia dla jednego wywolania daly by wyscig
-    o dwa pliki i dwa toasty."""
+def test_permission_request_does_not_duplicate_entry_for_those_two(ss):
+    """The order of `PreToolUse` vs `PermissionRequest` is NOT GUARANTEED (measured
+    20% inversions), so two entry sources for one call would give a race over two
+    files and two toasts."""
     ss.alert_dispatch(CFG, hook("PreToolUse", tool_name="AskUserQuestion", tool_input={},
                           tool_use_id="toolu_9"))
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="AskUserQuestion",
@@ -129,9 +143,9 @@ def test_permission_request_nie_dubluje_wejscia_tych_dwoch(ss):
     assert len(names(ss)) == 1
 
 
-def test_posttooluse_zamyka_po_call_key(ss):
-    """`PermissionRequest` nie ma `tool_use_id`, wiec wpis stoi na `call_key`.
-    Wyjscie liczy OBA kandydaty i kasuje oba — bez wiedzy, ktorym trybem powstal."""
+def test_posttooluse_closes_by_call_key(ss):
+    """`PermissionRequest` has no `tool_use_id`, so the entry is keyed on `call_key`.
+    The exit computes BOTH candidates and deletes both — not knowing which mode made it."""
     ti = {"command": "git status"}
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash", tool_input=ti))
     ss.alert_dispatch(CFG, hook("PostToolUse", tool_name="Bash", tool_input=ti,
@@ -139,23 +153,23 @@ def test_posttooluse_zamyka_po_call_key(ss):
     assert names(ss) == []
 
 
-def test_posttooluse_zamyka_po_tool_use_id_mimo_zmienionego_tool_input(ss):
-    """Zmierzone: harness domerza odpowiedzi do `tool_input` AskUserQuestion miedzy
-    wejsciem a wyjsciem (1326 -> 1649 B). Jednolity hash rozjechalby sie dokladnie
-    dla narzedzia, dla ktorego mial byc najpewniejszy."""
+def test_posttooluse_closes_by_tool_use_id_despite_changed_tool_input(ss):
+    """Measured: the harness merges answers into AskUserQuestion's `tool_input` between
+    entry and exit (1326 -> 1649 B). A uniform hash would drift apart for exactly the
+    tool it was supposed to be most reliable for."""
     ss.alert_dispatch(CFG, hook("PreToolUse", tool_name="AskUserQuestion",
-                          tool_input={"questions": [{"question": "ktory wariant?"}]},
+                          tool_input={"questions": [{"question": "which option?"}]},
                           tool_use_id="toolu_7"))
     ss.alert_dispatch(CFG, hook("PostToolUse", tool_name="AskUserQuestion",
-                          tool_input={"questions": [{"question": "ktory wariant?"}],
+                          tool_input={"questions": [{"question": "which option?"}],
                                       "answers": {"a": "b"}},
                           tool_use_id="toolu_7"))
     assert names(ss) == []
 
 
-def test_posttoolbatch_domyka_to_czego_posttooluse_nie(ss):
-    """Zmierzone: Edit na pliku planu 0/6 domknietych przez `PostToolUse`,
-    a 4/4 objete przez `tool_calls[]`. To nie jest nadmiarowosc."""
+def test_posttoolbatch_closes_what_posttooluse_does_not(ss):
+    """Measured: Edit on a plan file, 0/6 closed by `PostToolUse`,
+    and 4/4 covered by `tool_calls[]`. This is not redundancy."""
     ti = {"file_path": "plan.md"}
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Edit", tool_input=ti))
     ss.alert_dispatch(CFG, hook("PostToolBatch", tool_calls=[
@@ -163,23 +177,23 @@ def test_posttoolbatch_domyka_to_czego_posttooluse_nie(ss):
     assert names(ss) == []
 
 
-def test_zdarzenie_z_agent_id_nie_zamyka_wpisu_watku_glownego(ss):
-    """Jedyny tryb awarii, ktorego ta funkcja nie toleruje, to falszywe ODBLOKOWANIE.
+def test_event_with_agent_id_does_not_close_main_thread_entry(ss):
+    """The one failure mode this function does not tolerate is a false UNBLOCK.
 
-    Zmierzone: z 393 okien blokady 8 mialo w trakcie obce wywolania narzedzi, 155
-    zdarzen, z czego 154 z subagentow — do 52 zdarzen klasy 'wyjscie' podczas jednego
-    szesciominutowego dialogu. To stan ustalony, nie wyscig.
+    Measured: of 393 block windows, 8 had foreign tool calls during them, 155 events,
+    154 of them from subagents — up to 52 'exit'-class events during a single
+    six-minute dialog. This is a steady state, not a race.
     """
     ti = {"command": "git status"}
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash", tool_input=ti))
     ss.alert_dispatch(CFG, hook("PostToolUse", tool_name="Bash", tool_input=ti,
                           tool_use_id="toolu_1", agent_id="agent-a"))
-    assert len(names(ss)) == 1, "subagent zamknal blokade watku glownego"
+    assert len(names(ss)) == 1, "subagent closed the main thread's block"
 
 
-def test_subagent_ma_wlasny_wpis(ss):
-    """Subagenty dziela `session_id` rodzica i odrozniaja sie `agent_id` — potwierdzone
-    na 161 295/161 295 rekordach sidechain i zmierzone na zywo (76 zdarzen)."""
+def test_subagent_has_its_own_entry(ss):
+    """Subagents share the parent's `session_id` and are told apart by `agent_id` —
+    confirmed on 161,295/161,295 sidechain records and measured live (76 events)."""
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
                           tool_input={"command": "ls"}, agent_id="agent-a",
                           agent_type="general-purpose"))
@@ -188,432 +202,438 @@ def test_subagent_ma_wlasny_wpis(ss):
     assert len(names(ss)) == 2
 
 
-# --------------------------------------------------------------------- zamiatanie
+# ----------------------------------------------------------------------- sweeping
 @pytest.mark.parametrize("event", ["UserPromptSubmit", "Stop", "SessionEnd"])
-def test_zamiatanie_gasi_alert_po_odmowie(ss, event):
-    """Nic, co konczy wywolanie inaczej niz normalnym wykonaniem, nie generuje ZADNEGO
-    zdarzenia — odmowa przyciskiem, Esc na prompcie i Esc w trakcie dzialania dalyby
-    5/5 razy cisze. Zamiatanie po prefiksie jest jedynym mechanizmem gaszacym."""
+def test_sweep_clears_alert_after_refusal(ss, event):
+    """Nothing that ends a call other than by normal execution generates ANY event —
+    a refusal by button, Esc at the prompt and Esc mid-run each gave silence 5/5
+    times. Prefix sweeping is the only mechanism that clears them."""
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
                           tool_input={"command": "rm -rf /"}))
     ss.alert_dispatch(CFG, hook(event))
     assert names(ss) == []
 
 
-def test_zamiatanie_nie_rusza_cudzej_sesji(ss):
-    """`SessionEnd` przychodzi ~raz na minute z identyfikatorem dziecka `claude -p`
-    odpalanego przez sonde. Zamiatanie globalne wycieraloby alerty co minute.
+def test_sweep_does_not_touch_another_sessions_alert(ss):
+    """`SessionEnd` arrives ~once a minute with the id of the `claude -p` child the
+    probe fires. A global sweep would wipe the alerts every minute.
 
-    Rejestr podstawiamy jawnie i obie sesje w nim SA — inaczej przypadek przechodzilby
-    tylko dlatego, ze zbior zywych sesji jest nieznany, i nie mowilby nic."""
-    rejestr(ss, SID, "dziecko-claude-p")
+    The registry is substituted explicitly and both sessions ARE in it — otherwise the case
+    would pass only because the set of live sessions is unknown, and would say nothing."""
+    seed_registry(ss, SID, "child-claude-p")
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
                           tool_input={"command": "ls"}))
-    ss.alert_dispatch(CFG, hook("SessionEnd", session_id="dziecko-claude-p"))
+    ss.alert_dispatch(CFG, hook("SessionEnd", session_id="child-claude-p"))
     assert len(names(ss)) == 1
 
 
-# --------------------------------------------------- smierc wpisu z rejestru
-# Rejestr harnessu (`~/.claude/sessions/<pid>.json`) jest jedynym zrodlem wiedzy o tym, czy
-# sesja jeszcze zyje. Nigdy `os.kill` — na Windows to `TerminateProcess`.
+# ------------------------------------------ entry death from the registry
+# The harness registry (`~/.claude/sessions/<pid>.json`) is the only source of knowledge on
+# whether a session is still alive. Never `os.kill` — on Windows that is `TerminateProcess`.
 #
-# Zdarzenie zamiatajace ma INNY `session_id` niz wpis i NIE jest `SessionStart`/`SessionEnd`
-# (na tych dwoch regula nie biegnie), inaczej przypadek przechodzi inna sciezka.
-def wpis_obcej_sesji(ss, sid="obca-sesja", w_rejestrze=True):
-    """Wpis sesji `sid`, powstaly gdy ta sesja BYLA w rejestrze (czyli z `registry_seen`)."""
-    if w_rejestrze:
-        rejestr(ss, sid, SID)
+# The sweeping event has a DIFFERENT `session_id` than the entry and is NOT
+# `SessionStart`/`SessionEnd` (the rule does not run on those two), or the case takes
+# a different path.
+def foreign_session_entry(ss, sid="foreign-session", in_registry=True):
+    """An entry for session `sid`, created while that session WAS in the registry (so with
+    `registry_seen` set)."""
+    if in_registry:
+        seed_registry(ss, sid, SID)
     else:
-        rejestr(ss, SID)
+        seed_registry(ss, SID)
     ss.alert_dispatch(CFG, hook("PermissionRequest", session_id=sid, tool_name="Bash",
                                 tool_input={"command": "ls"}))
     return names(ss)[0]
 
 
-def zabij_rekord(ss, sid):
-    """Usuwa z rejestru rekord tej sesji — tak jak robi to harness po wyjsciu procesu.
+def kill_registry_record(ss, sid):
+    """Removes this session's record from the registry — as the harness does on process exit.
 
-    Uchwyt zamykamy PRZED `os.remove`: Windows nie pozwala skasowac otwartego pliku
-    (WinError 32) — ta sama pulapka, ktora `drop()` obchodzi trzema podejsciami."""
-    do_usuniecia = []
+    The handle is closed BEFORE `os.remove`: Windows will not delete an open file
+    (WinError 32) — the same pitfall `drop()` works around with three attempts."""
+    to_remove = []
     for f in os.listdir(ss.REGDIR):
         p = os.path.join(ss.REGDIR, f)
         with open(p, encoding="utf-8") as fh:
             if json.load(fh).get("sessionId") == sid:
-                do_usuniecia.append(p)
-    for p in do_usuniecia:
+                to_remove.append(p)
+    for p in to_remove:
         os.remove(p)
 
 
-def test_wpis_sesji_bez_rekordu_ginie_i_jest_publikowany(ss):
-    """Zamknieta karta nie odpala zadnego hooka, ale jej rekord w rejestrze znika (zmierzone
-    <=5 s przy zamknieciu okna, 626 ms po zabiciu procesu — usuwa go sam harness)."""
-    nazwa = wpis_obcej_sesji(ss)
-    zabij_rekord(ss, "obca-sesja")
+def test_entry_for_session_without_record_dies_and_is_published(ss):
+    """A closed tab fires no hook at all, but its registry record disappears (measured
+    <=5 s on window close, 626 ms after killing the process — the harness removes it)."""
+    entry_name = foreign_session_entry(ss)
+    kill_registry_record(ss, "foreign-session")
     ss.alert_dispatch(CFG, hook("Stop"))
-    assert names(ss) == [], nazwa
-    assert ss.wyslane[-1]["entries"] == [], "opustoszenie zbioru MUSI dojsc do panelu"
+    assert names(ss) == [], entry_name
+    assert ss.sent[-1]["entries"] == [], "the set becoming empty MUST reach the panel"
 
 
-def test_wpis_sesji_z_rekordem_zostaje(ss):
-    """Kontrola negatywna: czlowiek nadal czeka w tamtej karcie."""
-    wpis_obcej_sesji(ss)
+def test_entry_for_session_with_record_stays(ss):
+    """Negative control: the human is still waiting in that tab."""
+    foreign_session_entry(ss)
     ss.alert_dispatch(CFG, hook("Stop"))
     assert len(names(ss)) == 1
 
 
-def test_wpis_bez_registry_seen_nie_podlega_regule(ss):
-    """Sesja, ktorej harness nie rejestruje, istnieje realnie: `claude.exe` bez konsoli zyl
-    18 s i rekordu nie dostal. Bez tego znacznika jej blokada ginelaby natychmiast."""
-    wpis_obcej_sesji(ss, w_rejestrze=False)
+def test_entry_without_registry_seen_is_exempt_from_rule(ss):
+    """A session the harness does not register really exists: a console-less `claude.exe`
+    lived 18 s and never got a record. Without this marker its block would die instantly."""
+    foreign_session_entry(ss, in_registry=False)
     ss.alert_dispatch(CFG, hook("Stop"))
     assert len(names(ss)) == 1
     assert ss.read_entry(names(ss)[0])["registry_seen"] is False
 
 
-def test_brak_katalogu_rejestru_nie_kasuje_nic(ss):
-    """"Nie wiem" NIGDY nie znaczy "pusty" — inaczej maszyna bez rejestru gasilaby
-    wszystkie swoje alerty przy pierwszym zdarzeniu."""
-    nazwa = wpis_obcej_sesji(ss)
+def test_missing_registry_directory_deletes_nothing(ss):
+    """"Unknown" NEVER means "empty" — otherwise a machine with no registry would clear
+    all of its own alerts on the first event."""
+    entry_name = foreign_session_entry(ss)
     shutil.rmtree(ss.REGDIR)
     ss.alert_dispatch(CFG, hook("Stop"))
-    assert names(ss) == [nazwa]
+    assert names(ss) == [entry_name]
 
 
-def test_jeden_nieczytelny_rekord_uniewaznia_caly_przebieg(ss):
-    """Katalog przeczytany do polowy skrocilby zbior zywych i skasowal HURTEM cudze wpisy."""
-    nazwa = wpis_obcej_sesji(ss)
-    zabij_rekord(ss, "obca-sesja")
-    os.mkdir(os.path.join(ss.REGDIR, "31337.json"))     # nazwa pasuje, `open` rzuca
+def test_one_unreadable_record_invalidates_the_whole_pass(ss):
+    """A half-read directory would shorten the live set and delete other entries WHOLESALE."""
+    entry_name = foreign_session_entry(ss)
+    kill_registry_record(ss, "foreign-session")
+    os.mkdir(os.path.join(ss.REGDIR, "31337.json"))     # name matches, `open` raises
     ss.alert_dispatch(CFG, hook("Stop"))
-    assert names(ss) == [nazwa]
+    assert names(ss) == [entry_name]
 
 
-def test_pliki_nie_bedace_rekordami_sa_ignorowane(ss):
-    """Harness trzyma w tym katalogu tez `.in_use` i `.last_inuse_sweep` — filtruje po
-    `<cyfry>.json` i my filtrujemy tak samo. To nie sa "rekordy nieparsowalne"."""
-    nazwa = wpis_obcej_sesji(ss)
-    zabij_rekord(ss, "obca-sesja")
-    for smiec in (".in_use", ".last_inuse_sweep", "nie-liczba.json"):
-        with open(os.path.join(ss.REGDIR, smiec), "w", encoding="utf-8") as f:
-            f.write("cokolwiek, nie JSON")
+def test_files_that_are_not_records_are_ignored(ss):
+    """The harness also keeps `.in_use` and `.last_inuse_sweep` in this directory — it
+    filters on `<digits>.json` and we filter the same way. These are not "unparsable
+    records"."""
+    entry_name = foreign_session_entry(ss)
+    kill_registry_record(ss, "foreign-session")
+    for junk_name in (".in_use", ".last_inuse_sweep", "not-a-number.json"):
+        with open(os.path.join(ss.REGDIR, junk_name), "w", encoding="utf-8") as f:
+            f.write("whatever, not json")
     ss.alert_dispatch(CFG, hook("Stop"))
-    assert names(ss) == [], nazwa
+    assert names(ss) == [], entry_name
 
 
-def test_nazwa_wpisu_bez_trzech_czlonow_nie_ginie(ss):
-    """`smieci.json` potrafi tam byc realnie (patrz test snapshotu). Nazwa spoza schematu
-    nie jest martwa — jest obca, wiec jej nie ruszamy."""
-    rejestr(ss, SID)
+def test_entry_name_without_three_parts_survives(ss):
+    """`garbage.json` really can be in there (see the snapshot test). A name outside the
+    scheme is not dead — it is foreign, so we leave it alone."""
+    seed_registry(ss, SID)
     os.makedirs(ss.STATEDIR, exist_ok=True)
-    with open(os.path.join(ss.STATEDIR, "smieci.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(ss.STATEDIR, "garbage.json"), "w", encoding="utf-8") as f:
         json.dump({"registry_seen": True, "reason": "permission"}, f)
     ss.alert_dispatch(CFG, hook("Stop"))
-    assert names(ss) == ["smieci.json"]
+    assert names(ss) == ["garbage.json"]
 
 
 @pytest.mark.parametrize("event", ["SessionStart", "SessionEnd"])
-def test_na_brzegach_sesji_regula_nie_biegnie(ss, event):
-    """Zmierzone: na `SessionStart` rekord powstaje 0,2-1,0 s PO pierwszym hooku (13/13),
-    a na `SessionEnd` jeszcze ISTNIEJE (14/14). Na tych dwoch jego brak nie dowodzi niczego.
+def test_rule_does_not_run_at_session_boundaries(ss, event):
+    """Measured: on `SessionStart` the record appears 0.2-1.0 s AFTER the first hook (13/13),
+    and on `SessionEnd` it still EXISTS (14/14). On those two its absence proves nothing.
 
-    Sesja zamiatajaca MUSI byc w rejestrze (`hook()` uzywa `SID`, ktory tam wlozylismy),
-    inaczej wpis ratuje bezpiecznik "brak biezacej sesji" i przypadek nie mowi nic o brzegach.
+    The sweeping session MUST be in the registry (`hook()` uses `SID`, which we put there),
+    or the "no current session" safeguard saves the entry and the case says nothing about the
+    boundaries.
     """
-    nazwa = wpis_obcej_sesji(ss)
-    zabij_rekord(ss, "obca-sesja")
+    entry_name = foreign_session_entry(ss)
+    kill_registry_record(ss, "foreign-session")
     ss.alert_dispatch(CFG, hook(event))
-    assert names(ss) == [nazwa]
-    # Kontrola pozytywna: to samo zdarzenie, ktore brzegiem nie jest, wpis KASUJE.
+    assert names(ss) == [entry_name]
+    # Positive control: the same event that is not a boundary DOES delete the entry.
     ss.alert_dispatch(CFG, hook("Stop"))
     assert names(ss) == []
 
 
-def test_brak_biezacej_sesji_w_rejestrze_wstrzymuje_regule(ss):
-    """Sesja, w ktorej biegnie ten hook, ZYJE. Jesli jej w rejestrze nie ma, to nie rozumiemy
-    rejestru — i nie wolno na nim opierac kasowania czegokolwiek."""
-    nazwa = wpis_obcej_sesji(ss)
-    zabij_rekord(ss, "obca-sesja")
-    zabij_rekord(ss, SID)
+def test_current_session_missing_from_registry_suspends_the_rule(ss):
+    """The session this hook runs in is ALIVE. If it is not in the registry, then we do not
+    understand the registry — and nothing may be deleted on its authority."""
+    entry_name = foreign_session_entry(ss)
+    kill_registry_record(ss, "foreign-session")
+    kill_registry_record(ss, SID)
     ss.alert_dispatch(CFG, hook("Stop"))
-    assert names(ss) == [nazwa]
+    assert names(ss) == [entry_name]
 
 
-def test_wstrzymanie_zostawia_slad_w_logu(ss):
-    """Inaczej "mechanizm umarl po zmianie u Anthropic" i "nie ma czego zbierac" sa
-    nierozroznialne, a objawem jest dokladnie ten blad, ktory ta sekcja naprawia."""
-    wpis_obcej_sesji(ss)
+def test_suspension_leaves_a_trace_in_the_log(ss):
+    """Otherwise "the mechanism died after a change at Anthropic" and "there is nothing to
+    collect" are indistinguishable, and the symptom is exactly the bug this section fixes."""
+    foreign_session_entry(ss)
     shutil.rmtree(ss.REGDIR)
     ss.alert_dispatch(CFG, hook("Stop"))
     with open(ss.LOG, encoding="utf-8") as f:
-        linie = [json.loads(l) for l in f if l.strip()]
-    assert [r for r in linie if r.get("alert_skip") == "rejestr-niepelny"]
+        lines = [json.loads(l) for l in f if l.strip()]
+    assert [r for r in lines if r.get("alert_skip") == "registry-incomplete"]
 
 
-def test_pusty_katalog_stanu_nie_czyta_rejestru(ss, monkeypatch):
-    """Sciezka goraca: przy pustym katalogu stanu nie ma czego zbierac, wiec rejestr nie ma
-    prawa byc otwierany. Zmierzone, ze to caly koszt tej galezi na typowym zdarzeniu."""
+def test_empty_state_directory_does_not_read_registry(ss, monkeypatch):
+    """Hot path: with an empty state directory there is nothing to collect, so the registry
+    must not be opened. Measured to be this branch's entire cost on a typical event."""
     monkeypatch.setattr(ss, "live_sessions",
-                        lambda: pytest.fail("rejestr czytany przy pustym katalogu stanu"))
+                        lambda: pytest.fail("registry read while state directory was empty"))
     ss.alert_dispatch(CFG, hook("Stop"))
     ss.alert_dispatch(CFG, hook("UserPromptSubmit"))
 
 
-def test_ttl_kasuje_ale_nigdy_nie_ukrywa(ss):
+def test_ttl_deletes_but_never_hides(ss):
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
                           tool_input={"command": "ls"}))
-    nazwa = names(ss)[0]
-    stary = time.time() - 2 * ss.DEFAULT_TTL_S
-    os.utime(os.path.join(ss.STATEDIR, nazwa), (stary, stary))
+    entry_name = names(ss)[0]
+    old_ts = time.time() - 2 * ss.DEFAULT_TTL_S
+    os.utime(os.path.join(ss.STATEDIR, entry_name), (old_ts, old_ts))
     ss.sweep_ttl(ss.DEFAULT_TTL_S, time.time())
     assert names(ss) == []
 
 
-# ------------------------------------------------------- domykanie z transkryptu
-# Odmowa i Esc nie generuja ZADNEGO zdarzenia hooka, ale ZAPISUJA `tool_result`
-# w transkrypcie — zmierzone na 2.1.223 trzy razy, z trzema roznymi trescami. To jedyna
-# droga, ktora gasi alert sesji zamilklej po odmowie, i dziala z zamiatania DOWOLNEJ sesji.
+# ------------------------------------------------- closing from the transcript
+# A refusal and Esc generate NO hook event, but they DO WRITE a `tool_result` into the
+# transcript — measured on 2.1.223 three times, with three different bodies. This is the only
+# path that clears the alert of a session gone quiet after a refusal, and it works from the
+# sweep of ANY session.
 #
-# W kazdym przypadku zdarzenie zamiatajace ma INNY `session_id` niz wpis. Bez tego wpis ginie
-# od zamiatania po prefiksie, zanim ktokolwiek otworzy transkrypt, i test nie mowi nic.
+# In every case the sweeping event has a DIFFERENT `session_id` than the entry. Without that
+# the entry dies from prefix sweeping before anyone opens the transcript, and the test says
+# nothing.
 @pytest.fixture
 def tdir(tmp_path):
-    """Katalog transkryptow. Nazwa MUSI zostac slugiem projektu, bo z niej liczy sie
-    `project` i na tym stoja asercje pozostalych testow."""
+    """The transcript directory. The name MUST stay the project slug, because `project` is
+    computed from it and the other tests' assertions rely on that."""
     d = tmp_path / "z--projects-claude-usage-monitor"
     d.mkdir()
     return d
 
 
-def uzycie(tool, ti, tuid):
-    """Rekord `assistant` z blokiem `tool_use` — zmierzone, ze wystepuje wylacznie tam."""
+def tool_use_record(tool, ti, tuid):
+    """An `assistant` record with a `tool_use` block — measured to occur only there."""
     return {"type": "assistant", "timestamp": "2026-08-07T10:00:00.000Z",
             "message": {"content": [{"type": "tool_use", "id": tuid,
                                      "name": tool, "input": ti}]}}
 
 
-def wynik(tuid, kiedy, prompt_id="p1", is_error=True):
-    """Rekord `user` z blokiem `tool_result`. `promptId` jest na TYM rekordzie i tylko tu."""
-    return {"type": "user", "timestamp": kiedy, "promptId": prompt_id,
+def tool_result_record(tuid, when, prompt_id="p1", is_error=True):
+    """A `user` record with a `tool_result` block. `promptId` is on THIS record and only here."""
+    return {"type": "user", "timestamp": when, "promptId": prompt_id,
             "message": {"content": [{"type": "tool_result", "tool_use_id": tuid,
                                      "is_error": is_error,
                                      "content": "The user doesn't want to proceed"}]}}
 
 
-def zapisz(path, *rekordy):
-    """Transkrypt z rekordow; `str` przechodzi surowo, zeby dalo sie wstawic zepsuta linie."""
-    linie = [r if isinstance(r, str) else json.dumps(r, ensure_ascii=False)
-             for r in rekordy]
+def write_transcript(path, *records):
+    """A transcript from records; a `str` passes through raw so a broken line can be put in."""
+    lines = [r if isinstance(r, str) else json.dumps(r, ensure_ascii=False)
+             for r in records]
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text("\n".join(linie) + "\n", encoding="utf-8")
+    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return str(path)
 
 
-def pozniej(ss):
+def later(ss):
     return ss._iso(time.time() + 5)
 
 
-def zamiataj(ss):
-    ss.alert_dispatch(CFG, hook("Stop", session_id="inna-sesja"))
+def sweep_other_session(ss):
+    ss.alert_dispatch(CFG, hook("Stop", session_id="other-session"))
 
 
-def wpis_plan(ss, tp, tuid="toolu_9"):
+def plan_entry(ss, tp, tuid="toolu_9"):
     ss.alert_dispatch(CFG, hook("PreToolUse", tool_name="ExitPlanMode", tool_input={},
                                 tool_use_id=tuid, transcript_path=tp))
 
 
-def wpis_permission(ss, tp, ti, **kw):
+def permission_entry(ss, tp, ti, **kw):
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash", tool_input=ti,
                                 transcript_path=tp, **kw))
 
 
-def test_transkrypt_gasi_plan_po_odmowie_z_cudzego_zamiatania(ss, tdir):
-    """Przypadek ze zgloszenia: plan odrzucony, sesja potem zamilkla. Dzis taki wpis
-    nie ma zbieracza, bo `Stop` nie odpala na przerwanej turze."""
-    tp = zapisz(tdir / "x.jsonl", uzycie("ExitPlanMode", {}, "toolu_9"),
-                wynik("toolu_9", pozniej(ss)))
-    wpis_plan(ss, tp)
+def test_transcript_clears_plan_after_refusal_from_anothers_sweep(ss, tdir):
+    """The reported case: a plan rejected, then the session went quiet. Today such an
+    entry has no collector, because `Stop` does not fire on an interrupted turn."""
+    tp = write_transcript(tdir / "x.jsonl", tool_use_record("ExitPlanMode", {}, "toolu_9"),
+                tool_result_record("toolu_9", later(ss)))
+    plan_entry(ss, tp)
     assert len(names(ss)) == 1
-    zamiataj(ss)
+    sweep_other_session(ss)
     assert names(ss) == []
-    assert ss.wyslane[-1]["entries"] == [], "opustoszenie zbioru MUSI dojsc do panelu"
+    assert ss.sent[-1]["entries"] == [], "the set becoming empty MUST reach the panel"
 
 
-def test_samo_wywolanie_bez_wyniku_nie_gasi(ss, tdir):
-    """Kontrola negatywna na zywym przypadku: czlowiek NADAL czeka."""
-    tp = zapisz(tdir / "x.jsonl", uzycie("ExitPlanMode", {}, "toolu_9"))
-    wpis_plan(ss, tp)
-    zamiataj(ss)
+def test_call_alone_without_result_does_not_clear(ss, tdir):
+    """Negative control on a live case: the human is STILL waiting."""
+    tp = write_transcript(tdir / "x.jsonl", tool_use_record("ExitPlanMode", {}, "toolu_9"))
+    plan_entry(ss, tp)
+    sweep_other_session(ss)
     assert len(names(ss)) == 1
 
 
-def test_klucz_cytowany_jako_wolny_tekst_nie_gasi(ss, tdir):
-    """Dopasowanie po podciagu zgasiloby KAZDA zywa blokade: klucz jest w ogonie zawsze,
-    bo siedzi w swoim wlasnym rekordzie `tool_use`."""
-    tp = zapisz(tdir / "x.jsonl", uzycie("ExitPlanMode", {}, "toolu_9"),
+def test_key_quoted_as_free_text_does_not_clear(ss, tdir):
+    """Substring matching would clear EVERY live block: the key is always in the tail,
+    because it sits in its own `tool_use` record."""
+    tp = write_transcript(tdir / "x.jsonl", tool_use_record("ExitPlanMode", {}, "toolu_9"),
                 {"type": "assistant", "timestamp": "2026-08-07T10:01:00.000Z",
                  "message": {"content": [{"type": "text",
-                                          "text": "w logu widze toolu_9, sprawdz to"}]}})
-    wpis_plan(ss, tp)
-    zamiataj(ss)
+                                          "text": "I see toolu_9 in the log, check it"}]}})
+    plan_entry(ss, tp)
+    sweep_other_session(ss)
     assert len(names(ss)) == 1
 
 
-def test_brak_pliku_transkryptu_nie_gasi(ss, tdir):
-    wpis_plan(ss, str(tdir / "nie-ma-mnie.jsonl"))
-    zamiataj(ss)
+def test_missing_transcript_file_does_not_clear(ss, tdir):
+    plan_entry(ss, str(tdir / "does-not-exist.jsonl"))
+    sweep_other_session(ss)
     assert len(names(ss)) == 1
 
 
-def test_zepsuta_linia_w_srodku_ogona_nie_gubi_wyniku(ss, tdir):
-    """`_safe` na kazdej linii osobno: jedna ucieta linia nie moze zjesc reszty ogona."""
-    tp = zapisz(tdir / "x.jsonl", uzycie("ExitPlanMode", {}, "toolu_9"),
+def test_broken_line_mid_tail_does_not_lose_the_result(ss, tdir):
+    """`_safe` on each line separately: one truncated line must not eat the rest of the tail."""
+    tp = write_transcript(tdir / "x.jsonl", tool_use_record("ExitPlanMode", {}, "toolu_9"),
                 '{"type": "user", "message": {"content": [{"type": "tool_re',
-                wynik("toolu_9", pozniej(ss)))
-    wpis_plan(ss, tp)
-    zamiataj(ss)
+                tool_result_record("toolu_9", later(ss)))
+    plan_entry(ss, tp)
+    sweep_other_session(ss)
     assert names(ss) == []
 
 
-def test_nieczytelny_transkrypt_jednego_wpisu_nie_blokuje_drugiego(ss, tdir):
-    """`_safe` wokol calego odczytu jednego pliku — inaczej jeden zablokowany transkrypt
-    zawiesilby wszystkie pozostale blokady na maszynie."""
-    kaput = tdir / "katalog-nie-plik.jsonl"
-    kaput.mkdir()                                    # open() na katalogu rzuca
-    ok = zapisz(tdir / "x.jsonl", uzycie("ExitPlanMode", {}, "toolu_b"),
-                wynik("toolu_b", pozniej(ss)))
-    wpis_plan(ss, str(kaput), tuid="toolu_a")
-    wpis_plan(ss, ok, tuid="toolu_b")
-    zamiataj(ss)
+def test_unreadable_transcript_of_one_entry_does_not_block_another(ss, tdir):
+    """`_safe` around the whole read of one file — otherwise a single blocked transcript
+    would hang every other block on the machine."""
+    broken_path = tdir / "directory-not-file.jsonl"
+    broken_path.mkdir()                                    # open() on a directory raises
+    ok = write_transcript(tdir / "x.jsonl", tool_use_record("ExitPlanMode", {}, "toolu_b"),
+                tool_result_record("toolu_b", later(ss)))
+    plan_entry(ss, str(broken_path), tuid="toolu_a")
+    plan_entry(ss, ok, tuid="toolu_b")
+    sweep_other_session(ss)
     assert names(ss) == ["%s__main__toolu_a.json" % SID]
 
 
-def test_transkrypt_krotszy_niz_ogon_nie_traci_pierwszej_linii(ss, tdir):
-    """Pierwsza linia jest niepelna TYLKO wtedy, gdy realnie zaczelismy w srodku pliku."""
-    tp = zapisz(tdir / "x.jsonl", wynik("toolu_9", pozniej(ss)))
-    wpis_plan(ss, tp)
-    zamiataj(ss)
+def test_transcript_shorter_than_tail_does_not_lose_first_line(ss, tdir):
+    """The first line is incomplete ONLY when the read really started in mid-file."""
+    tp = write_transcript(tdir / "x.jsonl", tool_result_record("toolu_9", later(ss)))
+    plan_entry(ss, tp)
+    sweep_other_session(ss)
     assert names(ss) == []
 
 
-def test_wyslany_wpis_nie_niesie_pol_lokalnych(ss, tdir):
-    """`transcript_path` niesie nazwe katalogu domowego czlowieka i nie ma odbiorcy
-    w `SessionAlert`; `prompt_id` tez nie. Na dysku musza zostac."""
+def test_sent_entry_does_not_carry_local_fields(ss, tdir):
+    """`transcript_path` carries the human's home directory name and has no recipient
+    in `SessionAlert`; neither does `prompt_id`. On disk they must stay."""
     tp = str(tdir / "x.jsonl")
-    wpis_permission(ss, tp, {"command": "ls"})
-    wyslany = ss.wyslane[-1]["entries"][0]
-    assert "transcript_path" not in wyslany and "prompt_id" not in wyslany
-    na_dysku = ss.read_entry(names(ss)[0])
-    assert na_dysku["transcript_path"] == tp and na_dysku["prompt_id"] == "p1"
+    permission_entry(ss, tp, {"command": "ls"})
+    sent_entry = ss.sent[-1]["entries"][0]
+    assert "transcript_path" not in sent_entry and "prompt_id" not in sent_entry
+    on_disk = ss.read_entry(names(ss)[0])
+    assert on_disk["transcript_path"] == tp and on_disk["prompt_id"] == "p1"
 
 
-# --- wpisy `permission`: klucz to hash, wiec id trzeba odzyskac przeliczeniem
-def test_permission_domyka_sie_przez_przeliczenie_call_key(ss, tdir):
+# --- `permission` entries: the key is a hash, so the id must be recovered by recomputing
+def test_permission_closes_by_recomputing_call_key(ss, tdir):
     ti = {"command": "git push --force"}
-    tp = zapisz(tdir / "x.jsonl", uzycie("Bash", ti, "toolu_x"),
-                wynik("toolu_x", pozniej(ss)))
-    wpis_permission(ss, tp, ti)
-    nazwa = names(ss)[0]
-    assert "toolu_x" not in nazwa, \
-        "klucz wpisu musi byc hashem, inaczej przypadek przechodzi po regule question/plan"
-    zamiataj(ss)
+    tp = write_transcript(tdir / "x.jsonl", tool_use_record("Bash", ti, "toolu_x"),
+                tool_result_record("toolu_x", later(ss)))
+    permission_entry(ss, tp, ti)
+    entry_name = names(ss)[0]
+    assert "toolu_x" not in entry_name, \
+        "the entry's key must be a hash, otherwise the case takes the question/plan rule's path"
+    sweep_other_session(ss)
     assert names(ss) == []
 
 
-def test_to_samo_narzedzie_z_innym_input_nie_gasi(ss, tdir):
+def test_same_tool_with_different_input_does_not_clear(ss, tdir):
     ti = {"command": "git push --force"}
-    tp = zapisz(tdir / "x.jsonl", uzycie("Bash", {"command": "git status"}, "toolu_x"),
-                wynik("toolu_x", pozniej(ss)))
-    wpis_permission(ss, tp, ti)
-    zamiataj(ss)
+    tp = write_transcript(tdir / "x.jsonl", tool_use_record("Bash", {"command": "git status"}, "toolu_x"),
+                tool_result_record("toolu_x", later(ss)))
+    permission_entry(ss, tp, ti)
+    sweep_other_session(ss)
     assert len(names(ss)) == 1
 
 
 @pytest.mark.parametrize("is_error", [True, False])
-def test_identyczny_retry_bez_wyniku_nie_gasi(ss, tdir, is_error):
-    """Zmierzone: 0,24% wywolan ma w oknie 32 KB bajtowo identycznego blizniaka, a scenariusz
-    "odmowa, Claude powtarza identyczne wywolanie" wystapil w korpusie 22 razy. Oba maja ten
-    sam `call_key`, wiec liczy sie WYLACZNIE ostatni rekord `tool_use`."""
+def test_identical_retry_without_result_does_not_clear(ss, tdir, is_error):
+    """Measured: 0.24% of calls have a byte-identical twin inside a 32 KB window, and the
+    "refused, Claude repeats the identical call" scenario occurred 22 times in the corpus.
+    Both have the same `call_key`, so ONLY the last `tool_use` record counts."""
     ti = {"command": "git push --force"}
-    tp = zapisz(tdir / "x.jsonl", uzycie("Bash", ti, "toolu_1"),
-                wynik("toolu_1", pozniej(ss), is_error=is_error),
-                uzycie("Bash", ti, "toolu_2"))
-    wpis_permission(ss, tp, ti)
-    zamiataj(ss)
-    assert len(names(ss)) == 1, "zgaszona blokada, ktorej czlowiek jeszcze nie widzial"
+    tp = write_transcript(tdir / "x.jsonl", tool_use_record("Bash", ti, "toolu_1"),
+                tool_result_record("toolu_1", later(ss), is_error=is_error),
+                tool_use_record("Bash", ti, "toolu_2"))
+    permission_entry(ss, tp, ti)
+    sweep_other_session(ss)
+    assert len(names(ss)) == 1, "cleared a block the human has not seen yet"
 
 
-def test_kontrola_pozytywna_gdy_mlodszy_retry_tez_rozstrzygniety(ss, tdir):
-    """Ten sam stan z bezpiecznikiem niespelnionym — bez tego test wyzej przechodzi takze
-    przy mechanizmie wycietym."""
+def test_positive_control_when_younger_retry_is_also_resolved(ss, tdir):
+    """The same state with the safeguard not met — without this the test above passes also
+    with the mechanism cut out."""
     ti = {"command": "git push --force"}
-    tp = zapisz(tdir / "x.jsonl", uzycie("Bash", ti, "toolu_1"),
-                wynik("toolu_1", pozniej(ss)), uzycie("Bash", ti, "toolu_2"),
-                wynik("toolu_2", pozniej(ss)))
-    wpis_permission(ss, tp, ti)
-    zamiataj(ss)
+    tp = write_transcript(tdir / "x.jsonl", tool_use_record("Bash", ti, "toolu_1"),
+                tool_result_record("toolu_1", later(ss)), tool_use_record("Bash", ti, "toolu_2"),
+                tool_result_record("toolu_2", later(ss)))
+    permission_entry(ss, tp, ti)
+    sweep_other_session(ss)
     assert names(ss) == []
 
 
-def test_wynik_z_innej_tury_nie_gasi(ss, tdir):
-    """`prompt_id` obejmuje cala ture czlowieka (zmierzone 5-12 wywolan, 89-199 s)."""
+def test_result_from_another_turn_does_not_clear(ss, tdir):
+    """`prompt_id` spans the human's whole turn (measured 5-12 calls, 89-199 s)."""
     ti = {"command": "ls"}
-    tp = zapisz(tdir / "x.jsonl", uzycie("Bash", ti, "toolu_x"),
-                wynik("toolu_x", pozniej(ss), prompt_id="p2"))
-    wpis_permission(ss, tp, ti)
-    zamiataj(ss)
+    tp = write_transcript(tdir / "x.jsonl", tool_use_record("Bash", ti, "toolu_x"),
+                tool_result_record("toolu_x", later(ss), prompt_id="p2"))
+    permission_entry(ss, tp, ti)
+    sweep_other_session(ss)
     assert len(names(ss)) == 1
 
 
-def test_wynik_starszy_niz_wejscie_w_blokade_nie_gasi(ss, tdir):
-    """Domyka retry w TEJ SAMEJ turze, ktorego `promptId` nie lapie. Porownanie po
-    sparsowanym czasie: leksykograficznie '...:40.816Z' < '...:40Z', bo '.' < 'Z'."""
+def test_result_older_than_block_entry_does_not_clear(ss, tdir):
+    """Closes a retry in the SAME turn that `promptId` does not catch. Comparison on
+    parsed time: lexicographically '...:40.816Z' < '...:40Z', because '.' < 'Z'."""
     ti = {"command": "ls"}
-    tp = zapisz(tdir / "x.jsonl", uzycie("Bash", ti, "toolu_x"),
-                wynik("toolu_x", ss._iso(time.time() - 300)))
-    wpis_permission(ss, tp, ti)
-    zamiataj(ss)
+    tp = write_transcript(tdir / "x.jsonl", tool_use_record("Bash", ti, "toolu_x"),
+                tool_result_record("toolu_x", ss._iso(time.time() - 300)))
+    permission_entry(ss, tp, ti)
+    sweep_other_session(ss)
     assert len(names(ss)) == 1
 
 
-def test_wpis_bez_prompt_id_nie_jest_domykany(ss, tdir):
-    """Starsza sonda. Hash z pustym lancuchem nie rozroznia tury, wiec lepiej nie ruszac."""
+def test_entry_without_prompt_id_is_not_closed(ss, tdir):
+    """An older probe. A hash over an empty string cannot tell turns apart, so leave it be."""
     ti = {"command": "ls"}
-    tp = zapisz(tdir / "x.jsonl", uzycie("Bash", ti, "toolu_x"),
-                wynik("toolu_x", pozniej(ss), prompt_id=None))
-    wpis_permission(ss, tp, ti, prompt_id=None)
-    zamiataj(ss)
+    tp = write_transcript(tdir / "x.jsonl", tool_use_record("Bash", ti, "toolu_x"),
+                tool_result_record("toolu_x", later(ss), prompt_id=None))
+    permission_entry(ss, tp, ti, prompt_id=None)
+    sweep_other_session(ss)
     assert len(names(ss)) == 1
 
 
-# --- subagent: hook niesie `transcript_path` RODZICA, rekordy leza w osobnym pliku
-def test_wpis_subagenta_domyka_sie_z_jego_wlasnego_pliku(ss, tdir):
-    rodzic = zapisz(tdir / "x.jsonl", uzycie("ExitPlanMode", {}, "toolu_9"))
-    zapisz(tdir / SID / "subagents" / "agent-a1d9fb.jsonl",
-           uzycie("ExitPlanMode", {}, "toolu_9"), wynik("toolu_9", pozniej(ss)))
+# --- subagent: the hook carries the PARENT's `transcript_path`, records live in a separate file
+def test_subagent_entry_closes_from_its_own_file(ss, tdir):
+    parent_tp = write_transcript(tdir / "x.jsonl", tool_use_record("ExitPlanMode", {}, "toolu_9"))
+    write_transcript(tdir / SID / "subagents" / "agent-a1d9fb.jsonl",
+           tool_use_record("ExitPlanMode", {}, "toolu_9"), tool_result_record("toolu_9", later(ss)))
     ss.alert_dispatch(CFG, hook("PreToolUse", tool_name="ExitPlanMode", tool_input={},
-                                tool_use_id="toolu_9", transcript_path=rodzic,
+                                tool_use_id="toolu_9", transcript_path=parent_tp,
                                 agent_id="a1d9fb", agent_type="general-purpose"))
     assert len(names(ss)) == 1
-    zamiataj(ss)
-    assert names(ss) == [], "plik subagenta nie zostal wyliczony ze `agent_id`"
+    sweep_other_session(ss)
+    assert names(ss) == [], "the subagent's file was not derived from `agent_id`"
 
 
-def test_brak_pliku_subagenta_nie_siega_do_rodzica(ss, tdir):
-    """Rodzic ma rozstrzygniecie, ale nie TEGO wywolania — subagent ma swoj plik."""
-    rodzic = zapisz(tdir / "x.jsonl", uzycie("ExitPlanMode", {}, "toolu_9"),
-                    wynik("toolu_9", pozniej(ss)))
+def test_missing_subagent_file_does_not_fall_back_to_parent(ss, tdir):
+    """The parent has a resolution, but not of THIS call — the subagent has its own file."""
+    parent_tp = write_transcript(tdir / "x.jsonl", tool_use_record("ExitPlanMode", {}, "toolu_9"),
+                    tool_result_record("toolu_9", later(ss)))
     ss.alert_dispatch(CFG, hook("PreToolUse", tool_name="ExitPlanMode", tool_input={},
-                                tool_use_id="toolu_9", transcript_path=rodzic,
+                                tool_use_id="toolu_9", transcript_path=parent_tp,
                                 agent_id="a1d9fb"))
-    zamiataj(ss)
+    sweep_other_session(ss)
     assert len(names(ss)) == 1
 
 
-# --------------------------------------------------------------------- zapis i wysylka
-def test_o_excl_zachowuje_since(ss):
-    """Powtorne wejscie tej samej blokady nie moze przesunac stempla — inaczej
-    'czeka 40 min' resetowaloby sie przy kazdym drgnieciu."""
+# ----------------------------------------------------------------- writing and sending
+def test_o_excl_preserves_since(ss):
+    """Re-entering the same block must not move the stamp — otherwise
+    'waiting 40 min' would reset on every twitch."""
     h = hook("PermissionRequest", tool_name="Bash", tool_input={"command": "ls"})
     ss.alert_dispatch(CFG, h)
     since = ss.snapshot()[0]["since"]
@@ -622,126 +642,127 @@ def test_o_excl_zachowuje_since(ss):
     assert ss.snapshot()[0]["since"] == since
 
 
-def test_post_tylko_przy_zmianie_zbioru(ss):
+def test_post_only_on_set_change(ss):
     h = hook("PermissionRequest", tool_name="Bash", tool_input={"command": "ls"})
     ss.alert_dispatch(CFG, h)
-    assert len(ss.wyslane) == 1
-    ss.alert_dispatch(CFG, h)                     # ta sama blokada, zbior bez zmian
-    assert len(ss.wyslane) == 1
+    assert len(ss.sent) == 1
+    ss.alert_dispatch(CFG, h)                     # the same block, set unchanged
+    assert len(ss.sent) == 1
     ss.alert_dispatch(CFG, hook("Stop"))
-    assert len(ss.wyslane) == 2
-    assert ss.wyslane[-1]["entries"] == [], "opustoszenie zbioru MUSI dojsc do panelu"
+    assert len(ss.sent) == 2
+    assert ss.sent[-1]["entries"] == [], "the set becoming empty MUST reach the panel"
 
 
-def test_reczne_usuniecie_plikow_dochodzi_do_panelu(ss):
-    """Furtka awaryjna z RUNBOOK-a: `del %LOCALAPPDATA%\\...\\session-status\\*`. Kasowanie
-    idzie SPOZA sondy, wiec nic tego nie publikowalo i panel trzymal karte po blokadzie,
-    ktorej nie ma. Zamiatanie porownuje teraz zbior ze znacznikiem bezwarunkowo."""
+def test_manual_file_deletion_reaches_the_panel(ss):
+    """The emergency hatch from the RUNBOOK: `del %LOCALAPPDATA%\\...\\session-status\\*`. The
+    deletion comes from OUTSIDE the probe, so nothing published it and the panel kept a card
+    for a block that is gone. The sweep now compares the set against the marker
+    unconditionally."""
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
                                 tool_input={"command": "ls"}))
-    assert len(ss.wyslane) == 1 and ss.wyslane[-1]["entries"]
-    for n in names(ss):                              # to robi `del`
+    assert len(ss.sent) == 1 and ss.sent[-1]["entries"]
+    for n in names(ss):                              # this is what `del` does
         os.remove(os.path.join(ss.STATEDIR, n))
-    ss.alert_dispatch(CFG, hook("Stop", session_id="inna-sesja"))
-    assert ss.wyslane[-1]["entries"] == [], "panel zostalby z nieaktualna karta"
+    ss.alert_dispatch(CFG, hook("Stop", session_id="other-session"))
+    assert ss.sent[-1]["entries"] == [], "the panel would be left with a stale card"
 
 
-def test_wygasniecie_ttl_dochodzi_do_panelu(ss):
-    """`sweep_ttl` kasuje i nie publikuje nigdy — to jest ten sam korzen co furtka `del`.
-    Objaw: wracasz po dwoch dniach, blokady dawno nie ma, a trojkat wisi."""
+def test_ttl_expiry_reaches_the_panel(ss):
+    """`sweep_ttl` deletes and never publishes — the same root cause as the `del` hatch.
+    Symptom: two days later the block is long gone and the triangle is still hanging."""
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
                                 tool_input={"command": "ls"}))
-    nazwa = names(ss)[0]
-    stary = time.time() - 2 * ss.DEFAULT_TTL_S
-    os.utime(os.path.join(ss.STATEDIR, nazwa), (stary, stary))
-    ss.alert_dispatch(CFG, hook("Stop", session_id="inna-sesja"))
+    entry_name = names(ss)[0]
+    old_ts = time.time() - 2 * ss.DEFAULT_TTL_S
+    os.utime(os.path.join(ss.STATEDIR, entry_name), (old_ts, old_ts))
+    ss.alert_dispatch(CFG, hook("Stop", session_id="other-session"))
     assert names(ss) == []
-    assert ss.wyslane[-1]["entries"] == []
+    assert ss.sent[-1]["entries"] == []
 
 
-def test_wygasniecie_jednego_z_dwoch_wpisow_dochodzi_do_panelu(ss):
-    """Ta sama awaria przy NIEPUSTYM katalogu: TTL zdejmuje jeden wpis z dwoch, w tym
-    przebiegu sonda niczego nie kasuje, a serwer trzyma dalej oba. Dlatego uzgadnianie nie
-    moze stac za `if hit`."""
+def test_expiry_of_one_of_two_entries_reaches_the_panel(ss):
+    """The same failure with a NON-EMPTY directory: TTL takes one entry of two, in that
+    run the probe deletes nothing, and the server keeps both. That is why reconciliation
+    must not sit behind `if hit`."""
     for cmd in ("ls", "pwd"):
-        ss.alert_dispatch(CFG, hook("PermissionRequest", session_id="sesja-%s" % cmd,
+        ss.alert_dispatch(CFG, hook("PermissionRequest", session_id="session-%s" % cmd,
                                     tool_name="Bash", tool_input={"command": cmd}))
-    rejestr(ss, "sesja-ls", "sesja-pwd", SID)       # obie sesje ZYJA, wiec nic ich nie zbiera
-    assert len(ss.wyslane[-1]["entries"]) == 2
-    stary = time.time() - 2 * ss.DEFAULT_TTL_S
+    seed_registry(ss, "session-ls", "session-pwd", SID)       # both sessions ARE ALIVE, so none is swept
+    assert len(ss.sent[-1]["entries"]) == 2
+    old_ts = time.time() - 2 * ss.DEFAULT_TTL_S
     p = os.path.join(ss.STATEDIR, names(ss)[0])
-    os.utime(p, (stary, stary))
+    os.utime(p, (old_ts, old_ts))
     ss.alert_dispatch(CFG, hook("Stop"))
     assert len(names(ss)) == 1
-    assert len(ss.wyslane[-1]["entries"]) == 1, "serwer trzymalby wpis, ktorego nie ma"
+    assert len(ss.sent[-1]["entries"]) == 1, "the server would keep an entry that no longer exists"
 
 
-def test_zbior_bez_zmian_nie_generuje_post_ow(ss):
-    """Bezwarunkowe `publish()` nie moze znaczyc "wysylaj przy kazdym zdarzeniu" — o tym
-    decyduje znacznik. Inaczej idle maszyna gadalaby do serwera co ture."""
+def test_unchanged_set_generates_no_posts(ss):
+    """An unconditional `publish()` must not mean "send on every event" — the marker
+    decides that. Otherwise an idle machine would talk to the server every turn."""
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
                                 tool_input={"command": "ls"}))
-    ile = len(ss.wyslane)
+    posts_before = len(ss.sent)
     for _ in range(5):
-        ss.alert_dispatch(CFG, hook("Stop", session_id="inna-sesja"))
-    assert len(ss.wyslane) == ile
+        ss.alert_dispatch(CFG, hook("Stop", session_id="other-session"))
+    assert len(ss.sent) == posts_before
 
 
-def test_pusty_katalog_i_pusty_znacznik_milcza(ss):
-    """Najczestszy przebieg na maszynie bez blokady: nie ma czego uzgadniac i nic nie leci."""
+def test_empty_directory_and_empty_marker_stay_silent(ss):
+    """The commonest run on a machine with no block: nothing to reconcile and nothing goes out."""
     for _ in range(5):
         ss.alert_dispatch(CFG, hook("Stop"))
         ss.alert_dispatch(CFG, hook("UserPromptSubmit"))
-    assert ss.wyslane == []
+    assert ss.sent == []
 
 
-def test_sciezka_goraca_nie_uzgadnia(ss):
-    """`PostToolUse` odpala sie przy KAZDYM wywolaniu narzedzia. Uzgadnianie tam byloby
-    odczytem katalogu i znacznika na najgestszym zdarzeniu, jakie ta sonda widzi."""
+def test_hot_path_does_not_reconcile(ss):
+    """`PostToolUse` fires on EVERY tool call. Reconciling there would mean reading the
+    directory and the marker on the densest event this probe ever sees."""
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
                                 tool_input={"command": "ls"}))
     for n in names(ss):
         os.remove(os.path.join(ss.STATEDIR, n))
-    ile = len(ss.wyslane)
+    posts_before = len(ss.sent)
     ss.alert_dispatch(CFG, hook("PostToolUse", tool_name="Read", tool_input={},
                                 tool_use_id="toolu_x"))
-    assert len(ss.wyslane) == ile, "galaz zamykajaca zaczela chodzic do serwera"
+    assert len(ss.sent) == posts_before, "the closing branch started talking to the server"
 
 
-def test_nieudany_post_nie_zapisuje_znacznika(ss, monkeypatch):
+def test_failed_post_does_not_write_marker(ss, monkeypatch):
     monkeypatch.setattr(ss, "post", lambda *a, **kw: None)
     h = hook("PermissionRequest", tool_name="Bash", tool_input={"command": "ls"})
     ss.alert_dispatch(CFG, h)
-    assert not os.path.exists(ss.POSTED), "inaczej zguba nie powtorzylaby sie nigdy"
+    assert not os.path.exists(ss.POSTED), "otherwise the loss would never repeat"
 
 
-def test_tryb_lokalny_bez_konfiguracji(ss):
-    """Bez `alert_url` skrypt pisze pliki i podnosi toast, nic nie wysyla. To jest
-    legalny stan, nie awaria — i awaryjny kanal, gdy serwer lezy."""
+def test_local_mode_without_configuration(ss):
+    """Without `alert_url` the script writes files and raises a toast, sends nothing. That
+    is a legal state, not a failure — and the fallback channel when the server is down."""
     ss.alert_dispatch({}, hook("PermissionRequest", tool_name="Bash",
                          tool_input={"command": "ls"}))
     assert len(names(ss)) == 1
-    assert ss.wyslane == []
+    assert ss.sent == []
 
 
-def test_polskie_znaki_w_detalu(ss, tmp_path):
-    """Bez jawnego utf-8 cp1250 wywala sie na polskiej sciezce — i to jest wyjatek
-    w skrypcie, ktory ma prawa nie rzucac."""
+def test_accented_characters_in_detail(ss, tmp_path):
+    """Without an explicit utf-8, cp1250 blows up on an accented path — and that is an exception
+    inside a script that has no right to raise at all."""
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Edit",
                           tool_input={"file_path": r"C:\Zażółć\gęślą\jaźń.py"}))
     assert "jaźń" in ss.snapshot()[0]["detail"]
 
 
-def test_detail_jest_przyciety(ss):
+def test_detail_is_truncated(ss):
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
                           tool_input={"command": "x" * 500}))
     assert len(ss.snapshot()[0]["detail"]) == ss.DETAIL_MAX
 
 
-# --------------------------------------------------------------------- nazwa projektu
-def test_worktree_daje_nazwe_projektu_a_nie_agenta(ss):
-    """`basename(cwd)` dalby 'agent-a00ce9ba287d12ab1', a walk-up do `.git` stanalby
-    na worktree, bo tam `.git` jest PLIKIEM, nie katalogiem."""
+# ----------------------------------------------------------------------- project name
+def test_worktree_gives_project_name_not_agent_name(ss):
+    """`basename(cwd)` would give 'agent-a00ce9ba287d12ab1', and a walk-up to `.git` would
+    stop at the worktree, because there `.git` is a FILE, not a directory."""
     transcript = str(Path.home() / ".claude" / "projects"
                      / "z--projects-claude-usage-monitor" / "x.jsonl")
     assert ss.project_name(r"Z:\projects\claude-usage-monitor\.claude\worktrees"
@@ -749,62 +770,62 @@ def test_worktree_daje_nazwe_projektu_a_nie_agenta(ss):
                            transcript) == "claude-usage-monitor"
 
 
-def test_podkatalog_nie_zostaje_nazwa_projektu(ss):
-    """Zmierzone: 38 z 73 sesji raportuje wiecej niz jedno `cwd`. Naglowek pokazywalby
-    'src' zamiast nazwy projektu."""
+def test_subdirectory_does_not_become_project_name(ss):
+    """Measured: 38 of 73 sessions report more than one `cwd`. The header would show
+    'src' instead of the project name."""
     transcript = str(Path.home() / ".claude" / "projects"
                      / "z--projects-claude-usage-monitor" / "x.jsonl")
     assert ss.project_name(r"Z:\projects\claude-usage-monitor\frontend\src",
                            transcript) == "claude-usage-monitor"
 
 
-def test_rozjazd_wielkosci_litery_dysku_nie_psuje_dopasowania(ss):
-    """~/.claude.json REALNIE ma duplikaty kluczy roznjace sie wylacznie wielkoscia
-    litery dysku — ten sam rozjazd dotyczy `cwd`."""
+def test_drive_letter_case_mismatch_does_not_break_matching(ss):
+    """~/.claude.json REALLY does hold duplicate keys differing only in the case of the
+    drive letter — the same drift affects `cwd`."""
     transcript = str(Path.home() / ".claude" / "projects"
                      / "z--projects-claude-usage-monitor" / "x.jsonl")
     assert ss.project_name(r"z:\Projects\Claude-Usage-Monitor",
                            transcript) == "Claude-Usage-Monitor"
 
 
-def test_brak_transkryptu_spada_na_walk_up(ss, tmp_path):
+def test_missing_transcript_falls_back_to_walk_up(ss, tmp_path):
     (tmp_path / "repo" / ".git").mkdir(parents=True)
     (tmp_path / "repo" / "sub").mkdir()
     assert ss.project_name(str(tmp_path / "repo" / "sub"), None) == "repo"
 
 
-def test_project_name_nigdy_nie_rzuca(ss):
+def test_project_name_never_raises(ss):
     for cwd in (None, "", 42, r"C:\\"):
         ss.project_name(cwd, None)
 
 
-# --------------------------------------------------------------------- odpornosc
-def test_smieci_na_wejsciu_nie_rzucaja(ss):
-    for h in ({}, {"hook_event_name": "CosNowego"},
+# --------------------------------------------------------------------- robustness
+def test_garbage_input_does_not_raise(ss):
+    for h in ({}, {"hook_event_name": "SomethingNew"},
               {"hook_event_name": "PermissionRequest"},
               {"hook_event_name": "PostToolUse", "session_id": None},
               {"hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion"}):
         ss.alert_dispatch(CFG, h)
 
 
-def test_uszkodzony_plik_stanu_nie_psuje_snapshotu(ss):
+def test_corrupted_state_file_does_not_break_snapshot(ss):
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
                           tool_input={"command": "ls"}))
-    with open(os.path.join(ss.STATEDIR, "smieci.json"), "w", encoding="utf-8") as f:
-        f.write("{to nie jest json")
+    with open(os.path.join(ss.STATEDIR, "garbage.json"), "w", encoding="utf-8") as f:
+        f.write("{this is not json")
     assert len(ss.snapshot()) == 1
 
 
-def test_call_key_jest_stabilny_i_zalezy_od_promptu(ss):
+def test_call_key_is_stable_and_depends_on_prompt(ss):
     ti = {"command": "git status"}
     assert ss.call_key("Bash", ti, "p1") == ss.call_key("Bash", ti, "p1")
     assert ss.call_key("Bash", ti, "p1") != ss.call_key("Bash", ti, "p2")
     assert ss.call_key("Bash", ti, "p1") != ss.call_key("Edit", ti, "p1")
 
 
-def test_zapora_przed_rekurencja(ss, monkeypatch):
-    """`claude -p "/usage"` sondy to normalna sesja Claude Code i odpala te same hooki.
-    Sam throttle tego nie zatrzyma — kazdy potomek ma wlasny zegar."""
+def test_guard_against_recursion(ss, monkeypatch):
+    """The probe's `claude -p "/usage"` is an ordinary Claude Code session and fires the
+    same hooks. The throttle alone will not stop it — every child has its own clock."""
     monkeypatch.setenv(ss.CHILD_ENV, "1")
     monkeypatch.setattr("sys.stdin", _Stdin(json.dumps(
         hook("PermissionRequest", tool_name="Bash", tool_input={"command": "ls"}))))
@@ -812,147 +833,147 @@ def test_zapora_przed_rekurencja(ss, monkeypatch):
     assert names(ss) == []
 
 
-# --------------------------------------------------------------------- flaga
-def test_flaga_wylacza_wszystko(ss):
+# ---------------------------------------------------------------------- flag
+def test_flag_disables_everything(ss):
     ss.alert_dispatch(dict(CFG, session_status=False),
                       hook("PermissionRequest", tool_name="Bash",
                            tool_input={"command": "ls"}))
     assert names(ss) == []
-    assert ss.wyslane == []
+    assert ss.sent == []
 
 
-def test_brak_klucza_znaczy_wlaczone(ss):
+def test_missing_key_means_enabled(ss):
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
                                 tool_input={"command": "ls"}))
     assert len(names(ss)) == 1
 
 
-def test_wylaczenie_gasi_to_co_wisi(ss):
-    """Sam `return` by nie wystarczyl: blokada trwajaca w chwili wylaczenia zostalaby
-    na panelu do serwerowego TTL, bo nikt juz nie wyslalby korekty."""
+def test_disabling_clears_whats_pending(ss):
+    """A bare `return` would not be enough: a block in progress at the moment of switching
+    off would stay on the panel until the server TTL, because nobody would send a correction."""
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
                                 tool_input={"command": "ls"}))
-    assert len(names(ss)) == 1 and len(ss.wyslane) == 1
+    assert len(names(ss)) == 1 and len(ss.sent) == 1
     ss.alert_dispatch(dict(CFG, session_status=False), hook("PostToolUse"))
     assert names(ss) == []
-    assert ss.wyslane[-1]["entries"] == [], "panel musi dostac pusty zbior"
+    assert ss.sent[-1]["entries"] == [], "the panel must receive the empty set"
 
 
-def test_wylaczone_przy_pustym_katalogu_nie_gada_do_serwera(ss):
-    """Inaczej wylaczona funkcja wysylalaby POST przy KAZDYM zdarzeniu hooka."""
+def test_disabled_with_empty_directory_does_not_talk_to_server(ss):
+    """Otherwise a switched-off feature would send a POST on EVERY hook event."""
     for _ in range(5):
         ss.alert_dispatch(dict(CFG, session_status=False), hook("PostToolUse"))
-    assert ss.wyslane == []
+    assert ss.sent == []
 
 
-def test_wylaczone_nie_uzgadnia_nawet_przy_rozjezdzie(ss):
-    """Uzgadnianie zbioru ze znacznikiem NIE MOZE obchodzic wylacznika. Znacznik zostaje
-    rozjechany z dyskiem, ale wylaczona funkcja ma milczec — porzadki robi sie wlaczajac ja
-    z powrotem albo recznie."""
+def test_disabled_does_not_reconcile_even_on_drift(ss):
+    """Reconciling the set against the marker MUST NOT bypass the switch. The marker ends up
+    out of step with the disk, but a switched-off feature has to keep quiet — cleanup happens
+    by switching it back on, or by hand."""
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
                                 tool_input={"command": "ls"}))
     for n in names(ss):
-        os.remove(os.path.join(ss.STATEDIR, n))     # rozjazd: dysk pusty, znacznik nie
-    ile = len(ss.wyslane)
+        os.remove(os.path.join(ss.STATEDIR, n))     # drift: disk empty, marker not
+    posts_before = len(ss.sent)
     for event in ("Stop", "UserPromptSubmit", "SessionEnd", "SessionStart"):
         ss.alert_dispatch(dict(CFG, session_status=False), hook(event))
-    assert len(ss.wyslane) == ile
+    assert len(ss.sent) == posts_before
 
 
-def test_tryb_lokalny_nie_wychodzi_do_sieci_przy_uzgadnianiu(ss):
-    """Bez `alert_url` sygnalizator pracuje tylko lokalnie. Uzgadnianie liczy snapshot
-    i czyta znacznik, ale nie ma prawa niczego wyslac."""
-    lokalny = {"toast": False}
-    ss.alert_dispatch(lokalny, hook("PermissionRequest", tool_name="Bash",
+def test_local_mode_does_not_reach_network_on_reconcile(ss):
+    """Without `alert_url` the signaller works locally only. Reconciliation computes the
+    snapshot and reads the marker, but must not send anything."""
+    local_cfg = {"toast": False}
+    ss.alert_dispatch(local_cfg, hook("PermissionRequest", tool_name="Bash",
                                     tool_input={"command": "ls"}))
-    assert len(names(ss)) == 1 and ss.wyslane == []
+    assert len(names(ss)) == 1 and ss.sent == []
     for n in names(ss):
         os.remove(os.path.join(ss.STATEDIR, n))
     for event in ("Stop", "UserPromptSubmit", "SessionStart"):
-        ss.alert_dispatch(lokalny, hook(event))
-    assert ss.wyslane == []
-    assert not os.path.exists(ss.POSTED), "tryb lokalny nie zapisuje znacznika"
+        ss.alert_dispatch(local_cfg, hook(event))
+    assert ss.sent == []
+    assert not os.path.exists(ss.POSTED), "local mode must not write the marker"
 
 
-def test_wlasny_ttl_z_konfiguracji_jest_respektowany(ss):
-    """`blocked_ttl_sec` z `config.json` dziala dalej, a jego skutek dochodzi teraz do panelu."""
+def test_custom_ttl_from_config_is_respected(ss):
+    """`blocked_ttl_sec` from `config.json` still works, and its effect now reaches the panel."""
     ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
                                 tool_input={"command": "ls"}))
-    nazwa = names(ss)[0]
-    stary = time.time() - 120
-    os.utime(os.path.join(ss.STATEDIR, nazwa), (stary, stary))
-    ss.alert_dispatch(dict(CFG, blocked_ttl_sec=3600), hook("Stop", session_id="inna"))
-    assert names(ss) == [nazwa], "wpis zginal przed swoim wlasnym TTL"
-    ss.alert_dispatch(dict(CFG, blocked_ttl_sec=60), hook("Stop", session_id="inna"))
+    entry_name = names(ss)[0]
+    old_ts = time.time() - 120
+    os.utime(os.path.join(ss.STATEDIR, entry_name), (old_ts, old_ts))
+    ss.alert_dispatch(dict(CFG, blocked_ttl_sec=3600), hook("Stop", session_id="other"))
+    assert names(ss) == [entry_name], "the entry died before its own TTL"
+    ss.alert_dispatch(dict(CFG, blocked_ttl_sec=60), hook("Stop", session_id="other"))
     assert names(ss) == []
-    assert ss.wyslane[-1]["entries"] == []
+    assert ss.sent[-1]["entries"] == []
 
 
-# --------------------------------------------------------------------- scalenie z sonda
-def _uruchom(ss, monkeypatch, payload, throttle_swiezy=True):
-    """Pelne `main()` sondy z podstawionym stdin."""
+# --------------------------------------------------------------- merged into the probe
+def _run_probe(ss, monkeypatch, payload, throttle_fresh=True):
+    """The probe's full `main()` with a substituted stdin."""
     with open(ss.CONFIG, "w", encoding="utf-8") as f:
         json.dump({"alert_url": CFG["alert_url"], "ingest_token": "t",
                    "throttle_sec": 3600}, f)
-    if throttle_swiezy:
+    if throttle_fresh:
         with open(ss.THROTTLE_FILE, "w") as f:
             f.write(str(time.time()))
-    # `ensure_ascii=False` jest tu NOSNE, nie kosmetyczne: domyslne escapowanie dawaloby
-    # payload w czystym ASCII, wiec zaden dekoder nie mialby czego zepsuc i test kodowania
-    # przechodzilby zawsze. Claude Code wysyla surowe znaki.
+    # `ensure_ascii=False` is LOAD-BEARING here, not cosmetic: the default escaping would
+    # give a pure-ASCII payload, so no decoder would have anything to corrupt and the
+    # encoding test would always pass. Claude Code sends raw characters.
     monkeypatch.setattr("sys.stdin", _Stdin(json.dumps(payload, ensure_ascii=False)))
     return ss.main()
 
 
-def test_alert_odpala_sie_PRZED_throttlem(ss, monkeypatch):
-    """Regresja na kolejnosci w `main()`. Throttle sondy to 60 s; gdyby alert stal za
-    nim, blokada bylaby widoczna dopiero po minucie albo — przy gestych zdarzeniach —
-    wcale."""
-    assert _uruchom(ss, monkeypatch,
+def test_alert_fires_before_throttle(ss, monkeypatch):
+    """A regression on the ordering inside `main()`. The probe throttle is 60 s; were the
+    alert to run after it, a block would be visible only after a minute or — on dense
+    events — not at all."""
+    assert _run_probe(ss, monkeypatch,
                     hook("PermissionRequest", tool_name="Bash",
                          tool_input={"command": "git push --force"})) == 0
-    assert len(names(ss)) == 1, "throttle sondy zjadl alert"
+    assert len(names(ss)) == 1, "the probe's throttle ate the alert"
 
 
-def test_sonda_milczy_na_stdout_przy_permission_request(ss, monkeypatch, capsys):
-    """`PermissionRequest` jest hookiem DECYZYJNYM: cokolwiek na stdout zmienia
-    zachowanie promptu. Kontrakt brzmi 'exit 0 bez JSON-a = oddaj decyzje czlowiekowi'."""
-    _uruchom(ss, monkeypatch, hook("PermissionRequest", tool_name="Bash",
+def test_probe_is_silent_on_stdout_for_permission_request(ss, monkeypatch, capsys):
+    """`PermissionRequest` is a DECISION hook: anything on stdout changes the prompt's
+    behavior. The contract reads 'exit 0 with no JSON = leave the decision to the human'."""
+    _run_probe(ss, monkeypatch, hook("PermissionRequest", tool_name="Bash",
                                    tool_input={"command": "ls"}))
-    zebrane = capsys.readouterr()
-    assert zebrane.out == ""
+    captured = capsys.readouterr()
+    assert captured.out == ""
 
 
-def test_zapora_przed_rekurencja_ucina_takze_alert(ss, monkeypatch):
+def test_recursion_guard_cuts_alert_too(ss, monkeypatch):
     monkeypatch.setenv(ss.CHILD_ENV, "1")
-    assert _uruchom(ss, monkeypatch,
+    assert _run_probe(ss, monkeypatch,
                     hook("PermissionRequest", tool_name="Bash",
                          tool_input={"command": "ls"})) == 0
     assert names(ss) == []
 
 
-def test_stdin_hooka_czytany_jako_utf8(ss, monkeypatch):
-    """Payload hooka to UTF-8, ale `sys.stdin` w trybie tekstowym dekodowal go
-    kodowaniem locale — na ekranie i w toascie wychodzilo 'umieraÄ‡' zamiast
-    'umierac' z ogonkami. Asercja idzie przez `snapshot()`, bo on ma jawne utf-8;
-    gole `open()` przeczytaloby poprawny plik jako cp1250 i dalo czerwien na dobrym
-    kodzie."""
-    assert _uruchom(ss, monkeypatch,
+def test_hook_stdin_is_read_as_utf8(ss, monkeypatch):
+    """The hook payload is UTF-8, but `sys.stdin` in text mode decoded it with the locale
+    encoding — on screen and in the toast it came out as 'umieraÄ‡' instead of
+    'umierać' with its diacritics. The assertion goes through `snapshot()`, because that
+    one has an explicit utf-8; a bare `open()` would read a correct file as cp1250 and
+    paint the test red on code that is fine."""
+    assert _run_probe(ss, monkeypatch,
                     hook("PermissionRequest", tool_name="Bash",
                          tool_input={"command": "echo zażółć gęślą jaźń"})) == 0
     assert "zażółć gęślą jaźń" in ss.snapshot()[0]["detail"]
 
 
-def test_stdin_z_bajtem_spoza_cp1250_nie_gubi_alertu(ss, monkeypatch):
-    """Twardszy tryb tej samej awarii, i to on boli bardziej. cp1250 nie ma
-    odpowiednika dla 0x81/0x83/0x88/0x90/0x98, a `sys.stdin` ma
-    `errors=surrogateescape` — wiec 'Ł' (C5 81) nie psul sie na ekranie, tylko
-    stawal sie samotnym surogatem. Ten wywracal `write_excl` na `.encode("utf-8")`
-    ("surrogates not allowed"), a tam stoi `except Exception: pass`: plik wpisu
-    powstawal PUSTY. Skutek: toast leci, `read_entry` nie parsuje, `snapshot()`
-    pomija, alert nigdy nie dociera na panel — a klucz jest juz zajety, wiec
-    ponowienie tez nic nie da."""
-    assert _uruchom(ss, monkeypatch,
+def test_stdin_with_byte_outside_cp1250_does_not_lose_alert(ss, monkeypatch):
+    """The harder mode of the same failure, and it is the one that hurts more. cp1250 has
+    no equivalent for 0x81/0x83/0x88/0x90/0x98, and `sys.stdin` runs with
+    `errors=surrogateescape` — so 'Ł' (C5 81) did not come out mangled on screen, it
+    became a lone surrogate instead. That surrogate broke `write_excl` at
+    `.encode("utf-8")` ("surrogates not allowed"), and that call sits inside
+    `except Exception: pass`: the entry file was created EMPTY. The result: the toast
+    fires, `read_entry` does not parse, `snapshot()` skips it, the alert never reaches
+    the panel — and the key is already taken, so a retry achieves nothing either."""
+    assert _run_probe(ss, monkeypatch,
                     hook("PermissionRequest", tool_name="Edit",
                          tool_input={"file_path": r"C:\Łukasz\gęś.py"})) == 0
     assert len(ss.snapshot()) == 1
@@ -960,19 +981,19 @@ def test_stdin_z_bajtem_spoza_cp1250_nie_gubi_alertu(ss, monkeypatch):
 
 
 class _Stdin:
-    """Atrapa musi ZLE dekodowac, inaczej nie ma czego zlapac.
+    """The double must decode BADLY, or there is nothing to catch.
 
-    Prawdziwy `sys.stdin` w procesie hooka dostaje bajty UTF-8 i rozkodowuje je
-    kodowaniem locale (na maszynie deweloperskiej cp1250) — `.read()` odtwarza
-    wlasnie to, a `.buffer` niesie prawde. Atrapa zwracajaca gotowy `str` byla
-    wygodna fikcja: przechodzila tak samo przed poprawka i po niej.
+    The real `sys.stdin` in a hook process gets UTF-8 bytes and decodes them with
+    the locale encoding (cp1250 on the machine where this was measured) — `.read()`
+    reproduces exactly that, while `.buffer` carries the truth. A double that simply returned a fixed `str` was a convenient fiction: it passed the same before the fix
+    and after it.
 
-    `surrogateescape`, nie `strict`: zmierzone na procesie potomnym uruchomionym
-    tak, jak hooki uruchamia Claude Code — `sys.stdin.errors` to wlasnie
-    `surrogateescape`. Bajty bez odpowiednika w cp1250 nie rzucaja wiec od razu,
-    tylko zamieniaja sie w samotne surogaty, ktore wywracaja dopiero `.encode()`
-    warstwe dalej. Atrapa ze `strict` byla by ostrzejsza od rzeczywistosci i
-    kazalaby szukac awarii nie tam, gdzie jest.
+    `surrogateescape`, not `strict`: measured on a child process started the way
+    Claude Code starts hooks — `sys.stdin.errors` is precisely
+    `surrogateescape`. So bytes with no cp1250 equivalent do not raise right away,
+    they turn into lone surrogates that only topple `.encode()` a layer further
+    on. A double using `strict` would be harsher than reality and would send the
+    search for the failure to the wrong place.
     """
 
     def __init__(self, text):
@@ -980,4 +1001,4 @@ class _Stdin:
         self.buffer = io.BytesIO(self.raw)
 
     def read(self):
-        return self.raw.decode("cp1250", "surrogateescape")     # jak prawdziwy stdin
+        return self.raw.decode("cp1250", "surrogateescape")     # like the real stdin

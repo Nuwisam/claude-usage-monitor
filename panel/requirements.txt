@@ -1,30 +1,30 @@
-# Panel AX206 — zaleznosci klienta.
+# AX206 panel — client dependencies.
 #
-# Piny na sztywno: to, co rysuje na biurku, nie moze zmienic sie dlatego, ze
-# ktos zrobil `pip install -U` dla innego projektu. Venv stoi POZA repo,
-# w %LOCALAPPDATA%\claude-usage-monitor\panel-venv (patrz deploy/install-task.ps1).
+# Hard pins: what draws on the display must not change because someone ran
+# `pip install -U` for a different project. The venv lives OUTSIDE the repo,
+# in %LOCALAPPDATA%\claude-usage-monitor\panel-venv (see deploy/install-task.ps1).
 #
-# Reszta klienta to stdlib: http.client, ssl, ctypes, winreg, queue, threading.
-# numpy NIE jest potrzebne — pakowanie RGB565 idzie przez bytes.translate()
-# i jedna operacje OR na duzych liczbach, 1,55 ms na pelna klatke.
+# The rest of the client is stdlib: http.client, ssl, ctypes, winreg, queue, threading.
+# numpy is NOT needed — RGB565 packing goes through bytes.translate()
+# and a single OR operation on large integers, 1.55 ms for a full frame.
 
 Pillow==12.1.0
-# libusb niesie binarke libusb-1.0.dll dla win-amd64 — sama biblioteka, bez
-# sterownika. STEROWNIKIEM urzadzenia pozostaje libusb-win32 (`libusb0.sys`,
-# ten sam, ktorego uzywaja gotowe narzedzia do tych wyswietlaczy); backend windowsowy libusb-1.0 rozmawia z nim
-# bez przepinania czegokolwiek (zmierzone: 1200 klatek, missed_csw=0).
+# libusb carries the libusb-1.0.dll binary for win-amd64 — the library alone, without
+# a driver. The device's DRIVER remains libusb-win32 (`libusb0.sys`,
+# the same one the ready-made tools for these displays use); the libusb-1.0 Windows backend talks to it
+# without re-binding anything (measured: 1200 frames, missed_csw=0).
 #
-# Czemu nie zostalismy przy libusb-win32: jego API 0.1 nie podaje topologii
-# (bus-0, devnum=0), wiec modul trzeba bylo szukac w rejestrze Windows i laczyc
-# jedno z drugim po kolejnosci. `libusb_get_port_numbers()` daje lancuch portow
-# prosto z uchwytu, ktory otwieramy. Szczegoly w naglowku panel/device.py.
+# Why libusb-win32 was not kept: its 0.1 API does not report topology
+# (bus-0, devnum=0), so the module had to be looked up in the Windows registry and matched
+# to the handle by ordering. `libusb_get_port_numbers()` gives the port chain
+# straight from the handle being opened. Details in the panel/device.py header.
 libusb==1.0.29.post7
-# certifi to magazyn CA — jego odswiezanie ma byc decyzja, nie skutkiem ubocznym.
-# Podbijaj swiadomie, gdy przestanie ufac lancuchowi certyfikatow Twojego serwera.
+# certifi is a CA store — refreshing it must be a decision, not a side effect.
+# Bump it deliberately, once it stops trusting your server's certificate chain.
 certifi==2026.7.22
-# pyserial obsluguje DRUGI ekran (Turing rev A na CH340). Wersja jest przypieta
-# takze dlatego, ze sterownik czyta z niej jedna rzecz prywatna: licznik bajtow
-# z `_overlapped_write.InternalHigh` po przeterminowanym zapisie. Bez niego nie
-# da sie dopchnac dokladnej reszty urwanej bitmapy, a to jedyny znany sposob
-# wyjscia z rozjazdu na laczu, ktore niczego nie potwierdza.
+# pyserial drives the SECOND screen (Turing rev A on a CH340). The version is pinned
+# also because the driver reads one private thing from it: the byte count
+# from `_overlapped_write.InternalHigh` after a write that timed out. Without it there
+# is no way to push through the exact remainder of a truncated bitmap, and that is the
+# only known way out of a desync on a link that acknowledges nothing.
 pyserial==3.5

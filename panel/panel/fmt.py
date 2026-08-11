@@ -1,42 +1,42 @@
-"""Formaty — port frontend/src/lib/time.ts i format.ts.
+"""Formats — a port of frontend/src/lib/time.ts and format.ts.
 
-Napisy MUSZA wychodzic identyczne jak w WWW, bo to ten sam produkt ogladany
-z dwoch stron biurka. Testy w tests/test_fmt_port.py trzymaja to za slowo.
+The strings MUST come out identical to the web, because it is the same product
+watched from two screens at once. The tests in tests/test_fmt_port.py hold it to that.
 
-Czas: countdowny licza sie z zegara SERWERA (kotwica `serverNow`), ale godziny
-wyswietlane sa w strefie LOKALNEJ — dokladnie jak `time.ts:hm`, ktore uzywa
-`d.getHours()`. Dzieki temu "reset o 20:00" zgadza sie z zegarkiem na reku.
+Time: countdowns are computed from the SERVER clock (anchor `serverNow`), but the
+hours shown are in the LOCAL zone — exactly like `time.ts:hm`, which uses
+`d.getHours()`. That way "reset at 20:00" agrees with the watch on a wrist.
 
-Sekundy zostaja tam, gdzie sa w makiecie: w odliczaniu ponizej godziny i w wieku
-odczytu ponizej minuty. Kosztuja pelna klatke co sekunde (panel nie umie
-odswiezyc fragmentu), ale wchodza dokladnie wtedy, gdy pracujesz — a wtedy sa
-najbardziej potrzebne. Poza praca wartosci same wchodza w minuty i godziny
-i panel milknie. Jedyny wyjatek to zegar w naglowku: on tyka niezaleznie od
-pracy, wiec pokazuje HH:MM.
+Seconds stay where the mockup puts them: in a countdown below an hour and in a
+reading's age below a minute. They cost a full frame every second (the panel cannot
+refresh a fragment), but they come in exactly when work is happening — and that is
+when they are needed most. Outside work the values climb into minutes and hours on
+their own and the panel goes quiet. The only exception is the clock in the header:
+it ticks regardless of work, so it shows HH:MM.
 
-Z time.ts nie portujemy `stamp()` (stempel BEZ przyimka): na panelu nie ma dla
-niego wolajacego, bo nie ma podpisow "bez zmian od" ani "od". Gdy taki podpis
-sie pojawi, `stamp()` jest bliznakiem `at_stamp()` z time.ts:71-83.
+From time.ts we do not port `stamp()` (the stamp WITHOUT a preposition): the panel
+has no caller for it, because it has no "unchanged since" or "since" labels. Should
+such a label appear, `stamp()` is the twin of `at_stamp()` from time.ts:71-83.
 """
 import re
 from datetime import datetime, timezone
 
 _HAS_ZONE = re.compile(r"(Z|[+-]\d{2}:?\d{2})$")
 
-# Skroty dni DOKLADNIE jak time.ts:44 — indeksowane od NIEDZIELI, jak getDay().
-# Pythonowe weekday() liczy od poniedzialku, wiec indeks robi _day_index(), a nie
-# przestawiona tablica: napisy maja wychodzic identycznie jak w WWW.
-DAYS = ("ndz.", "pon.", "wt.", "śr.", "czw.", "pt.", "sob.")
+# Day abbreviations EXACTLY as in time.ts:44 — indexed from SUNDAY, like getDay().
+# Python's weekday() counts from Monday, so the indexing is done by _day_index(), not by
+# a reordered table: the strings have to come out identical to the web.
+DAYS = ("Sun.", "Mon.", "Tue.", "Wed.", "Thu.", "Fri.", "Sat.")
 
 
 def parse_utc(iso):
-    """ISO -> datetime z tzinfo. Bez strefy dopinamy UTC, jak parseUtc w time.ts.
+    """ISO -> datetime with tzinfo. With no zone we append UTC, like parseUtc in time.ts.
 
-    Nie-string zwraca None, nie wyjatek. To jedyne wejscie surowych znacznikow
-    z serwera do calego klienta (stemple serii, `resetsAt`, `serverNow`), a regula
-    jest tu twarda: zepsuta ramka nie moze zabic panelu. `re.search` na liczbie
-    rzuca TypeError, ktory przeszedlby przez tick() i run() az do excepthooka —
-    czyli jedno pole zle zserializowane przez backend gasiloby ekran.
+    A non-string returns None, not an exception. This is the only entry point for raw
+    server timestamps into the whole client (series stamps, `resetsAt`, `serverNow`), and
+    the rule here is hard: a broken frame must not kill the panel. `re.search` on a number
+    raises TypeError, which would pass through tick() and run() all the way to the
+    excepthook — so one field badly serialized by the backend would blank the screen.
     """
     if not iso or not isinstance(iso, str):
         return None
@@ -53,7 +53,7 @@ def to_local(d):
 
 
 def ms(d):
-    """datetime -> milisekundy epoki, zeby liczyc jak w JS."""
+    """datetime -> epoch milliseconds, so the arithmetic runs as it does in JS."""
     return None if d is None else d.timestamp() * 1000.0
 
 
@@ -77,63 +77,61 @@ def dm(d):
 
 
 def _day_index(d):
-    """Indeks do DAYS w konwencji JS getDay(): 0 to niedziela."""
+    """Index into DAYS in the JS getDay() convention: 0 is Sunday."""
     return (d.weekday() + 1) % 7
 
 
 def _day_diff(d, now):
-    """Roznica w DNIACH KALENDARZOWYCH po lokalnych polnocach (time.ts:51-55).
+    """Difference in CALENDAR DAYS across local midnights (time.ts:51-55).
 
-    Nigdy delta_ms / 86_400_000: doba przy zmianie czasu ma 23 albo 25 h, a para
-    chwil po dwoch stronach polnocy rozni sie o dzien niezaleznie od tego, ile ms
-    je dzieli. Czlowiek czyta "wczoraj o 23:50", nie "26 godzin temu".
+    Never delta_ms / 86_400_000: a day at a clock change has 23 or 25 h, and a pair of
+    instants on two sides of midnight differ by a day no matter how many ms separate
+    them. A person reads "yesterday at 23:50", not "26 hours ago".
     """
     return (to_local(d).date() - to_local(now).date()).days
 
 
 def at_stamp(d, now_ms):
-    """Stempel chwili czytanej WZGLEDEM TERAZ, z przyimkiem — port atStamp().
+    """Stamp of an instant read RELATIVE TO NOW, with a preposition — a port of atStamp().
 
-        dzis          ->  "o 11:58"
-        +/- 1 dzien   ->  "wczoraj o 23:50" / "jutro o 20:00"
-        +/- 2..6 dni  ->  "w śr. o 11:58"   ALE  "we wt. o 11:58"
-        dalej         ->  "26.07 o 11:58"   ("w 26.07" nie jest polszczyzna)
-        inny rok      ->  "26.07.2025 o 11:58"
+        today         ->  "at 11:58"
+        +/- 1 day     ->  "yesterday at 23:50" / "tomorrow at 20:00"
+        +/- 2..6 days ->  "on Wed. at 11:58"
+        further       ->  "26.07 at 11:58"   (a numeric date takes no preposition)
+        other year    ->  "26.07.2025 at 11:58"
 
-    Przyimek jest W SRODKU stempla, bo polszczyzna zmienia go razem z formatem,
-    a wolajacy nie ma prawa wiedziec, ktory wariant wyszedl.
+    The preposition is INSIDE the stamp, because the format is what decides it, and the
+    caller has no right to know which variant came out.
 
-    Parametru `precise` z time.ts:94 nie portujemy: sekundowy wariant zapala sie
-    wylacznie w podpisie "potwierdzone …" w hero WWW, ktorego panel nie ma. To
-    samo kryterium, po ktorym z SeriesView wypadlo pole `outline` — nie ma
-    czytelnika, nie ma pola.
+    The `precise` parameter from time.ts:94 is not ported: the seconds variant lights up
+    only in the "confirmed …" label in the web hero, which the panel does not have. The
+    same criterion by which the `outline` field fell out of SeriesView — no reader, no
+    field.
     """
     if d is None:
         return "—"
     now = datetime.fromtimestamp(now_ms / 1000.0, tz=timezone.utc)
     diff = _day_diff(d, now)
     if diff == 0:
-        return "o %s" % hm(d)
+        return "at %s" % hm(d)
     if diff == -1:
-        return "wczoraj o %s" % hm(d)
+        return "yesterday at %s" % hm(d)
     if diff == 1:
-        return "jutro o %s" % hm(d)
+        return "tomorrow at %s" % hm(d)
     local = to_local(d)
     if abs(diff) <= 6:
-        # "we wtorek", nie "w wtorek" — jedyny wyjatek i dlatego stoi tu.
-        idx = _day_index(local)
-        return "%s %s o %s" % ("we" if idx == 2 else "w", DAYS[idx], hm(d))
+        return "on %s at %s" % (DAYS[_day_index(local)], hm(d))
     year = "" if local.year == to_local(now).year else ".%d" % local.year
-    return "%s%s o %s" % (dm(d), year, hm(d))
+    return "%s%s at %s" % (dm(d), year, hm(d))
 
 
 def countdown(target_ms, now_ms):
-    """"2 d 4 h" / "3 h 05 min" / "12 min 34 s" / "po resecie" / "bez resetu"."""
+    """"2 d 4 h" / "3 h 05 min" / "12 min 34 s" / "past reset" / "no reset"."""
     if target_ms is None:
-        return "bez resetu"
+        return "no reset"
     s = int(round((target_ms - now_ms) / 1000.0))
     if s <= 0:
-        return "po resecie"
+        return "past reset"
     d, rest = divmod(s, 86400)
     h, rest = divmod(rest, 3600)
     m, sec = divmod(rest, 60)
@@ -145,45 +143,46 @@ def countdown(target_ms, now_ms):
 
 
 def ago(since_ms, now_ms):
-    """"3 s temu" / "5 min temu" / "1 h 25 min temu" / "3 d 4 h temu".
+    """"3 s ago" / "5 min ago" / "1 h 25 min ago" / "3 d 4 h ago".
 
-    Szczebel dobowy w ksztalcie countdown(), bo odkad swiezosc niesie sama
-    etykieta, trzydniowa cisza musi czytac sie od razu — "76 h 00 min temu"
-    wymaga dzielenia w glowie. Granica dokladnie na 24 h daje "1 d 0 h temu";
-    countdown() drukuje "1 d 0 h" dla tego samego wejscia, wiec to spojne.
+    A day-level step shaped like countdown(), because now that freshness is carried by the
+    label itself, three days of silence has to read at once — "76 h 00 min ago" needs
+    division in the head. The boundary exactly at 24 h gives "1 d 0 h ago";
+    countdown() prints "1 d 0 h" for the same input, so that is consistent.
     """
     if since_ms is None:
         return "—"
     s = max(0, int(round((now_ms - since_ms) / 1000.0)))
     if s < 60:
-        return "%d s temu" % s
+        return "%d s ago" % s
     m = s // 60
     if m < 60:
-        return "%d min temu" % m
+        return "%d min ago" % m
     h = m // 60
     if h < 24:
-        return "%d h %s min temu" % (h, _p2(m % 60))
-    return "%d d %d h temu" % (h // 24, h % 24)
+        return "%d h %s min ago" % (h, _p2(m % 60))
+    return "%d d %d h ago" % (h // 24, h % 24)
 
 
 def waited(since_ms, now_ms):
-    """Jak dlugo Claude czeka: "chwilę" / "4 min" / "1 h 05 min" / "2 d 3 h".
+    """How long Claude is waiting: "a moment" / "4 min" / "1 h 05 min" / "2 d 3 h".
 
-    GRUBOZIARNISTE, i to nie jest kwestia gustu. AX206 nie umie wycinkow, wiec kazda
-    zmiana napisu na karcie to pelna klatka i 355 ms na USB — a druga sciana kosztuje
-    swoje. Sekundy zamienilyby ~2,5% obciazenia lacza w ~35% na caly czas trwania karty.
-    Ponizej minuty nie ma wiec liczby, tylko slowo: jest tam i tak nic do policzenia.
+    COARSE, and that is not a matter of taste. The AX206 cannot do partial updates, so every
+    change of a string on the card is a full frame and 355 ms on USB — and the second panel
+    costs its own. Seconds would turn ~2.5% of the link load into ~35% for the whole life of
+    the card. So below a minute there is no number, only a word: there is nothing to count
+    there anyway.
 
-    Zarzut "zegar w banerze i tak tyka co sekunde" nie stosuje sie: na karcie nie ma
-    zywego zegara, godzina w banerze to statyczny moment pojawienia sie promptu.
+    The objection "the clock in the banner ticks every second anyway" does not apply: the
+    card has no live clock, the hour in the banner is the static moment the prompt appeared.
 
-    Odroznia sie od `ago()` brakiem "temu": to jest czas trwania, nie stempel.
+    It differs from `ago()` by the missing "ago": this is a duration, not a stamp.
     """
     if since_ms is None:
         return "—"
     s = max(0, int(round((now_ms - since_ms) / 1000.0)))
     if s < 60:
-        return "chwilę"
+        return "a moment"
     m = s // 60
     if m < 60:
         return "%d min" % m
@@ -194,8 +193,8 @@ def waited(since_ms, now_ms):
 
 
 def pct(v):
-    """31 -> "31", 30.5 -> "30,5". None zostaje None — o tym, co pokazac zamiast
-    liczby, decyduje widok, bo w stanie `unknown` odpowiedzia jest slowo."""
+    """31 -> "31", 30.5 -> "30.5". None stays None — what to show instead of the
+    number is the view's decision, because in the `unknown` state the answer is a word."""
     if v is None:
         return None
     try:
@@ -206,15 +205,15 @@ def pct(v):
         return None
     if f == int(f):
         return str(int(f))
-    return ("%.1f" % f).replace(".", ",")
+    return "%.1f" % f
 
 
 def money(minor, currency=None, exponent=2):
-    """(3820, "USD", 2) -> "38,20 USD".
+    """(3820, "USD", 2) -> "38.20 USD".
 
-    Liczone na liczbach CALKOWITYCH. Backend nigdy nie splaszcza kwot do floata
-    (schemas.py: "w jednostkach mniejszych z wykladnikiem, nigdy jako float")
-    i nie ma powodu, zeby robic to po drodze do ekranu.
+    Computed on INTEGERS. The backend never flattens amounts to a float
+    (schemas.py: "in minor units with an exponent, never as a float")
+    and there is no reason to do it on the way to the screen.
     """
     if minor is None:
         return None
@@ -223,12 +222,12 @@ def money(minor, currency=None, exponent=2):
     whole, frac = divmod(abs(int(minor)), 10 ** exp) if exp > 0 else (abs(int(minor)), 0)
     text = "%s%d" % (sign, whole)
     if exp > 0:
-        text += "," + str(frac).rjust(exp, "0")
+        text += "." + str(frac).rjust(exp, "0")
     return "%s %s" % (text, currency) if currency else text
 
 
 def clamp_pct(v):
-    """Pasek nie moze wyjechac za tor ani wjechac na minus."""
+    """The bar must not run off the track or dip below zero."""
     if v is None:
         return 0.0
     try:
@@ -241,11 +240,11 @@ def clamp_pct(v):
 
 
 class ServerClock:
-    """Zegar serwera kotwiczony na monotonicznym.
+    """Server clock anchored on a monotonic one.
 
-    time.ts uzywa Date.now(), bo przegladarka nie ma nic lepszego. Panel chodzi
-    miesiacami, wiec kotwiczymy na time.monotonic() — skok NTP albo zmiana czasu
-    nie przesuna countdownow. Semantyka widoczna na zewnatrz jest ta sama.
+    time.ts uses Date.now(), because the browser has nothing better. The panel runs for
+    months, so we anchor on time.monotonic() — an NTP jump or a clock change will not
+    shift the countdowns. The semantics visible from the outside are the same.
     """
 
     def __init__(self, monotonic):

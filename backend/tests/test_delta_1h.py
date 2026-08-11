@@ -1,85 +1,85 @@
-"""Delta 1 h nie przechodzi przez granice resetu.
+"""The 1 h delta does not cross a reset boundary.
 
-Regresja: zaraz po resecie sesji hero pisalo „−46 pp w ciagu godziny", bo punktem
-odniesienia byla probka z POPRZEDNIEGO okna — i stalo tak przez cala godzine, akurat wtedy,
-gdy zuzycie realnie roslo od zera.
+Regression: right after a session reset the hero read "−46 pp in the last hour", because
+the reference point was a sample from the PREVIOUS window — and it stayed that way for a
+whole hour, precisely when usage was really climbing from zero.
 """
 from datetime import datetime, timedelta
 
-from tests.test_ingest_e2e import (  # noqa: F401 — fixture `db` przychodzi razem z nimi
+from tests.test_ingest_e2e import (  # noqa: F401 — the `db` fixture comes along with these
     db, ingest_one, payload, utcnow, with_util,
 )
 
 from app.services.status import _delta_1h, build_status
 
 NOW = datetime(2026, 7, 27, 12, 0, 0)
-B_NEXT = NOW + timedelta(hours=4)      # granica biezacego okna
-B_PREV = NOW - timedelta(hours=1)      # granica, ktora juz minela
+B_NEXT = NOW + timedelta(hours=4)      # the current window's boundary
+B_PREV = NOW - timedelta(hours=1)      # a boundary that has already passed
 
 
-def przebieg(*items):
-    """(minut temu, utilization, granica) -> wiersze, rosnaco po czasie."""
+def trace(*items):
+    """(minutes ago, utilization, boundary) -> rows, ascending by time."""
     return [(NOW - timedelta(minutes=m), u, r) for m, u, r in items]
 
 
-def test_bez_wartosci_biezacej_nie_ma_delty():
-    assert _delta_1h(przebieg((30, 10.0, B_NEXT)), now=NOW, current=None,
+def test_no_current_value_means_no_delta():
+    assert _delta_1h(trace((30, 10.0, B_NEXT)), now=NOW, current=None,
                      resets_at=B_NEXT) == (None, None)
 
 
-def test_po_minieciu_granicy_delty_nie_ma():
-    """Wszystkie probki naleza do poprzedniego okna — ten sam warunek, po ktorym
-    freshness() orzeka inferred_reset. Bez tego wychodzilo wlasnie „−46 pp"."""
-    rows = przebieg((50, 46.0, B_PREV), (20, 46.0, B_PREV))
+def test_after_the_boundary_has_passed_there_is_no_delta():
+    """All the samples belong to the previous window — the same condition on which
+    freshness() declares inferred_reset. Without this the result was exactly "−46 pp"."""
+    rows = trace((50, 46.0, B_PREV), (20, 46.0, B_PREV))
     assert _delta_1h(rows, now=NOW, current=0.0, resets_at=B_PREV) == (None, None)
 
 
-def test_jedna_probka_w_oknie_to_nie_rozpietosc():
-    rows = przebieg((60, 46.0, B_PREV), (2, 3.0, B_NEXT))
+def test_one_sample_in_the_window_is_not_a_delta():
+    rows = trace((60, 46.0, B_PREV), (2, 3.0, B_NEXT))
     assert _delta_1h(rows, now=NOW, current=3.0, resets_at=B_NEXT) == (None, None)
 
 
-def test_baseline_przyciety_do_biezacego_okna():
-    rows = przebieg((60, 46.0, B_PREV), (30, 46.0, B_PREV),
+def test_baseline_clipped_to_the_current_window():
+    rows = trace((60, 46.0, B_PREV), (30, 46.0, B_PREV),
                     (5, 2.0, B_NEXT), (1, 4.0, B_NEXT))
     d, t0 = _delta_1h(rows, now=NOW, current=4.0, resets_at=B_NEXT)
-    assert d == 2.0, "delta liczona od pierwszej probki PO resecie"
-    assert d != -42.0, "baseline z poprzedniego okna — dokladnie ten blad"
+    assert d == 2.0, "delta computed from the first sample AFTER the reset"
+    assert d != -42.0, "baseline from the previous window — exactly this bug"
     assert t0 == NOW - timedelta(minutes=5)
 
 
-def test_cala_godzina_w_jednym_oknie():
-    rows = przebieg((58, 12.0, B_NEXT), (30, 20.0, B_NEXT), (1, 31.0, B_NEXT))
+def test_a_full_hour_within_one_window():
+    rows = trace((58, 12.0, B_NEXT), (30, 20.0, B_NEXT), (1, 31.0, B_NEXT))
     d, t0 = _delta_1h(rows, now=NOW, current=31.0, resets_at=B_NEXT)
     assert d == 19.0
-    assert (NOW - t0).total_seconds() >= 45 * 60, "UI podpisze to jako „w ciagu godziny"
+    assert (NOW - t0).total_seconds() >= 45 * 60, 'UI will label this as "within the hour"'
 
 
-def test_reset_w_toku_gdy_granica_jest_wyzerowana():
-    """Sonda zeruje przedawniona granice, wiec `resets_at` nie odslania resetu ani
-    w probkach, ani w stanie serii — zostaje data probki i spadek."""
-    rows = przebieg((50, 46.0, B_PREV), (4, 0.0, None), (1, 3.0, None))
+def test_reset_in_progress_when_the_boundary_has_been_zeroed():
+    """The probe zeroes out a stale boundary, so `resets_at` exposes the reset neither in
+    the samples nor in the series state — what remains is the sample date and the drop."""
+    rows = trace((50, 46.0, B_PREV), (4, 0.0, None), (1, 3.0, None))
     d, t0 = _delta_1h(rows, now=NOW, current=3.0, resets_at=None)
     assert (d, t0) == (3.0, NOW - timedelta(minutes=4))
 
 
-def test_brak_probek_to_brak_delty():
+def test_no_samples_means_no_delta():
     assert _delta_1h([], now=NOW, current=5.0, resets_at=B_NEXT) == (None, None)
 
 
-def test_zaokraglenie_do_czterech_miejsc():
-    rows = przebieg((30, 1.0, B_NEXT), (1, 4.123456, B_NEXT))
+def test_rounding_to_four_decimal_places():
+    rows = trace((30, 1.0, B_NEXT), (1, 4.123456, B_NEXT))
     d, _ = _delta_1h(rows, now=NOW, current=4.123456, resets_at=B_NEXT)
     assert d == 3.1235
 
 
 # --------------------------------------------------------------------------- e2e
-async def test_status_po_resecie_nie_pokazuje_ujemnej_delty(db, monkeypatch):
-    """Ta sama sciezka co w produkcji: ingest -> series_state -> /api/status."""
+async def test_status_after_reset_does_not_show_a_negative_delta(db, monkeypatch):
+    """The same path a live run takes: ingest -> series_state -> /api/status."""
     import app.services.ingest as ing
     import app.services.status as stat
 
-    t0 = utcnow().replace(microsecond=0)     # probki i tak sa obcinane do sekund
+    t0 = utcnow().replace(microsecond=0)     # samples are truncated to seconds anyway
 
     async def ingest_at(minutes, five_hour, resets_at):
         when = t0 + timedelta(minutes=minutes)
@@ -93,7 +93,7 @@ async def test_status_po_resecie_nie_pokazuje_ujemnej_delty(db, monkeypatch):
         await ingest_one(db, machine_name="desktop",
                          payload=payload(usage=u, captured_at=when))
 
-    # granice podajemy jawnie: te z fixture'a dawno minely, a sonda odrzuca wygasle okno
+    # explicit boundaries: the fixture's are long past, and the probe drops an expired window
     await ingest_at(0, 50.0, t0 + timedelta(minutes=20))
     await ingest_at(25, 2.0, t0 + timedelta(hours=5, minutes=20))
     await ingest_at(35, 5.0, t0 + timedelta(hours=5, minutes=20))
@@ -101,10 +101,10 @@ async def test_status_po_resecie_nie_pokazuje_ujemnej_delty(db, monkeypatch):
 
     monkeypatch.setattr(stat, "utcnow", lambda: t0 + timedelta(minutes=36))
     st = await build_status(db)
-    sesje = [s for s in st.accounts[0].series if s.bucket_key == "five_hour"]
-    assert sesje, "scenariusz nie wyprodukowal serii sesji — test bylby pusty"
+    sessions = [s for s in st.accounts[0].series if s.bucket_key == "five_hour"]
+    assert sessions, "scenario did not produce a session series — the test would be empty"
 
-    for s in sesje:
-        assert s.delta_pct_1h == 3.0, "delta liczona od pierwszej probki po resecie"
-        assert s.delta_pct_1h != -45.0, "baseline sprzed resetu — regresja"
+    for s in sessions:
+        assert s.delta_pct_1h == 3.0, "delta computed from the first sample after the reset"
+        assert s.delta_pct_1h != -45.0, "baseline from before the reset — regression"
         assert s.delta_from == t0 + timedelta(minutes=25)

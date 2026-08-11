@@ -1,17 +1,17 @@
-"""Kontrakt /api/status i ramek /api/stream — po stronie panelu.
+"""The contract of /api/status and of the /api/stream frames — the panel's side.
 
-Odpowiednik frontend/src/api/types.ts. Kontrakt jest ZAMROZONY (zasada 8
-z AGENTS.md), a panel jest jego TRZECIM konsumentem obok /api/status i UI.
+The counterpart of frontend/src/api/types.ts. The contract is FROZEN (rule 8
+of AGENTS.md), and the panel is its THIRD consumer, next to /api/status and the UI.
 
-Czytamy DEFENSYWNIE: nieznane pola sa ignorowane, brakujace daja None. Nowy
-bucket u Anthropic ma zadzialac bez zmian tutaj (zasada 5) — a panel na biurku
-nie moze sie wywalic dlatego, ze backend urosl o pole.
+We read DEFENSIVELY: unknown fields are ignored, missing ones yield None. A new
+bucket at Anthropic has to work with no change here (rule 5) — and a panel sitting
+on a desk must not blow up because the backend grew a field.
 """
 CONTRACT_VERSION = 3
 
 
 def _f(value):
-    """Liczba albo None. Kontrakt daje Decimal-e jako liczby JSON."""
+    """A number or None. The contract delivers Decimals as JSON numbers."""
     if value is None or isinstance(value, bool):
         return None
     try:
@@ -21,10 +21,11 @@ def _f(value):
 
 
 class CascadeRung:
-    """Szczebel kaskady: session -> weekly -> credits -> hard_block.
+    """A rung of the cascade: session -> weekly -> credits -> hard_block.
 
-    `state` ma TRZY wartosci i "off" nie jest synonimem "unknown" — wylaczone
-    kredyty to informacja, brak wiedzy o nich to jej brak (services/cascade.py).
+    `state` has THREE values and "off" is not a synonym for "unknown" — credits
+    turned off is information, not knowing about them is the absence of it
+    (services/cascade.py).
     """
 
     __slots__ = ("key", "state", "is_current", "utilization", "series_key",
@@ -44,8 +45,8 @@ class CascadeRung:
 
 
 class SeriesStatus:
-    """Jedno okno limitu. `utilization` jest w PROCENTACH 0..100 i jest None
-    wtedy i tylko wtedy, gdy `freshness == "unknown"`."""
+    """One limit window. `utilization` is in PERCENT 0..100 and is None
+    if and only if `freshness == "unknown"`."""
 
     __slots__ = ("series_id", "series_key", "label", "source", "sort_order",
                  "kind", "group", "bucket_key", "utilization", "raw_utilization",
@@ -75,15 +76,15 @@ class SeriesStatus:
         self.severity = d.get("severity")
         self.delta_pct_1h = _f(d.get("deltaPct1h"))
         self.delta_from = d.get("deltaFrom")
-        # `primary` domyslnie True: gdyby backend kiedys przestal je slac,
-        # wolimy pokazac serie dwa razy niz nie pokazac jej wcale.
+        # `primary` defaults to True: were the backend ever to stop sending it,
+        # better to show a series twice than not to show it at all.
         self.primary = d.get("primary", True)
         self.duplicate_of = d.get("duplicateOf")
         self.extra = d.get("extra")
 
 
 class AccountStatus:
-    """Karta jednego konta — dokladnie to, co niesie ramka `account`."""
+    """One account's card — exactly what the `account` frame carries."""
 
     __slots__ = ("uuid", "label", "email", "display_name", "org_type", "seat_tier",
                  "rate_limit_tier", "subscription_type", "is_enabled",
@@ -115,5 +116,5 @@ class AccountStatus:
 
     @property
     def title(self):
-        """Nazwa na pasku. Konfiguracja moze to nadpisac — 480 px jest ciasne."""
+        """The name in the band header. Configuration can override it — 480 px is tight."""
         return self.email or self.label or self.display_name or (self.uuid or "")[:8]

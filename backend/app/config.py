@@ -10,70 +10,74 @@ class Settings(BaseSettings):
     database_url: str = Field(..., alias="DATABASE_URL")
     log_level: str = Field("INFO", alias="LOG_LEVEL")
 
-    # --- Autoryzacja dostepu do UI/API ---
-    # Wymagane, bez wartosci domyslnej: kazda domyslna bylaby zla odpowiedzia. `none`
-    # otwieralby dane po cichu u kogos, kto po prostu nie doczytal; cokolwiek innego
-    # przewracaloby instalacje lokalna bez zadnego proxy przed soba. Niech instalujacy
-    # powie wprost, co ma sie stac.
+    # --- Authorization of access to the UI/API ---
+    # Required, with no default: every default would be the wrong answer. `none` would
+    # silently open the data up for someone who simply did not read this far; anything
+    # else would break a local deployment that has no proxy in front of it. Let
+    # whoever installs it say outright what is supposed to happen.
     #
-    # Typ `Literal`, nie `str` — Compose podstawia PUSTY CIAG za nieustawiona zmienna
-    # srodowiskowa, a `str` przyjalby go bez slowa i wpadlby w gałąź "nic nie pasuje".
-    # `Literal` jest dopasowaniem doslownym, wiec pusta wartosc konczy sie bledem startu.
+    # Type `Literal`, not `str` — Compose substitutes an EMPTY STRING for an unset
+    # environment variable, and `str` would accept it without a word and fall into the
+    # "nothing matches" branch. `Literal` is a literal match, so an empty value ends in
+    # a startup error.
     auth_mode: Literal["none", "header", "verify"] = Field(..., alias="AUTH_MODE")
 
-    # `header`: proxy juz uwierzytelnilo i podaje adres dalej. Wolno tylko za proxy, ktore
-    # ten naglowek USUWA z zadan przychodzacych — inaczej kazdy nazwie sie kim zechce.
+    # `header`: the proxy has already authenticated and passes the email address on. Allowed only
+    # behind a proxy that STRIPS this header from incoming requests — otherwise anyone calls
+    # themselves whoever they like.
     auth_email_header: str = Field("X-Forwarded-Email", alias="AUTH_EMAIL_HEADER")
 
-    # `verify`: uslugą tozsamosci pytamy przez JSON, kim jest wolajacy. Nazwy pol
-    # odpowiedzi sa konfiguracja, bo kazdy dostawca opisuje je inaczej. Puste = pole
-    # nieczytane.
+    # `verify`: we ask the identity service over JSON who the caller is. The names of the
+    # response fields are configuration, because every provider describes them differently.
+    # Empty = the field is not read.
     auth_verify_url: str = Field("", alias="AUTH_VERIFY_URL")
     auth_email_field: str = Field("email", alias="AUTH_EMAIL_FIELD")
     auth_verified_at_field: str = Field("", alias="AUTH_VERIFIED_AT_FIELD")
     auth_redirect_field: str = Field("", alias="AUTH_REDIRECT_FIELD")
 
-    # Adres logowania oddawany przegladarce przy 401, gdy usluga tozsamosci nie podala
-    # zadnego sama (typowo: odpowiada strona HTML, nie JSON-em). `{rd}` zostaje zastapione
-    # zakodowanym adresem powrotu. Puste = nie ma dokad odeslac i UI tak wlasnie powie.
+    # Login URL handed back to the browser on a 401, when the identity service gave none
+    # itself (typically: it answers with an HTML page, not with JSON). `{rd}` is replaced by
+    # the encoded return URL. Empty = there is nowhere to send anyone back to, and the UI
+    # says exactly that.
     auth_login_url: str = Field("", alias="AUTH_LOGIN_URL")
 
-    # Lista po przecinku. Pusty zbior = deny all (fail-safe). Nie dotyczy `AUTH_MODE=none`,
-    # gdzie zadnego adresu po prostu nie ma.
+    # Comma-separated list. An empty set = deny all (fail-safe). Does not apply to
+    # `AUTH_MODE=none`, where there is simply no email address at all.
     allowed_emails_raw: str = Field("", alias="ALLOWED_EMAILS")
-    # Sklada adres powrotu dla `{rd}`. Ten sam origin, pod ktorym stoi aplikacja.
+    # Builds the return URL for `{rd}`. The same origin the application is served from.
     public_origin: str = Field("http://localhost:8080", alias="PUBLIC_ORIGIN")
     app_base_path: str = Field("/claude-usage", alias="APP_BASE_PATH")
 
     # --- Ingest ---
-    # "token:maszyna,token2:maszyna2" — token identyfikuje MASZYNE, nie konto.
+    # "token:machine,token2:machine2" — the token identifies the MACHINE, not the account.
     ingest_tokens_raw: str = Field("", alias="INGEST_TOKENS")
     max_ingest_body_bytes: int = Field(262144, alias="MAX_INGEST_BODY_BYTES")
     max_backlog_entries: int = Field(200, alias="MAX_BACKLOG_ENTRIES")
-    # Prog ZDARZENIA `clock_skew`, nic wiecej. Datowanie stoi na roznicy `sent_at - ts`
-    # w obrebie zegara klienta, wiec rozjazd wzgledem serwera go nie psuje i nie ma powodu,
-    # zeby cokolwiek na nim odrzucac.
+    # Threshold for the `clock_skew` EVENT, nothing more. Timestamping rests on the `sent_at - ts`
+    # difference within the client's own clock, so drift against the server does not break it
+    # and there is no reason to reject anything on account of it.
     #
-    # BACKLOG_MAX_AGE_SEC usuniete: podstawialo czas serwera pod pomiar starszy niz tydzien,
-    # czyli robilo odwrotnosc ochrony — taki wpis stawal sie najnowszy i przejmowal stan
-    # biezacy. Objetosc ograniczaja MAX_SPOOL_LINES, MAX_BACKLOG_PER_REQUEST po stronie
-    # sondy i MAX_BACKLOG_ENTRIES tutaj.
+    # BACKLOG_MAX_AGE_SEC removed: it substituted server time for a measurement older than
+    # a week, that is, it did the opposite of protecting — such an entry became the newest one
+    # and took over the current state. Volume is bounded by MAX_SPOOL_LINES and
+    # MAX_BACKLOG_PER_REQUEST on the probe side and by MAX_BACKLOG_ENTRIES here.
     clock_skew_tolerance_sec: int = Field(300, alias="CLOCK_SKEW_TOLERANCE_SEC")
 
-    # --- Dedup i spojnosc ---
+    # --- Dedup and consistency ---
     sample_heartbeat_sec: int = Field(300, alias="SAMPLE_HEARTBEAT_SEC")
     monotonic_eps: float = Field(0.5, alias="MONOTONIC_EPS")
-    # Do jakiej roznicy `resets_at` uznajemy, ze to TO SAMO okno. Granica podawana przez
-    # Anthropic kolysze sie o ~2 s; najkrotsze okno ma 5 h. Patrz parsing.same_reset_window.
+    # Up to what `resets_at` difference we call it the SAME window. The boundary reported by
+    # Anthropic wobbles by ~2 s; the shortest window is 5 h. See parsing.same_reset_window.
     reset_window_eps_sec: int = Field(300, alias="RESET_WINDOW_EPS_SEC")
 
-    # --- Swiezosc ---
+    # --- Freshness ---
     fresh_window_sec: int = Field(300, alias="FRESH_WINDOW_SEC")
     client_silent_sec: int = Field(21600, alias="CLIENT_SILENT_SEC")
 
-    # --- Historia ---
-    # Od jakiej przerwy uznajemy dziure w danych. Throttle sondy to 60 s, heartbeat 300 s,
-    # wiec 15 min to kilkukrotnosc normalnego odstepu — nie zglasza szumu.
+    # --- History ---
+    # How long a break has to be before we call it a gap in the data. The probe's throttle is
+    # 60 s and the heartbeat 300 s, so 15 min is several times the normal interval — it does
+    # not report noise.
     history_gap_sec: int = Field(900, alias="HISTORY_GAP_SEC")
 
     # --- SSE stream ---
@@ -102,7 +106,7 @@ class Settings(BaseSettings):
 
     @property
     def ingest_tokens(self) -> dict[str, str]:
-        """token -> nazwa maszyny."""
+        """token -> machine name."""
         return _parse_tokens(self.ingest_tokens_raw)
 
     @property

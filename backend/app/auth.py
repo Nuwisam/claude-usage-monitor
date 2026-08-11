@@ -1,15 +1,15 @@
-"""Autoryzacja ingestu — Bearer per maszyna.
+"""Ingest authorization — one Bearer token per machine.
 
-Token identyfikuje MASZYNE, nie konto. Konto pochodzi z `account.uuid` w payloadzie,
-wyliczonego z oauthAccount po stronie klienta.
+The token identifies the MACHINE, not the account. The account comes from `account.uuid` in
+the payload, derived from oauthAccount on the client side.
 
-Swiadomie NIE wiazemy tokenu z lista dozwolonych kont: skoro na jednej maszynie uzywasz
-dwoch kont na zmiane, statyczna lista znow by sie rozjechala. Zamiast zakazu stosujemy
-detekcje — pierwsze wystapienie nowej pary (maszyna, konto) generuje zdarzenie
-`new_account_for_token`, widoczne w Diagnostics.
+The token is deliberately NOT bound to a list of permitted accounts: when a single machine is
+used with two accounts in rotation, a static list would drift out of date again. Instead of a
+prohibition there is detection — the first occurrence of a new (machine, account) pair emits
+a `new_account_for_token` event, visible in Diagnostics.
 
-Filtr brzegowy `X-Ingest-Key` siedzi w Apache i odcina skanery, zanim dotkna Pythona.
-To nie jest powazna kryptografia — prawdziwa autoryzacja jest tutaj.
+The `X-Ingest-Key` edge filter lives in Apache and cuts off scanners before they reach Python.
+It is not serious cryptography — the real authorization is here.
 """
 import hmac
 
@@ -35,7 +35,7 @@ def _bearer(authorization: str | None) -> str | None:
 
 
 def require_ingest_token(authorization: str | None = Header(default=None)) -> str:
-    """Zwraca nazwe maszyny albo rzuca 401."""
+    """Returns the machine name, or raises 401."""
     presented = _bearer(authorization)
     if presented is None:
         raise HTTPException(

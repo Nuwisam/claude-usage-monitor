@@ -169,7 +169,7 @@ def test_a_short_write_without_an_exception_is_detected():
     dev = driver(short_at=500)
     with pytest.raises(DriverError) as e:
         dev.write(b"\x00\x00" * (32 * 32), (0, 0, 32, 32))
-    assert "skrocony" in str(e.value)
+    assert "cut short" in str(e.value)
     assert dev.torn == 1
 
 

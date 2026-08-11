@@ -1,18 +1,18 @@
-"""Normalizacja odpowiedzi /api/oauth/usage do plaskiej listy obserwacji.
+"""Normalization of the /api/oauth/usage response into a flat list of observations.
 
-CZYSTE FUNKCJE — zero I/O, zero zaleznosci od bazy. Cala logika, ktora moze sie mylic,
-jest tutaj i jest testowalna na realnych payloadach z backend/tests/fixtures/.
+PURE FUNCTIONS — zero I/O, zero database dependencies. Every piece of logic that can get
+it wrong lives here and is testable against real payloads from backend/tests/fixtures/.
 
-Zasady wyniesione z kroku 0:
-  * Odpowiedz ma 17 kluczy najwyzszego poziomu, z czego 5 bylo dla nas nowych. Nie wolno
-    zakladac zamknietej listy — parser akceptuje dowolny nowy klucz i zglasza go jako drift.
-  * `bucket.utilization` to float, `limits[].percent` to int, `spend.percent` to int.
-    Wszystko sprowadzamy do 0..100.
-  * `resets_at` w surowej odpowiedzi to ISO-8601 z mikrosekundami i offsetem. Statusline
-    podawal epoch — parser przyjmuje oba, bo to kosztuje trzy linie.
-  * Na koncie Team wiazacym limitem jest `spend` (miesieczny limit organizacji), a nie okna
-    czasowe. Dlatego `spend` jest seria pierwszej kategorii, nie polem pobocznym.
-  * Kwoty w `spend` sa w jednostkach mniejszych z wykladnikiem — nie splaszczamy ich do float.
+Rules carried over from step 0:
+  * The response has 17 top-level keys, 5 of which were new to us. A closed list must not
+    be assumed — the parser accepts any new key and reports it as drift.
+  * `bucket.utilization` is a float, `limits[].percent` an int, `spend.percent` an int.
+    Everything is normalized to 0..100.
+  * `resets_at` in the raw response is ISO-8601 with microseconds and an offset. The
+    statusline reported an epoch — the parser takes both, because it costs three lines.
+  * On a Team account the binding limit is `spend` (the organization's monthly limit), not
+    the time windows. That is why `spend` is a first-class series, not a secondary field.
+  * Amounts in `spend` are in minor units with an exponent — we do not flatten them to a float.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
-# Klucze najwyzszego poziomu obslugiwane osobno, nie jako zwykly bucket.
+# Top-level keys handled separately, not as an ordinary bucket.
 _SPECIAL_KEYS = {"limits", "extra_usage", "spend", "member_dashboard_available"}
 
 _SORT = {
@@ -31,24 +31,24 @@ _SORT = {
     "extra:usage": 40,
 }
 
-# Etykiety sa TRESCIA WIDOCZNA W UI — w odroznieniu od komentarzy w kodzie pisze sie je
-# z polskimi znakami. Nieznany klucz dostaje etykiete z samego klucza (patrz `humanize`),
-# wiec nowy bucket u Anthropic wyswietli sie sam, bez wpisu w tej tabeli.
+# Labels are UI-VISIBLE CONTENT. An unknown key gets its label from the key itself
+# (see `humanize`), so a new bucket at Anthropic shows up on its own, with no entry
+# in this table.
 _LABELS = {
-    "five_hour": "Sesja (5 h)",
-    "seven_day": "Tydzień (wszystkie modele)",
-    "seven_day_opus": "Tydzień — Opus",
-    "seven_day_sonnet": "Tydzień — Sonnet",
-    "seven_day_omelette": "Tydzień — Design",
-    "seven_day_cowork": "Tydzień — Cowork",
-    "seven_day_oauth_apps": "Tydzień — aplikacje OAuth",
-    "seven_day_overage_included": "Tydzień — z nadwyżką",
+    "five_hour": "Session (5 h)",
+    "seven_day": "Week (all models)",
+    "seven_day_opus": "Week — Opus",
+    "seven_day_sonnet": "Week — Sonnet",
+    "seven_day_omelette": "Week — Design",
+    "seven_day_cowork": "Week — Cowork",
+    "seven_day_oauth_apps": "Week — OAuth apps",
+    "seven_day_overage_included": "Week — with overage",
 }
 
 _KIND_LABELS = {
-    "session": "Sesja",
-    "weekly_all": "Tydzień (wszystkie modele)",
-    "weekly_scoped": "Tydzień",
+    "session": "Session",
+    "weekly_all": "Week (all models)",
+    "weekly_scoped": "Week",
 }
 
 
@@ -57,10 +57,10 @@ class Observation:
     series_key: str
     source: str                       # bucket | limit | extra_usage | spend
     display_label: str
-    utilization: float | None         # ZAWSZE 0..100
-    # Powod, dla ktorego tej serii NIE DA SIE zmierzyc — doslownie od Anthropic. Gdy jest
-    # ustawiony, `utilization` jest None Z DEFINICJI: to nie jest pomiar 0%, tylko brak
-    # miernika. Patrz `meter_withdrawn`.
+    utilization: float | None         # ALWAYS 0..100
+    # The reason this series CANNOT BE measured — verbatim from Anthropic. When it is set,
+    # `utilization` is None BY DEFINITION: this is not a measured 0%, it is the absence of
+    # a meter. See `meter_withdrawn`.
     unavailable_reason: str | None = None
     resets_at: datetime | None = None
     bucket_key: str | None = None
@@ -72,24 +72,25 @@ class Observation:
     severity: str | None = None
     sort_order: int = 1000
     extra: dict[str, Any] = field(default_factory=dict)
-    # Czy wartosc tej serii pochodzi ze zrzutu `claude -p "/usage"` (a nie z cache Claude
-    # Code). Rozstrzyga o DACIE pomiaru: oba zrodla leza w jednym payloadzie i maja rozny
-    # wiek. Ustawiane z `measurement.fresh_covered`, bo tylko sonda wie, co czym nadpisala.
+    # Whether this series' value comes from a `claude -p "/usage"` dump (and not from the
+    # Claude Code cache). It decides the DATE of the measurement: both sources sit in one
+    # payload and differ in age. Set from `measurement.fresh_covered`, because only the
+    # probe knows what it overwrote with what.
     covered_by_fresh: bool = False
 
 
 @dataclass
 class ParseResult:
     observations: list[Observation]
-    seen_keys: set[str]               # wszystkie klucze najwyzszego poziomu w odpowiedzi
-    null_keys: set[str]               # klucze obecne, ale None (seria istnieje, brak wartosci)
-    problems: list[str]               # nie-fatalne: cokolwiek, czego nie umielismy odczytac
+    seen_keys: set[str]               # every top-level key in the response
+    null_keys: set[str]               # keys present but None (the series exists, no value)
+    problems: list[str]               # non-fatal: anything we were unable to read
 
 
-# --------------------------------------------------------------------------- pomocnicze
+# --------------------------------------------------------------------------- helpers
 def parse_pct(v: Any) -> float | None:
-    """Toleruje int, float i string z sufiksem '%'. Referencyjna implementacja musiala
-    obsluzyc wszystkie trzy, wiec zakladamy to samo."""
+    """Tolerates an int, a float and a string with a '%' suffix. The reference
+    implementation had to handle all three, so we assume the same."""
     if v is None or isinstance(v, bool):
         return None
     if isinstance(v, (int, float)):
@@ -104,30 +105,31 @@ def parse_pct(v: Any) -> float | None:
 
 
 def parse_ts(v: Any) -> datetime | None:
-    """ISO-8601 (surowa odpowiedz) albo epoch w sekundach (statusline). Zwraca naiwny UTC
-    OBCIETY DO PELNYCH SEKUND, bo kolumny w bazie sa naiwne i wszystko trzymamy w UTC.
+    """ISO-8601 (the raw response) or an epoch in seconds (the statusline). Returns naive
+    UTC TRUNCATED TO WHOLE SECONDS, because the database columns are naive and everything
+    is kept in UTC.
 
-    Obciecie mikrosekund nie jest kosmetyka i nie gubi informacji. Anthropic stempluje
-    `resets_at` mikrosekundami SWOJEJ ODPOWIEDZI, nie granicy okna — w jednej odpowiedzi
-    `five_hour` konczy sie na `00:59:59.056340`, a `seven_day` na `15:59:59.056361`
-    (21 us roznicy, bo pola sa liczone po kolei). Efekt zmierzony: 63 probki
-    w 6 h dawaly 63 rozne `resets_at`, a po obcieciu do sekundy zostaja 2 wartosci.
+    Truncating the microseconds is not cosmetic, and it loses no information. Anthropic stamps
+    `resets_at` with the microseconds of ITS OWN RESPONSE, not of the window boundary — in
+    one response `five_hour` ends at `00:59:59.056340` and `seven_day` at `15:59:59.056361`
+    (21 us apart, because the fields are computed one after another). Measured effect: 63
+    samples over 6 h gave 63 different `resets_at`; truncated to the second, 2 values remain.
 
-    Przez to porownanie `last_resets_at == o.resets_at` bylo praktycznie zawsze falszywe,
-    co po cichu wylaczalo TRZY mechanizmy naraz: dedup (kazda probka zapisywana jako
-    zmiana), guard monotonicznosci (odpalal sie tylko przy niezmienionym resets_at)
-    i wykrywanie granic resetu w historii (61 "resetow" na dobe zamiast pieciu).
+    Because of that the comparison `last_resets_at == o.resets_at` was practically always
+    false, which silently disabled THREE mechanisms at once: dedup (every sample written as
+    a change), the monotonicity guard (it fired only when resets_at was unchanged) and the
+    detection of reset boundaries in history (61 "resets" a day instead of five).
     """
     if v is None or isinstance(v, bool):
         return None
     if isinstance(v, (int, float)):
-        # >1e12 => milisekundy; endpoint tego nie robi, ale tanio sie zabezpieczyc
+        # >1e12 => milliseconds; the endpoint does not do this, but the guard is cheap
         secs = float(v) / 1000.0 if float(v) > 1e12 else float(v)
         dt = datetime.fromtimestamp(secs, tz=timezone.utc).replace(tzinfo=None)
         return dt.replace(microsecond=0)
     if isinstance(v, str):
         s = v.strip().replace("Z", "+00:00")
-        # fromisoformat w 3.12 radzi sobie z mikrosekundami i offsetem, ale nie z >6 cyframi
+        # fromisoformat in 3.12 handles microseconds and an offset, but not >6 digits
         m = re.match(r"^(.*\.\d{1,6})\d*(.*)$", s)
         if m:
             s = m.group(1) + m.group(2)
@@ -142,24 +144,24 @@ def parse_ts(v: Any) -> datetime | None:
 
 
 def same_reset_window(a: datetime | None, b: datetime | None, eps_sec: float) -> bool:
-    """Czy dwa `resets_at` opisuja TO SAMO okno.
+    """Whether two `resets_at` describe THE SAME window.
 
-    Nie da sie tego sprawdzic rownoscia, bo granica okna podawana przez Anthropic KOLYSZE
-    SIE. Zmierzone: 49 probek w ciagu 3 godzin, jedno okno sesji, wartosci od
-    `00:59:59.014384` do `01:00:00.982268` — rozstrzal niespelna 2 sekundy, przechodzacy
-    przy okazji przez granice minuty (wiec obcinanie do sekundy ani do minuty tego nie
-    zalatwia; obcinanie zostaje, ale tylko zeby nie trzymac w bazie szumu).
+    Equality cannot settle it, because the window boundary Anthropic reports WOBBLES.
+    Measured: 49 samples over the course of 3 hours, one session window, values from
+    `00:59:59.014384` to `01:00:00.982268` — a spread of just under 2 seconds, crossing
+    a minute boundary along the way (so neither truncation to the second nor to the minute
+    settles it; truncation stays, but only to keep the noise out of the database).
 
-    Tolerancja rozstrzyga to jednoznacznie: prawdziwy reset przesuwa granice o CALE OKNO —
-    5 godzin dla sesji, 7 dni dla tygodnia. Kilkuminutowy prog jest o dwa rzedy wielkosci
-    wiekszy od kolysania i o dwa rzedy mniejszy od najkrotszego okna.
+    A tolerance settles it unambiguously: a real reset moves the boundary by a WHOLE WINDOW
+    — 5 hours for the session, 7 days for the week. A threshold of a few minutes is two
+    orders of magnitude larger than the wobble and two orders smaller than the shortest window.
 
-    Brak wartosci po obu stronach traktujemy jako to samo okno (np. `spend` nie ma resetu);
-    brak po jednej stronie to zmiana.
+    A missing value on both sides counts as the same window (e.g. `spend` has no reset);
+    missing on one side is a change.
 
-    ODPOWIADA NA PYTANIE DEDUPU ("czy cokolwiek sie zmienilo"), nie guardu monotonicznosci.
-    Guard pyta o DOWOD i ma na to `known_same_reset_window` — jeden bool na oba pytania
-    zamrazal stan biezacy.
+    ANSWERS THE DEDUP QUESTION ("has anything changed"), not the monotonicity guard's. The
+    guard asks for PROOF and has `known_same_reset_window` for that — one bool for both
+    questions froze the current state.
     """
     if a is None and b is None:
         return True
@@ -169,66 +171,71 @@ def same_reset_window(a: datetime | None, b: datetime | None, eps_sec: float) ->
 
 
 def known_same_reset_window(a: datetime | None, b: datetime | None, eps_sec: float) -> bool:
-    """Czy WIADOMO, ze to samo okno — w odroznieniu od `same_reset_window`, ktore przy braku
-    obu granic odpowiada "tak".
+    """Whether it is KNOWN to be the same window — as opposed to `same_reset_window`, which
+    answers "yes" when both boundaries are missing.
 
-    Te dwa pytania wygladaja na jedno i dlatego przez dlugi czas obsluzyl je jeden bool.
-    Roznica jest jednak zasadnicza:
+    The two questions look like one, and that is why a single bool served both for a long
+    time. The difference, however, is fundamental:
 
-      * DEDUP pyta "czy cokolwiek sie zmienilo". Dwa razy brak granicy to brak zmiany, wiec
-        `same_reset_window(None, None) is True` jest tam POPRAWNE — i na tym stoi dedup serii
-        `spend:org` oraz `extra:usage`, ktore granicy nie maja NIGDY.
-      * GUARD MONOTONICZNOSCI pyta "czy mam DOWOD, ze okno sie nie przewinelo". Dwa razy brak
-        granicy to brak dowodu, a nie dowod przeciwny.
+      * DEDUP asks "has anything changed". Twice no boundary is no change, so
+        `same_reset_window(None, None) is True` is CORRECT there — and the dedup of the
+        `spend:org` and `extra:usage` series, which NEVER have a boundary, rests on it.
+      * THE MONOTONICITY GUARD asks "do I have PROOF that the window has not rolled over".
+        Twice no boundary is no proof, not proof of the opposite.
 
-    Niewiedza wzieta za dowod zamrazala stan biezacy. Zaraz po resecie Anthropic podaje
-    `resets_at: null` dla swiezego okna z 0% zuzycia, wiec spadek 92% -> 0% przy dwoch
-    NULL-ach wygladal jak nieaktualny odczyt z drugiej maszyny: probka szla do bazy z flaga
-    `stale_read`, a `series_state` stal. Produkcja 2026-07-30: piec kolejnych probek
-    11:51:05-11:55:13 UTC, stan zamrozony na 92% przy realnym zuzyciu 0-2%, odblokowany
-    dopiero nowa granica po 9,5 minuty. Dla `spend:org` i `extra:usage` bylo to TRWALE —
-    granica nie przyjdzie tam nigdy, wiec nic by tego nie odblokowalo.
+    Ignorance taken for proof froze the current state. Right after a reset Anthropic reports
+    `resets_at: null` for the fresh window at 0% usage, so a drop of 92% -> 0% with two
+    NULLs looked like a stale reading from another machine: the sample went to the database
+    with the `stale_read` flag while `series_state` stood still. Live deployment 2026-07-30:
+    five consecutive samples 11:51:05-11:55:13 UTC, the state frozen at 92% against a real
+    usage of 0-2%, released only by a new boundary after 9.5 minutes. For `spend:org` and
+    `extra:usage` this was PERMANENT — a boundary will never arrive there, so nothing would
+    have released it.
 
-    Asymetria kosztow jest jednoznaczna, ale nie tak tania, jak wyglada. Przyjecie
-    nieaktualnego odczytu psuje stan do NASTEPNEGO pomiaru tej serii — zwykle minuta — z tym
-    ze gornej granicy nie wyznacza czestotliwosc sondy, tylko jej milczenie: gdy klient
-    zamilknie zaraz po zapisie, zla wartosc stoi, dopoki `freshness()` jej nie zdegraduje,
-    czyli az do `CLIENT_SILENT_SEC` (domyslnie 6 h, `app/config.py:38`), i przez caly ten
-    czas jest podawana jako `live`/`stale`, czyli jako wartosc, a nie jako niewiedza.
-    Zamrozony stan klamie dokladnie tak samo dlugo, a dodatkowo nie ma z czego wyjsc: dla
-    `spend:org` i `extra:usage` granica nie przyjdzie NIGDY. Probka trafia do bazy w obu
-    wariantach, wiec historii nie traci zaden. Guard dostaje wiec tylko dowod, nigdy domysl.
+    The asymmetry of the costs is unambiguous, but not as cheap as it looks. Accepting a
+    stale reading corrupts the state until the NEXT measurement of that series — usually a
+    minute — except that the upper bound is set not by the probe's frequency but by its
+    silence: when the client goes quiet right after the write, the wrong value holds until
+    `freshness()` degrades it, that is until `CLIENT_SILENT_SEC` (6 h by default,
+    `app/config.py:38`), and for that whole time it is served as `live`/`stale` — as
+    a value and not as ignorance. A frozen state lies for exactly as long, and on top of
+    that has no way out of it: for `spend:org` and `extra:usage` a boundary will NEVER
+    arrive. The sample reaches the database in both variants, so neither loses history. The
+    guard therefore gets only proof, never a guess.
     """
     return a is not None and b is not None and same_reset_window(a, b, eps_sec)
 
 
 def carry_reset_window(prev: datetime | None, incoming: datetime | None,
                        at: datetime) -> datetime | None:
-    """Ktora granice okna ma trzymac STAN, gdy pomiar granicy nie przyniosl.
+    """Which window boundary the STATE is to hold when the measurement brought none.
 
-    Pomiar bez granicy nie znaczy "granicy nie ma", tylko "ten odczyt jej nie zna". Powody sa
-    dwa i oba sa normalne: Anthropic nie podaje granicy dla okna z 0% zuzycia, a sonda zeruje
-    granice przedawniona we WLASNYM cache (regula `reset-w-toku`, `client/usage-probe.py`).
+    A measurement without a boundary does not mean "there is no boundary", only "this
+    reading does not know it". There are two reasons and both are normal: Anthropic reports
+    no boundary for a window at 0% usage, and the probe zeroes a boundary that has gone
+    stale in its OWN cache (the `reset-in-progress` rule, `client/usage-probe.py`).
 
-    Oba skrajne rozwiazania sa zle:
-      * nadpisac NULL-em — tracimy granice, ktora NADAL opisuje trwajace okno. Z niej zyje
-        countdown w UI, `seconds_to_reset`, przyciecie baseline'u delty do okna i wnioskowanie
-        `inferred_reset` przy dluzszej ciszy klienta (`app/freshness.py`).
-      * trzymac stara zawsze — stan twierdzi wtedy, ze biezace okno konczy sie w chwili, ktora
-        JUZ MINELA. To pewnie wygladajaca nieprawda. Zasada 4 z AGENTS.md mowi doslownie o
-        `utilization`, nie o polach czasowych, wiec nie jest to jej cytat, a analogia: ten sam
-        ruch, czyli podmiana niewiedzy na konkretna liczbe, ktorej odbiorca nie ma jak
-        podwazyc.
+    Both extreme solutions are wrong:
+      * overwrite with NULL — we lose a boundary that STILL describes the running window.
+        The countdown in the UI lives off it, along with `seconds_to_reset`, the trimming of
+        the delta baseline to the window and the `inferred_reset` inference during a longer
+        client silence (`app/freshness.py`).
+      * always hold the old one — the state then claims that the current window ends at an
+        instant that HAS ALREADY PASSED. A confident-looking untruth. Rule 4 of AGENTS.md
+        is literally about `utilization`, not about time fields, so this is not a
+        quotation of it but an analogy: the same move, namely swapping ignorance for a
+        definite number the recipient has no way to challenge.
 
-    Rozstrzyga zegar, nie domysl. Granica z przyszlosci opisuje okno, ktore sie jeszcze nie
-    skonczylo — pomiar sprzed niej nalezy wiec do tego samego okna i granica pozostaje
-    prawdziwa. Granica, ktora minela, o oknie biezacym nie mowi NIC; wtedy stan przyznaje sie
-    do niewiedzy (NULL), zamiast podawac przedawniona liczbe.
+    The clock settles it, not a guess. A boundary in the future describes a window that has
+    not ended yet — a measurement taken before it therefore belongs to that same window and
+    the boundary remains true. A boundary that has passed says NOTHING about the current
+    window; the state then admits its ignorance (NULL) instead of reporting a stale number.
 
-    Porownanie idzie do `at`, czyli do czasu POMIARU, a nie do "teraz": probke z backlogu
-    ocenia sie wzgledem chwili, w ktorej ja zmierzono. Bez tolerancji, dokladnie jak
-    `freshness()` i `_delta_1h` — tolerancja z zasady 9 dotyczy porownania DWOCH granic ze
-    soba, a nie granicy z czasem.
+    The comparison goes against `at`, that is against the time of the MEASUREMENT and not
+    against "now": a sample from the backlog is judged relative to the instant at which it
+    was measured. Without a tolerance, exactly like `freshness()` and `_delta_1h` — the
+    tolerance from rule 9 concerns comparing TWO boundaries with each other, not a boundary
+    with a point in time.
     """
     if incoming is not None:
         return incoming
@@ -238,31 +245,32 @@ def carry_reset_window(prev: datetime | None, incoming: datetime | None,
 
 
 def meter_withdrawn(block: Any) -> str | None:
-    """Powod, dla ktorego ten miernik NIE DZIALA — albo None, gdy dziala.
+    """The reason this meter DOES NOT WORK — or None, when it does.
 
-    Gdy organizacja wyczerpie swoj globalny sufit wydatkow, Anthropic nie przestaje
-    odpowiadac — ZERUJE MIERNIK: `percent` spada z 91 na 0, `used` z 273,15 EUR na 0,00,
-    `limit` i `cap` znikaja (null), `severity` wraca z `critical` na `normal`. Zapisane
-    wprost, to zero jest pewnym, zmierzonym "masz caly limit" w chwili twardej blokady.
+    When an organization exhausts its global spend ceiling, Anthropic does not stop
+    answering — it ZEROES THE METER: `percent` drops from 91 to 0, `used` from 273.15 EUR
+    to 0.00, `limit` and `cap` disappear (null), `severity` goes back from `critical` to
+    `normal`. Taken at face value, that zero is a confident, measured "you have the whole
+    limit" at the very moment of a hard block.
 
-    Payload tego stanu jest strukturalnie IDENTYCZNY z payloadem konta Max, ktore kredytow
-    nigdy nie wlaczylo: `enabled:false`, `cap:null`, `percent:0`, `used:0` w obu. Rozni je
-    WYLACZNIE `disabled_reason` — to jedyny dyskryminator, jaki dostajemy.
+    The payload of this state is structurally IDENTICAL to the payload of a Max account that
+    never turned credits on: `enabled:false`, `cap:null`, `percent:0`, `used:0` in both. They
+    are told apart SOLELY by `disabled_reason` — the only discriminator we get.
 
-    TRESCI powodu nie interpretujemy (zasada 5): kazdy niepusty string znaczy "wycofany",
-    a sam string jedzie dalej doslownie, az do UI. Zbior JEST otwarty — na jednym koncie
-    zaobserwowano dwa rozne lancuchy w ciagu doby (`org_level_disabled_until`,
-    `org_spend_cap_reached`).
+    We do not interpret the CONTENT of the reason (rule 5): every non-empty string means
+    "withdrawn", and the string itself travels verbatim, all the way to the UI. The set IS
+    open — on a single account two different strings were observed within one day
+    (`org_level_disabled_until`, `org_spend_cap_reached`).
 
-    Wyczerpanie WLASNEJ puli to NIE jest wycofanie: wtedy `enabled` zostaje `true`,
-    `disabled_reason` jest `null`, a `percent` dochodzi do 100 (zmierzone: used 300,04 przy
-    limicie 300,00 EUR) — licznik dziala i mowi prawde. Dlatego werdykt stoi na fladze
-    `enabled`, nigdy na wysokosci procentu: uznanie 100% za wycofanie odebraloby jedyna
-    poprawna liczbe dokladnie w momencie, w ktorym jest najbardziej potrzebna.
+    Exhausting YOUR OWN pool is NOT a withdrawal: `enabled` then stays `true`,
+    `disabled_reason` is `null`, and `percent` reaches 100 (measured: used 300.04 against a
+    limit of 300.00 EUR) — the meter works and tells the truth. That is why the verdict rests
+    on the `enabled` flag, never on how high the percentage is: treating 100% as a withdrawal
+    would take away the only correct number at exactly the moment it is needed most.
 
-    Czyta te same nazwy pol w bloku `spend` (`enabled`) i `extra_usage` (`is_enabled`), wiec
-    dziala tak samo na surowej odpowiedzi, jak i na `extra` zapisanym w bazie — a to znaczy,
-    ze stan sprzed tej zmiany odczyta sie poprawnie bez migracji.
+    It reads the same field names in the `spend` block (`enabled`) and in `extra_usage`
+    (`is_enabled`), so it works the same on the raw response as on `extra` stored in the
+    database — which means state from before this change reads correctly without a migration.
     """
     if not isinstance(block, dict):
         return None
@@ -273,32 +281,34 @@ def meter_withdrawn(block: Any) -> str | None:
     if not isinstance(enabled, bool):
         enabled = block.get("is_enabled")
     if enabled is True:
-        # Powod jest, ale brama stoi otworem — licznik dziala i jego liczba obowiazuje.
+        # There is a reason, but the gate is open — the meter works and its number holds.
         return None
     return reason
 
 
-# (captured_at, utilization, resets_at) — jeden wiersz przebiegu serii.
+# (captured_at, utilization, resets_at) — one row of a series' run.
 Sample = tuple[datetime, float | None, datetime | None]
 
 
 def window_start_index(rows: Sequence[Sample], eps_sec: float, monotonic_eps: float) -> int:
-    """Indeks pierwszej probki z BIEZACEGO okna. `rows` rosnaco, bez probek `stale_read`.
+    """Index of the first sample from the CURRENT window. `rows` ascending, no `stale_read`.
 
-    Trzy sygnaly, bo `resets_at` bywa None z dwoch roznych powodow i zaden pojedynczy nie
-    widzi wszystkich resetow:
-      shift  - granica przeskoczyla o cale okno (z tolerancja, zasada 9),
-      passed - probka jest mlodsza od znanej granicy; jedyny sygnal na `reset-w-toku` sondy,
-               gdzie sanitize() zeruje `resets_at`, a zuzycie moze rosnac,
-      drop   - utilization spadl; w obrebie okna niemozliwe (guard monotonicznosci). Ratunek
-               dla serii bez znanej granicy — przy 0% Anthropic nie podaje `resets_at`.
+    Three signals, because `resets_at` happens to be None for two different reasons and no
+    single one of them sees every reset:
+      shift  - the boundary jumped by a whole window (with a tolerance, rule 9),
+      passed - the sample is younger than the known boundary; the only signal for the
+               probe's `reset-in-progress`, where sanitize() zeroes `resets_at` while usage
+               may be rising,
+      drop   - utilization fell; impossible within a window (the monotonicity guard). The
+               rescue for a series with no known boundary — at 0% Anthropic reports no
+               `resets_at`.
 
-    Falszywy sygnal SKRACA okno, nigdy nie wciaga probki z poprzedniego.
+    A false signal SHORTENS the window, it never pulls in a sample from the previous one.
     """
     if not rows:
         return 0
     start = 0
-    cur = rows[0][2]          # granica okna, po ktorym idziemy
+    cur = rows[0][2]          # the boundary of the window we are walking
     prev_u = rows[0][1]
     for i in range(1, len(rows)):
         t, u, r = rows[i]
@@ -309,9 +319,9 @@ def window_start_index(rows: Sequence[Sample], eps_sec: float, monotonic_eps: fl
         if drop or shift or passed:
             start, cur = i, r
         elif cur is None and r is not None:
-            cur = r           # granica wrocila po przerwie — to NIE jest drugi reset
+            cur = r           # the boundary came back after a gap — NOT a second reset
         if u is not None:
-            prev_u = u        # null nie kasuje punktu odniesienia dla spadku
+            prev_u = u        # a null does not erase the reference point for a drop
     return start
 
 
@@ -327,25 +337,26 @@ def humanize(key: str) -> str:
 
 def limit_series_key(kind, group, model, surface) -> str:
     key = "limit:%s|%s|%s|%s" % (_slug(kind), _slug(group), _slug(model), _slug(surface))
-    if len(key) > 255:                       # nigdy w praktyce; parser nie ma prawa rzucic
+    if len(key) > 255:                       # never in practice; the parser must not throw
         import hashlib
         key = key[:240] + ":h" + hashlib.sha256(key.encode()).hexdigest()[:8]
     return key
 
 
 def probe_key(o: Observation) -> str | None:
-    """Identyfikator serii W JEZYKU SONDY — do porownania z `measurement.fresh_covered`.
+    """The series identifier IN THE PROBE'S LANGUAGE — to be compared with
+    `measurement.fresh_covered`.
 
-    To NIE jest `series_series_key`: sonda nie zna ani `group`, ani `surface`, ani slugowania,
-    a klucz sklada z tego, czym sama dysponuje w `usage` (patrz `_limit_key`
-    w client/usage-probe.py). Rozbieznosc jest CICHA — zbior nigdy sie nie dopasuje,
-    `covered_by_fresh` nigdy sie nie zapali i datowanie po cichu cofnie sie do stanu sprzed
-    tej zmiany. Dlatego: BEZ `_slug` (sonda wysyla surowy `display_name`) i BEZ `surface`
-    (`merge` dopasowuje po `kind`+`model`, wiec dwa limity roznjace sie tylko powierzchnia
-    naprawde sa pokryte oba).
+    This is NOT a `series_series_key`: the probe knows neither `group` nor `surface` nor the
+    slugging, and it builds the key out of what it has at hand in `usage` (see `_limit_key`
+    in client/usage-probe.py). A divergence here is SILENT — the sets would never match,
+    `covered_by_fresh` would never be set and the timestamping would quietly fall back to the
+    state from before this change. Hence: NO `_slug` (the probe sends a raw `display_name`)
+    and NO `surface` (`merge` matches on `kind`+`model`, so two limits differing only in
+    surface really are both covered).
 
-    `spend` i `extra_usage` zwracaja None: zrzut `/usage` ich nie zawiera NIGDY, wiec pytanie
-    o pokrycie nie ma dla nich sensu."""
+    `spend` and `extra_usage` return None: the `/usage` dump NEVER contains them, so the
+    question of coverage makes no sense for them."""
     if o.source == "bucket":
         return "bucket:%s" % o.bucket_key
     if o.source == "limit":
@@ -353,16 +364,16 @@ def probe_key(o: Observation) -> str | None:
     return None
 
 
-# --------------------------------------------------------------------------- glowne
+# --------------------------------------------------------------------------- main
 def parse_usage(payload: Any, fresh_covered: frozenset[str] = frozenset()) -> ParseResult:
-    """Zamienia odpowiedz /api/oauth/usage na liste obserwacji.
+    """Turns the /api/oauth/usage response into a list of observations.
 
-    Nigdy nie rzuca. Czego nie umie odczytac, zglasza w `problems`, a reszte przetwarza —
-    lepiej zapisac 15 z 17 serii niz odrzucic caly pomiar.
+    Never throws. Whatever it cannot read it reports in `problems`, and it processes the
+    rest — better to record 15 of 17 series than to reject the whole measurement.
 
-    `fresh_covered` to zbior identyfikatorow z `measurement.fresh_covered` sondy. Pusty
-    (domyslny) znaczy "nic nie pochodzi ze zrzutu" — i to jest poprawna, lagodna degradacja
-    dla payloadu bez tego pola, nie galaz kompatybilnosci.
+    `fresh_covered` is the set of identifiers from the probe's `measurement.fresh_covered`.
+    An empty one (the default) means "nothing comes from the dump" — and that is a correct,
+    graceful degradation for a payload without that field, not a compatibility branch.
     """
     obs: list[Observation] = []
     problems: list[str] = []
@@ -370,25 +381,25 @@ def parse_usage(payload: Any, fresh_covered: frozenset[str] = frozenset()) -> Pa
     nulls: set[str] = set()
 
     if not isinstance(payload, dict):
-        return ParseResult([], seen, nulls, ["payload nie jest obiektem"])
+        return ParseResult([], seen, nulls, ["payload is not an object"])
 
     for key, val in payload.items():
         seen.add(key)
         if val is None:
             nulls.add(key)
 
-    # --- 1. buckety najwyzszego poziomu -----------------------------------
+    # --- 1. top-level buckets ---------------------------------------------
     for key, val in payload.items():
         if key in _SPECIAL_KEYS:
             continue
         if val is None:
             continue
         if not isinstance(val, dict):
-            # np. member_dashboard_available=bool trafia tu tylko gdy zmieni sie schemat
-            problems.append("klucz %s ma nieoczekiwany typ %s" % (key, type(val).__name__))
+            # e.g. member_dashboard_available=bool lands here only if the schema changes
+            problems.append("key %s has an unexpected type %s" % (key, type(val).__name__))
             continue
         if "utilization" not in val:
-            problems.append("bucket %s bez pola utilization" % key)
+            problems.append("bucket %s without a utilization field" % key)
             continue
         skey = "bucket:%s" % key
         extra = {k: v for k, v in val.items() if k not in ("utilization", "resets_at")}
@@ -404,11 +415,11 @@ def parse_usage(payload: Any, fresh_covered: frozenset[str] = frozenset()) -> Pa
     # --- 2. limits[] ------------------------------------------------------
     limits = payload.get("limits")
     if limits is not None and not isinstance(limits, list):
-        problems.append("limits nie jest lista")
+        problems.append("limits is not a list")
         limits = None
     for i, lim in enumerate(limits or []):
         if not isinstance(lim, dict):
-            problems.append("limits[%d] nie jest obiektem" % i)
+            problems.append("limits[%d] is not an object" % i)
             continue
         scope = lim.get("scope") or {}
         model = ((scope.get("model") or {}).get("display_name")
@@ -417,7 +428,7 @@ def parse_usage(payload: Any, fresh_covered: frozenset[str] = frozenset()) -> Pa
                    if isinstance(scope, dict) else None)
         kind, group = lim.get("kind"), lim.get("group")
         label = _KIND_LABELS.get(kind or "", (kind or "limit").replace("_", " "))
-        # Pauza, nie dywiz — etykieta jest tresci widoczna w UI ("Tydzień — Fable").
+        # Em dash, not a hyphen — the label is UI-visible content ("Week — Fable").
         if model:
             label = "%s — %s" % (label, model)
         if surface:
@@ -443,37 +454,38 @@ def parse_usage(payload: Any, fresh_covered: frozenset[str] = frozenset()) -> Pa
         eu_reason = meter_withdrawn(eu)
         obs.append(Observation(
             series_key="extra:usage", source="extra_usage",
-            display_label="Kredyty dodatkowe",
-            # Wycofany miernik nie ma pomiaru. Kwoty i flagi zostaja nietkniete w `extra`,
-            # surowa odpowiedz lezy w `raw_payloads` — nie ginie nic poza fantomowym zerem.
+            display_label="Extra credits",
+            # A withdrawn meter has no measurement. The amounts and flags stay untouched in
+            # `extra`, the raw response lies in `raw_payloads` — nothing is lost but the
+            # phantom zero.
             utilization=None if eu_reason else parse_pct(eu.get("utilization")),
             unavailable_reason=eu_reason,
             sort_order=_SORT["extra:usage"],
             extra={k: v for k, v in eu.items() if k != "utilization"},
         ))
     elif eu is not None:
-        problems.append("extra_usage nie jest obiektem")
+        problems.append("extra_usage is not an object")
 
-    # --- 4. spend — na Team to JEST wiazacy limit --------------------------
+    # --- 4. spend — on Team this IS the binding limit ----------------------
     sp = payload.get("spend")
     if isinstance(sp, dict):
         sp_reason = meter_withdrawn(sp)
         obs.append(Observation(
             series_key="spend:org", source="spend",
-            # NIE "limit organizacji": to jest pula PRZYDZIELONA TOBIE (300,00 EUR na
-            # miesiac). Sufit calej organizacji jest czyms innym i w kontrakcie nie istnieje
-            # — gdy sie wyczerpie, ta seria nie rosnie, tylko gasnie (patrz meter_withdrawn).
-            # Zmieniamy WYLACZNIE etykiete; `series_key` jest tozsamoscia i zostaje.
-            display_label="Limit wydatków (Twoja pula)",
+            # NOT "the organization limit": this is the pool ALLOCATED TO YOU (300.00 EUR a
+            # month). The organization's own ceiling is something else and does not exist in
+            # the contract — when it runs out this series does not grow, it goes dark (see
+            # meter_withdrawn). We change ONLY the label; `series_key` is identity and stays.
+            display_label="Spend limit (your pool)",
             utilization=None if sp_reason else parse_pct(sp.get("percent")),
             unavailable_reason=sp_reason,
             severity=sp.get("severity"),
             sort_order=_SORT["spend:org"],
-            # Kwoty zostaja w jednostkach mniejszych z wykladnikiem — bez splaszczania.
+            # Amounts stay in minor units with an exponent — no flattening.
             extra={k: v for k, v in sp.items() if k not in ("percent", "severity")},
         ))
     elif sp is not None:
-        problems.append("spend nie jest obiektem")
+        problems.append("spend is not an object")
 
     if fresh_covered:
         for o in obs:

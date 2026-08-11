@@ -11,24 +11,24 @@ frontend/dist/
 .vscode/
 .DS_Store
 
-# Dumpy payloadow ze statusline — zawieraja sciezki projektow, nazwy sesji i koszty.
-# Trzymamy je w %LOCALAPPDATA%, ale gdyby ktos skopiowal je tutaj — nie commitujemy.
+# Payload dumps from the statusline — they contain project paths, session names and costs.
+# They live in %LOCALAPPDATA%, but should anyone copy them here — they are not committed.
 *.jsonl
 *.cache.json
 .env
-# Kopie robione przy wdrozeniu (`cp .env .env.bak-<data>`) niosa te same sekrety, a wzorzec
-# `.env` wyzej ich NIE lapie — to dopasowanie doslowne. Bez tego backup lezy nieusledzony
-# w katalogu repo i czeka, az ktos go zgarnie.
+# Copies made at deployment (`cp .env .env.bak-<date>`) carry the same secrets, and the
+# `.env` pattern above does NOT catch them — that is a literal match. Without this the backup
+# sits untracked in the repo directory, waiting for someone to scoop it up.
 .env.bak-*
 backups/
 
-# Brudnopis: zrzuty payloadow, klatki z panelu, robocze notatki. Nic stad nie idzie
-# do repozytorium — a bez tej reguly jedno `git add -A` publikuje calosc.
+# Scratchpad: payload dumps, frames from the panel, working notes. Nothing from here goes
+# into the repository — and without this rule a single `git add -A` publishes all of it.
 tmp/
 
-# Lokalne nadpisanie compose (sieci i porty specyficzne dla jednego wdrozenia).
+# Local compose override (networks and ports specific to a single deployment).
 docker-compose.override.yml
 
-# Artefakty `pip install -e` i lokalna konfiguracja narzedzi.
+# Artifacts of `pip install -e` and local tool configuration.
 *.egg-info/
 .claude/

@@ -98,7 +98,7 @@ def test_rows_merge_only_when_the_span_matches():
     same = surface.coalesce({(1, 0), (1, 1)})
     assert same == [(TILE, 0, 2 * TILE, 2 * TILE)]
     wider = surface.coalesce({(1, 0), (1, 1), (2, 1)})
-    assert len(wider) == 2, "roznie szerokie wiersze nie moga sie skleic"
+    assert len(wider) == 2, "rows of different widths must not be merged into one"
 
 
 def test_separate_regions_stay_separate():
@@ -174,11 +174,11 @@ def test_full_frame_only_drivers_get_the_other_surface():
                       surface.FullFrameSurface)
 
 
-def test_a_canvas_that_does_not_divide_by_the_tile_degrades_loudly():
+def test_a_canvas_that_is_not_divisible_by_the_tile_degrades_loudly():
     said = []
     s = surface.for_caps(caps(native=(300, 481)), log=said.append)
     assert isinstance(s, surface.FullFrameSurface)
-    assert said and "pelne klatki" in said[0]
+    assert said and "full frames" in said[0]
 
 
 def test_rotation_and_byte_order_come_from_caps():

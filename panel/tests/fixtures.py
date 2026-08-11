@@ -1,9 +1,10 @@
-"""Sceny testowe w ksztalcie kontraktu.
+"""Test scenes shaped like the contract.
 
-Dane demonstracyjne sa te same co w makiecie (blok text/x-dc na koncu
-"Ekran 3.5 cala.dc.html"), zeby render dalo sie porownac z projektem 1:1.
-Stany, ktorych w produkcji nie da sie wywolac, sa tu tak samo jak
-w frontend/src/mocks — bo inaczej nikt ich nigdy nie zobaczy przed awaria.
+The demonstration data is the same as in the 3.5-inch screen mockup (the text/x-dc
+block at the end of it; the mockup is not tracked here), so the render can be
+compared with the design 1:1.
+States that a live run cannot be made to produce are here just as they are
+in frontend/src/mocks — because otherwise nobody would ever see them before a failure.
 """
 from datetime import timedelta
 
@@ -59,11 +60,11 @@ def rung(key, state, **kw):
     return d
 
 
-# --- sceny ------------------------------------------------------------------
+# --- scenes -----------------------------------------------------------------
 
 
 def base():
-    """Dokladnie dane z makiety: konto Max bez kredytow i konto Team z kredytami."""
+    """Exactly the data from the mockup: a Max account with no credits and a Team one with them."""
     a = account(
         "00000000-0000-4000-8000-000000000003", "you@example.org",
         cascade=[rung("session", "on", isCurrent=True, utilization=31),
@@ -71,11 +72,11 @@ def base():
                  rung("credits", "off"),
                  rung("hard_block", "unknown")],
         series=[
-            series("limit:session|session|-|-", "Sesja", kind="session",
+            series("limit:session|session|-|-", "Session", kind="session",
                    bucketKey="five_hour", utilization=31, rawUtilization=31,
                    resetsAt=_at(52), isActive=True, severity="normal",
                    confirmedAt=_at(-0.32)),
-            series("bucket:seven_day", "Tydzień (wszystkie modele)",
+            series("bucket:seven_day", "Week (all models)",
                    kind="weekly_all", bucketKey="seven_day", sort_order=20,
                    utilization=30, rawUtilization=30, resetsAt=_at(8213)),
         ])
@@ -90,10 +91,10 @@ def base():
                  rung("hard_block", "on", limitMinor=9000, currency="USD",
                       exponent=2)],
         series=[
-            series("limit:session|session|-|-", "Sesja", kind="session",
+            series("limit:session|session|-|-", "Session", kind="session",
                    bucketKey="five_hour", utilization=12, rawUtilization=12,
                    resetsAt=_at(112), confirmedAt=_at(-0.93)),
-            series("bucket:seven_day", "Tydzień (wszystkie modele)",
+            series("bucket:seven_day", "Week (all models)",
                    kind="weekly_all", bucketKey="seven_day", sort_order=20,
                    utilization=100, rawUtilization=100, resetsAt=_at(3712),
                    isActive=True, severity="critical"),
@@ -102,29 +103,29 @@ def base():
 
 
 def states():
-    """Stany, ktorych w produkcji nie da sie wywolac na zadanie:
-    `unknown` (awaria klienta) i `inferred_reset` (okno wrocilo w ciszy)."""
+    """States that a live run cannot be made to produce on demand:
+    `unknown` (a client failure) and `inferred_reset` (the window came back in silence)."""
     a = account(
-        "aaaa1111-0000-0000-0000-000000000001", "unknown@example.pl",
+        "aaaa1111-0000-0000-0000-000000000001", "unknown@example.org",
         cascade=[rung("credits", "unknown")],
         series=[
-            series("limit:session|session|-|-", "Sesja", kind="session",
+            series("limit:session|session|-|-", "Session", kind="session",
                    bucketKey="five_hour", freshness="unknown", utilization=None,
                    rawUtilization=42, resetsAt=_at(31), confirmedAt=_at(-380)),
-            series("bucket:seven_day", "Tydzień", kind="weekly_all",
+            series("bucket:seven_day", "Week", kind="weekly_all",
                    bucketKey="seven_day", sort_order=20, freshness="unknown",
                    utilization=None, rawUtilization=88, resetsAt=_at(4000)),
         ])
     b = account(
-        "bbbb2222-0000-0000-0000-000000000002", "reset@example.pl",
+        "bbbb2222-0000-0000-0000-000000000002", "reset@example.org",
         tier="default_claude_max_20x",
         cascade=[rung("credits", "on", usedMinor=125, limitMinor=30000,
                       currency="USD", exponent=2)],
         series=[
-            series("limit:session|session|-|-", "Sesja", kind="session",
+            series("limit:session|session|-|-", "Session", kind="session",
                    bucketKey="five_hour", freshness="inferred_reset",
                    utilization=0, rawUtilization=97, resetsAt=None),
-            series("bucket:seven_day", "Tydzień", kind="weekly_all",
+            series("bucket:seven_day", "Week", kind="weekly_all",
                    bucketKey="seven_day", sort_order=20, utilization=7,
                    rawUtilization=7, resetsAt=_at(9000)),
         ])
@@ -132,17 +133,17 @@ def states():
 
 
 def edges():
-    """Skrajnosci ukladu: dluga nazwa, trzycyfrowa sesja, brak drugiego konta."""
+    """Layout extremes: a long name, a three-digit session, no second account."""
     a = account(
         "cccc3333-0000-0000-0000-000000000003",
-        "bardzo.dluga.nazwa.konta.ktora.nie.miesci.sie@przyklad.example.pl",
+        "very.long.account.name.that.does.not.fit.here@example.example.org",
         cascade=[rung("credits", "on", isCurrent=True, usedMinor=123456,
                       limitMinor=200000, currency="USD", exponent=2)],
         series=[
-            series("limit:session|session|-|-", "Sesja", kind="session",
+            series("limit:session|session|-|-", "Session", kind="session",
                    bucketKey="five_hour", utilization=100, rawUtilization=100,
                    resetsAt=_at(0.2)),
-            series("bucket:seven_day", "Tydzień", kind="weekly_all",
+            series("bucket:seven_day", "Week", kind="weekly_all",
                    bucketKey="seven_day", sort_order=20, utilization=100,
                    rawUtilization=100, resetsAt=_at(2880)),
         ])

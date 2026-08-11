@@ -1,12 +1,12 @@
 #!/bin/sh
 set -e
 
-echo "[entrypoint] Alembic: migracje..."
+echo "[entrypoint] Alembic: running migrations..."
 alembic upgrade head
 
-echo "[entrypoint] Start uvicorn..."
-# JEDEN proces, swiadomie. Broker SSE (app/services/events.py) trzyma subskrypcje w pamieci,
-# wiec przy --workers > 1 ingest trafialby do innego procesu niz polaczenie klienta i czesc
-# subskrybentow przestalaby dostawac ramki BEZ zadnego bledu w logach. Skalowanie w poziom
-# wymaga najpierw brokera poza procesem (Redis pub/sub albo LISTEN/NOTIFY).
+echo "[entrypoint] Starting uvicorn..."
+# ONE process, deliberately. The SSE broker (app/services/events.py) keeps subscriptions in
+# memory, so with --workers > 1 an ingest would land in a different process than the client
+# connection and some subscribers would stop receiving frames WITHOUT any error in the logs.
+# Scaling out first requires a broker outside the process (Redis pub/sub or LISTEN/NOTIFY).
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --no-access-log
