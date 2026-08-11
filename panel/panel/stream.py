@@ -1,7 +1,8 @@
 """SSE client for /api/stream — a separate thread, stdlib only.
 
 Why SSE and not polling: `/api/status` is behind SSO exclusively, and `/api/stream`
-is the ONLY endpoint that accepts a bearer (backend/app/auth.py:54-89). The
+is the ONLY READ endpoint that accepts a bearer (backend/app/auth.py:54-89) — the
+writes take one too, but a different secret (`/ingest`, `/session-alert`). The
 `account` frame carries a full `AccountStatus` card, so a lost frame is harmless —
 the next one brings the whole state anyway.
 
