@@ -1,26 +1,57 @@
 # Claude Usage Monitor
 
-**How much of your Claude limit is left — every account, every machine, on one page.**
-Before you start the big task, not halfway through it.
+**Your Claude limit on a small screen next to the monitor.** Always lit, always current — no tab
+to open, no page to refresh, nothing to click. You just glance at it.
 
-![The Live view: two accounts, the current session and the weekly window](docs/screenshots/live.png)
+![The desk panel: two accounts, session and week, credits, time to reset](docs/handout/bands-no-alert.png)
 
-## ✨ What it gives you
+## 🖥️ The panel is the whole point
 
-- 📊 **All your accounts side by side.** Max, Team, work, private — whichever ones you sign in
-  to. They are recognized by themselves; there is nothing to label.
-- ⏳ **The current 5-hour session and the weekly window,** each with the percentage used and the
-  time left until it resets.
-- 🪜 **What happens when a window runs out** — paid credits first, then a hard stop — shown as
-  the ladder it actually is, so you can see the next rung coming.
-- 📈 **History,** so "am I burning through this faster than usual?" has an answer.
-- 🖥️ **A small screen on your desk** (optional) showing the same thing, without a browser tab.
-- 🔔 **A nudge when Claude is stuck waiting for you** — a question, a permission, a plan to
-  accept — so a walk to the kitchen doesn't cost you twenty idle minutes.
-- 🤫 **A number you can trust.** When a reading is old or missing, it says so. It never shows a
-  confident 0%, because that is exactly the number you would act on.
+A browser can tell you how much you have used. It cannot tell you *while you are working* — you
+have to stop, switch, look, come back. A 480x320 USB display beside the keyboard removes that
+whole loop: the number is simply in your field of view, the way a clock is.
 
-## 📈 History
+What is on the glass, per account:
+
+- ⏳ **The 5-hour session and the weekly window,** each as a percentage and a bar.
+- 🕐 **A live countdown to the reset** — seconds under an hour, so "wait it out or push on?"
+  is a look, not a calculation.
+- 💳 **Credits,** once a weekly pool is exhausted and the work starts costing money.
+- ⚡ **A ticking second hand.** The panel redraws every second and repaints only what changed;
+  a fresh measurement lands within about a minute of your last tool call.
+- 🔎 **The age of the reading, always shown.** If a machine has gone quiet, the panel keeps the
+  last measured number and says how old it is. It never invents a comfortable 0%.
+
+Two accounts fit at once — say your own Max and a Team seat — each with its own machine and its
+own reset clock. Hardware, wiring, `panel.json` and how to tell two identical units apart:
+[`panel/README.md`](panel/README.md#installation).
+
+## 🔔 It also tells you when Claude is waiting for you
+
+![The panel showing two sessions waiting for a person: a question and a plan](docs/handout/card-pair.png)
+
+A stalled session looks exactly like a working one from across the room. When Claude is waiting on
+a question, a permission or a plan to accept, the panel says so — which project, what kind of
+block, and how long it has been sitting there — and the sessions can be running on entirely
+different machines. Walking to the kitchen no longer costs twenty idle minutes. The design, in
+pictures: [`docs/PANEL-ALERT-HANDOUT.md`](docs/PANEL-ALERT-HANDOUT.md).
+
+## 🌐 A web UI, for when you want the detail
+
+![The Live view: two accounts, the current session, the cascade and the remaining windows](docs/screenshots/live.png)
+
+Everything the panel has no room for: every window and bucket Anthropic reports, not just the two
+that matter most, plus what happens after a window runs out — paid credits first, then a hard
+stop, shown as the ladder it actually is.
+
+![The cascade after the weekly pool is exhausted: credits, then the hard block](docs/screenshots/live-credits.png)
+
+Above, the end of the ladder on two accounts. On the right the weekly pool is exhausted and the
+credits have reached their ceiling — the next stop is a hard block. On the left the organization
+has switched credits off, and the tile says so, instead of showing a silent zero.
+
+<details>
+<summary>📈 And history, if you like charts</summary>
 
 ![The History view: one series across accounts, with reset boundaries and gaps marked](docs/screenshots/history.png)
 
@@ -28,28 +59,18 @@ The last 6 hours, 24 hours, 7 or 30 days, one series at a time across every acco
 drawn as gaps — a period with no measurements looks different from a period of no usage, and the
 legend says which is which.
 
-## 🪜 When a window runs out
+</details>
 
-![The cascade after the weekly pool is exhausted: credits, then the hard block](docs/screenshots/live-credits.png)
+## ✨ Whichever screen you look at
 
-Running out of the weekly window is rarely the end — on paid plans the work continues on credits,
-up to a ceiling, and only then stops for good. The row of tiles reads left to right and marks the
-rung you are standing on, plus the amount that is left on it. If an organization switches credits
-off, that is shown too, instead of a silent zero.
-
-## 🖥️ On the desk
-
-![Two accounts on the desk panel: session, week, credits](docs/handout/bands-no-alert.png)
-
-A 480x320 USB display next to the keyboard shows the same numbers for every account, always on,
-with no browser tab and no window to raise. Supported panels, wiring and setup:
-[`panel/README.md`](panel/README.md#installation).
-
-![The panel showing two sessions waiting for a person](docs/handout/card-pair.png)
-
-And when a session is waiting for you, the panel says so — which project, what kind of question,
-and how long it has been sitting there. The design, in pictures:
-[`docs/PANEL-ALERT-HANDOUT.md`](docs/PANEL-ALERT-HANDOUT.md).
+- 📊 **All your accounts at once.** Max, Team, work, private — whichever ones you sign in to.
+  They are recognized by themselves; there is nothing to label, and switching accounts mid-day
+  does not confuse the history.
+- 💻 **Every machine you work on.** Desktop, laptop, a box you SSH into — each one reports into
+  the account it is signed in to, so the number on the glass is the account's, not one
+  machine's guess at it.
+- 🤫 **A number you can trust.** When a reading is old or missing, it says so. It never shows a
+  confident 0%, because that is exactly the number you would act on.
 
 ## 🔒 Is this safe for my account?
 
@@ -74,6 +95,10 @@ docker compose up -d --build
 
 Then connect a machine — requirements, tokens and hooks, step by step:
 [`client/README.md`](client/README.md#installation).
+
+And the screen on the desk, which is the part worth doing: an AX206 USB display, or a Turing-style
+serial panel, plugged into any machine that can reach the server —
+[`panel/README.md`](panel/README.md#installation).
 
 ---
 
