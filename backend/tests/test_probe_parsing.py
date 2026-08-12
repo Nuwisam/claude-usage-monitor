@@ -9,9 +9,12 @@ and renaming it would break the existing hook configurations on machines.
 """
 import importlib.util
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+
+from tests.iso_cases import CASES, DEPENDS, READS, REFUSES
 
 PROBE = Path(__file__).resolve().parents[2] / "client" / "usage-probe.py"
 
@@ -75,7 +78,30 @@ def test_rejects_absurd_percentage(probe):
 
 
 # ---------------------------------------------------------------------------- merge
-def _cache(five=40, weekly=41, resets="2099-01-01T00:00:00+00:00"):
+def _at(hours=0, days=0, tz="+00:00"):
+    """A boundary relative to NOW, rendered with the offset asked for.
+
+    Fixed future literals rot: `_cache` used to default to `2099-01-01`, which the
+    `MAX_AHEAD_S` ceiling now reads as garbage — correctly. Fixed PAST literals do not rot
+    the same way, so `PAST` below stays a literal.
+
+    CALL THIS ONCE and bind the result. Two calls return two different strings (microsecond
+    `isoformat()`), so rendering it again inside an assertion gives an intermittently red
+    test whose failure looks like a probe defect.
+    """
+    d = datetime.now(timezone.utc) + timedelta(hours=hours, days=days)
+    if tz != "+00:00":
+        sign = 1 if tz[0] == "+" else -1
+        d = d.astimezone(timezone(sign * timedelta(hours=int(tz[1:3]), minutes=int(tz[4:6]))))
+    return d.isoformat()
+
+
+_DEFAULT = object()          # `resets=None` means "no boundary", a real and tested state
+
+
+def _cache(five=40, weekly=41, resets=_DEFAULT):
+    if resets is _DEFAULT:
+        resets = _at(hours=3)
     return {
         "five_hour": {"utilization": five, "resets_at": resets},
         "seven_day": {"utilization": weekly, "resets_at": resets},
@@ -170,11 +196,14 @@ PAST = "2020-01-01T00:00:00+00:00"
 def test_expired_window_without_fresh_data_drops_out(probe):
     """A percentage from a window that has already reset is simply untrue — the real figure
     now is close to zero. Publishing the former 95% would be a gross error."""
-    usage, _ = probe.merge(_cache(five=95, resets=PAST), None)
+    src = _cache(five=95, resets=PAST)
+    usage, _ = probe.merge(src, None)
     usage, events = probe.sanitize(usage, [], time.time())
     assert usage["five_hour"] is None
     assert any("window-expired" in e for e in events)
     assert all(l["kind"] != "session" for l in usage["limits"])
+    # main() ships THIS object as `usage_raw` (:1847) — sanitize must not have reached it.
+    assert src == _cache(five=95, resets=PAST), "the cache block must survive sanitize"
 
 
 def test_expired_window_with_fresh_data_keeps_percent_but_loses_reset_time(probe):
@@ -189,9 +218,11 @@ def test_expired_window_with_fresh_data_keeps_percent_but_loses_reset_time(probe
 
 
 def test_future_reset_is_left_untouched(probe):
-    usage, covered = probe.merge(_cache(), {"session": 48, "weekly_all": 47, "scoped": {}})
+    boundary = _at(hours=3)          # ONE call, bound — see `_at`
+    usage, covered = probe.merge(_cache(resets=boundary),
+                                 {"session": 48, "weekly_all": 47, "scoped": {}})
     usage, events = probe.sanitize(usage, covered, time.time())
-    assert usage["five_hour"]["resets_at"] == "2099-01-01T00:00:00+00:00"
+    assert usage["five_hour"]["resets_at"] == boundary
     assert events == []
     assert len(usage["limits"]) == 3
 
@@ -228,6 +259,102 @@ def test_sanitize_tolerates_missing_resets_at(probe):
     usage, events = probe.sanitize(_cache(resets=None), [], time.time())
     assert usage["five_hour"]["utilization"] == 40
     assert events == []
+
+
+# --------------------------------------------------- sanitize: the boundary ceiling
+# `exp <= now` is a one-sided test. A boundary implausibly far ahead passed it unchallenged
+# and reached `series_state`, where `carry_reset_window` holds an unexpired boundary as true
+# — so a stamp from 2099 became the state's boundary, and with it the countdown, the delta
+# baseline's window and `inferred_reset` were wrong for as long as it stayed.
+def test_boundary_far_in_the_future_is_zeroed_and_the_series_stays(probe):
+    usage, events = probe.sanitize(_cache(resets=_at(days=401)), [], time.time())
+    assert usage["five_hour"]["utilization"] == 40, "the percentage is not implicated"
+    assert usage["five_hour"]["resets_at"] is None
+    assert "five_hour:window-from-future" in events
+
+
+def test_boundary_far_in_the_future_keeps_the_limit_row(probe):
+    """The neighbouring branch ends in `continue`; this one must NOT. Dropping the row would
+    look downstream exactly like Anthropic withdrawing the limit."""
+    usage, events = probe.sanitize(_cache(resets=_at(days=401)), [], time.time())
+    assert len(usage["limits"]) == 3
+    session = [l for l in usage["limits"] if l["kind"] == "session"][0]
+    assert session["percent"] == 40 and session["resets_at"] is None
+    assert "limit:session:window-from-future" in events
+
+
+def test_the_ceiling_is_a_ceiling_and_not_a_slope(probe):
+    """Passes without the guard too — it pins where the ceiling sits against a later
+    retune, it does not prove the guard was built."""
+    boundary = _at(days=399)
+    usage, events = probe.sanitize(_cache(resets=boundary), [], time.time())
+    assert usage["five_hour"]["resets_at"] == boundary
+    assert events == []
+
+
+def test_the_ceiling_reads_the_true_instant_not_the_substring(probe):
+    """The case that needs the merged `_epoch`, and the reason it straddles the ceiling.
+
+    A boundary 400 d + 2 h ahead written at `-05:00`: the true instant is over the ceiling,
+    while `iso[:19]` read as UTC lands 400 d − 3 h out, under it. The obvious "401 days at
+    -05:00" proves nothing — five hours cannot flip a one-day margin, so it trips under the
+    offset-discarding parser as well."""
+    usage, events = probe.sanitize(_cache(resets=_at(days=400, hours=2, tz="-05:00")),
+                                   [], time.time())
+    assert usage["five_hour"]["resets_at"] is None
+    assert "five_hour:window-from-future" in events
+
+
+# ------------------------------------------------------------------- `_epoch`, one body
+def test_the_probe_defines_no_name_twice(probe):
+    """The defect was a SECOND `def _epoch` 585 lines below the first: Python bound the
+    second, `sanitize` silently ran it, and 25 tests stayed green because every observed
+    `resets_at` carries `+00:00`, where the two bodies agreed. This is the class, not the
+    instance — a re-bound module-level constant shadows exactly as quietly."""
+    import ast
+    tree = ast.parse(PROBE.read_text(encoding="utf-8"))
+    names = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.append(node.name)
+        elif isinstance(node, ast.Assign):
+            names.extend(t.id for t in node.targets if isinstance(t, ast.Name))
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    assert dupes == [], "shadowed at module level: %s" % dupes
+
+
+@pytest.mark.parametrize("case", [c for c in CASES if c.probe == READS],
+                         ids=lambda c: c.label)
+def test_epoch_reads_the_shared_cases(probe, case):
+    got = probe._epoch(case.raw)
+    assert got is not None, case.why
+    assert abs(got - case.instant.timestamp()) < 1e-6, case.why
+
+
+@pytest.mark.parametrize("case", [c for c in CASES if c.probe == REFUSES],
+                         ids=lambda c: c.label)
+def test_epoch_refuses_the_shared_cases(probe, case):
+    """Refusing is not a defect — the value still reaches the backend verbatim in
+    `usage_raw`, and `parse_ts` reads several of these. What must never happen is a wrong
+    instant, which is what the offset-discarding body did."""
+    assert probe._epoch(case.raw) is None, case.why
+
+
+@pytest.mark.parametrize("case", [c for c in CASES if c.probe == DEPENDS],
+                         ids=lambda c: c.label)
+def test_epoch_is_never_wrong_even_where_the_interpreter_decides(probe, case):
+    got = probe._epoch(case.raw)
+    if got is not None:
+        assert abs(got - case.instant.timestamp()) < 1e-6, case.why
+
+
+def test_epoch_keeps_the_fraction_the_signaller_orders_by(probe):
+    """`since` has one-second resolution, the transcript milliseconds. Truncating here would
+    invert the order — and a lexicographic comparison inverts it too, because '.' < 'Z'."""
+    since = probe._epoch("2026-08-11T13:53:28Z")
+    later = probe._epoch("2026-08-11T13:53:28.588Z")
+    assert later > since
+    assert "2026-08-11T13:53:28.588Z" < "2026-08-11T13:53:28Z", "why not a string compare"
 
 
 # ------------------------------------------------ reading ~/.claude.json (family B)
@@ -310,3 +437,45 @@ def test_read_claude_json_returns_account_measurement_and_reason_for_each_state(
 
     monkeypatch.setattr(probe, "_find", lambda name, in_claude_dir=False: None)
     assert probe.read_claude_json() == (None, None, None, None)
+
+
+# --------------------------------------------------------------------------- spool
+def test_backlog_batch_fits_under_the_ingest_body_cap(probe, tmp_path, monkeypatch):
+    """MAX_BACKLOG_PER_REQUEST is a COUNT, and 200 full records are ~1.03 MB — over the
+    backend's body cap, which is checked BEFORE the body is parsed. The 413 that comes back
+    is indistinguishable here from any other failure: the record is spooled and the very
+    same oldest window is rebuilt on the next cycle, forever. Hence the byte budget."""
+    import json
+
+    line = json.dumps({"usage": {}, "usage_raw": {"pad": "x" * 5000}}, ensure_ascii=False)
+    spool = tmp_path / "spool.jsonl"
+    spool.write_text("\n".join([line] * 400) + "\n", encoding="utf-8")
+    monkeypatch.setattr(probe, "SPOOL", str(spool))
+
+    record = {"usage": {}, "usage_raw": {"pad": "y" * 5000}}
+    budget = probe.MAX_REQUEST_BYTES - len(
+        json.dumps(record, ensure_ascii=False).encode("utf-8"))
+    backlog, total = probe.read_spool(probe.MAX_BACKLOG_PER_REQUEST, budget)
+
+    assert total == 400                     # the whole spool is still reported, unshrunk
+    assert backlog                          # ...and the batch is not empty either
+    assert backlog == [json.loads(line)] * len(backlog)      # a prefix, in file order
+
+    body = json.dumps(dict(record, backlog=backlog), ensure_ascii=False).encode("utf-8")
+    assert len(body) <= probe.MAX_REQUEST_BYTES               # what the 413 measures
+
+
+def test_backlog_is_empty_when_the_oldest_entry_alone_does_not_fit(probe, tmp_path,
+                                                                   monkeypatch):
+    """`trim_spool` trims by POSITION, so the batch has to stay a prefix: an entry skipped
+    in the middle would be dropped from the spool without ever being sent. An entry that
+    does not fit therefore ends the batch — and when it is the first one, the live record
+    travels alone rather than dragging the whole cycle into a 413."""
+    import json
+
+    spool = tmp_path / "spool.jsonl"
+    spool.write_text(json.dumps({"pad": "x" * 300000}) + "\n"
+                     + json.dumps({"pad": "small"}) + "\n", encoding="utf-8")
+    monkeypatch.setattr(probe, "SPOOL", str(spool))
+
+    assert probe.read_spool(probe.MAX_BACKLOG_PER_REQUEST, 200000) == ([], 2)

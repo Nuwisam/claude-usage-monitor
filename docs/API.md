@@ -462,12 +462,14 @@ inventing your own thresholds.
 **Compute countdowns from the `serverNow`** in the response, not from the browser's clock.
 `secondsToReset` is computed server-side.
 
-**`resetsAt: null` has two different reasons and neither means "this series does not
+**`resetsAt: null` has three different reasons and none of them means "this series does not
 reset".** Anthropic gives no boundary for a window at **0% usage** (visible in `limits[]`:
 `weekly_scoped percent 0 → resets_at null`) — a 5-hour window before its first use simply has
 no instance yet. Separately, the probe **zeroes a stale boundary from the cache** when the
-window rolled over between the cache being written and being read (up to ~5 min). The caption
-has to tell them apart:
+window rolled over between the cache being written and being read (up to ~5 min). And from
+probe version 15 the probe also zeroes a boundary further ahead than `MAX_AHEAD_S` (400 days),
+which is not a boundary at all but a garbage stamp — `measurement.dropped` then carries
+`<series>:window-from-future`. The caption has to tell them apart:
 
 | series state | caption |
 |---|---|

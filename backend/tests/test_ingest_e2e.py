@@ -4,6 +4,7 @@ Uses in-memory SQLite. Does not cover /api/history (the downsampling queries are
 to MariaDB), but does cover all the logic that can yield BAD DATA: dedup, the monotonicity
 guard, account-switch detection and freshness states.
 """
+import copy
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -15,7 +16,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import settings
 from app.models import (
-    Account, Base, IngestBatch, IngestEvent, LimitSample, SeriesState, UsageSeries,
+    Account, Base, IngestBatch, IngestEvent, LimitSample, RawPayload, SeriesState,
+    UsageSeries,
 )
 from app.services.ingest import ingest_one, request_offset, utcnow
 from app.services.status import build_status
@@ -135,6 +137,36 @@ async def test_raw_payload_is_preserved(db):
     await db.commit()
     b = (await db.execute(select(IngestBatch).where(IngestBatch.id == r["batch_id"]))).scalar_one()
     assert b.raw_payload_id is not None and b.payload_sha256
+
+
+async def test_usage_raw_is_what_lands_in_raw_payloads(db):
+    """Rule 6 asks for what Anthropic sent, and `usage` is our own edit of it: `sanitize`
+    has already zeroed every boundary it refused by the time the payload is built. From
+    probe 15 the untouched cache block travels as `usage_raw`, and THAT is what is stored —
+    otherwise `GET /batches/{id}/raw`, documented as "Anthropic's raw response", serves the
+    merged object and the value that tripped a guard is unrecoverable."""
+    # `payload()` hands out the SHARED `REAL` dict, so this copies before touching it —
+    # mutating it in place corrupts every test that runs after this one in the module.
+    published = copy.deepcopy(REAL)
+    published["five_hour"]["resets_at"] = None           # what sanitize published
+    p = payload(usage=published)
+    p["usage_raw"] = {"five_hour": {"utilization": 40,
+                                    "resets_at": "2099-01-01T00:00:00+00:00"}}
+    r = await ingest_one(db, machine_name="desktop", payload=p)
+    await db.commit()
+    b = (await db.execute(select(IngestBatch).where(IngestBatch.id == r["batch_id"]))).scalar_one()
+    rp = (await db.execute(select(RawPayload).where(RawPayload.id == b.raw_payload_id))).scalar_one()
+    assert "2099-01-01T00:00:00+00:00" in rp.body, "the refused boundary must survive"
+
+
+async def test_a_probe_without_usage_raw_still_stores_something(db):
+    """The whole fleet is on an older probe and sends no `usage_raw`. For those the merged
+    object is not a compromise, it is all there is."""
+    r = await ingest_one(db, machine_name="desktop", payload=payload())
+    await db.commit()
+    b = (await db.execute(select(IngestBatch).where(IngestBatch.id == r["batch_id"]))).scalar_one()
+    rp = (await db.execute(select(RawPayload).where(RawPayload.id == b.raw_payload_id))).scalar_one()
+    assert "five_hour" in rp.body
 
 
 # --------------------------------------------------------------------------- dedup

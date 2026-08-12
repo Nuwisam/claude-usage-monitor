@@ -66,7 +66,7 @@ Deliberately a local file, not the repo — a machine token has no business in g
 """
 import sys, os, json, time, re
 
-SCRIPT_VERSION = 14
+SCRIPT_VERSION = 15
 
 # Marker inherited by the child process. `claude -p "/usage"` is a normal Claude Code
 # session — it will fire the Stop hook, which fires the probe, which would fire another
@@ -83,10 +83,24 @@ CLI_OUT = os.path.join(OUTDIR, "usage-cli.json")
 
 MAX_SPOOL_LINES = 5000
 MAX_BACKLOG_PER_REQUEST = 200
+MAX_REQUEST_BYTES = 240000      # the ingest body cap the backend applies BEFORE parsing.
+                                # A COUNT of 200 full records is ~1.03 MB, over both the
+                                # code default (262144) and the deployed 1 MiB, and a 413
+                                # arrives here as an ordinary failure: the record returns to
+                                # the spool and the SAME oldest window is re-sent forever.
+                                # So the batch is sized, not just counted. Deliberately the
+                                # LOWER of the caps the backend may run with — the probe
+                                # cannot know it, and undershooting only drains slower.
 CACHE_MAX_AGE_S = 3600          # the same as the read TTL on the Claude Code side
 CLI_MAX_AGE_S = 900             # an older stdout dump is ignored — cache-only data is better
 DEFAULT_THROTTLE_S = 60         # one name for both fallbacks: absent key and unusable value
 MAX_SANE_PCT = 101              # see the guards in parse_usage_text / sanitize
+MAX_AHEAD_S = 400 * 86400       # further ahead than this and it is not a window boundary.
+                                # A garbage detector, NOT a window-length validator: the
+                                # longest window measured leads by 167.93 h, and the margin
+                                # is there so a quarterly or annual bucket Anthropic adds
+                                # tomorrow is not nulled on every cycle (rule 5 forbids
+                                # keying on bucket names, so nothing here may assume one).
 
 
 def _safe(fn, *a, **kw):
@@ -498,7 +512,7 @@ def merge(cached_usage, fresh):
     side (`measurement.fresh_covered`) and the `reset-in-progress` decision in `sanitize` both
     depend on this list."""
     if not fresh:
-        return cached_usage, []
+        return json.loads(json.dumps(cached_usage)), []
     usage = json.loads(json.dumps(cached_usage))      # a copy — the source is not mutated
     covered = []
 
@@ -530,14 +544,50 @@ def merge(cached_usage, fresh):
 
 
 def _epoch(iso):
-    """resets_at arrives as ISO-8601 with an offset: 2026-07-27T10:29:59.761469+00:00."""
-    if not iso:
+    """ISO-8601 -> epoch (float), or None. ONE function for both halves of this file.
+
+    Two definitions of this name used to live here — this one and a second in the alert
+    section — and Python bound the SECOND, so `sanitize` silently ran a parser that read
+    `iso[:19]` as UTC and threw the offset away. Every observed `resets_at` carries `+00:00`,
+    where both agreed, so the whole suite stayed green over it. One name, one body.
+
+    Two callers, two shapes, and the normalisation below is what lets one body serve both:
+      * `resets_at` from the cache, with an offset: 2026-07-27T10:29:59.761469+00:00
+      * transcript timestamps and our own `since`, with a Z: 2026-08-11T13:53:28.588Z
+
+    `Z` and the fraction are rewritten BEFORE `fromisoformat`: below 3.11 it rejects `Z`
+    and takes a fraction of EXACTLY 3 or 6 digits, so the fraction is padded as well as
+    truncated. Otherwise the `except` below turns the raise into `None`, and `None` SKIPS
+    the expiry check rather than failing it. The Linux hook runs on whatever `python3` the
+    machine has (3.9.13 on the dev box).
+
+    The comparison happens on the PARSED time, never on a substring: `since` has one-second
+    resolution while the transcript has milliseconds, so a lexicographic comparison inverts
+    the result ("...:40.816Z" < "...:40Z", because '.' < 'Z') and would read a later
+    resolution as an earlier one.
+
+    A naive string is read as UTC and never as local time. `.timestamp()` on a naive
+    datetime applies the machine's zone, which would put `since` and the transcript hours
+    apart on any machine that is not on UTC.
+    """
+    if not isinstance(iso, str):
         return None
+    s = iso.strip()
+    if len(s) < 19:
+        return None
+    if s[-1:] in ("Z", "z"):
+        s = s[:-1] + "+00:00"
+    m = re.match(r"^(.*\.)(\d+)(.*)$", s)
+    if m:
+        s = m.group(1) + m.group(2)[:6].ljust(6, "0") + m.group(3)
     try:
-        from datetime import datetime          # a C module, the import is negligible
-        return datetime.fromisoformat(iso).timestamp()
+        from datetime import datetime, timezone  # a C module, the import is negligible
+        dt = datetime.fromisoformat(s)
     except Exception:
         return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return _safe(dt.timestamp)
 
 
 def sanitize(usage, covered, now):
@@ -558,6 +608,14 @@ def sanitize(usage, covered, now):
         Publishing a former 95% as current would be a serious error (really it is ~0%), so
         the whole series is thrown out of this cycle.
 
+    A THIRD case, and it is not about the window having reset: a boundary further ahead than
+    `MAX_AHEAD_S` is not a boundary at all. That one does not ask about `covered` — the
+    percentage next to it is not implicated, absurd percentages are `MAX_SANE_PCT`'s job —
+    so the field is zeroed and the series stays. It cannot repair a state that ALREADY holds
+    such a value: from then on we send None, and the backend's `carry_reset_window` keeps
+    re-holding what it stored. The guard is preventive, and while it fires the monotonicity
+    guard on the backend is disarmed for that series, exactly as `reset-in-progress` disarms it.
+
     Returns a list of events for diagnostics — silence while discarding data is worse than
     missing data, because it looks like a correct measurement."""
     events = []
@@ -572,7 +630,10 @@ def sanitize(usage, covered, now):
             events.append("%s:absurd(%s)" % (key, util))
             continue
         exp = _epoch(bucket.get("resets_at"))
-        if exp and exp <= now:
+        if exp is not None and exp > now + MAX_AHEAD_S:
+            bucket["resets_at"] = None
+            events.append("%s:window-from-future" % key)
+        elif exp and exp <= now:
             if ("bucket:%s" % key) in covered_set:
                 bucket["resets_at"] = None
                 events.append("%s:reset-in-progress" % key)
@@ -590,7 +651,13 @@ def sanitize(usage, covered, now):
             events.append("limit:%s:absurd(%s)" % (kind, pct))
             continue
         exp = _epoch(lim.get("resets_at"))
-        if exp and exp <= now:
+        if exp is not None and exp > now + MAX_AHEAD_S:
+            # NO `continue` here, unlike the branch below: the limit STAYS in `kept`. A
+            # boundary we refuse to believe says nothing about the percentage next to it,
+            # and dropping the row would look downstream like Anthropic withdrawing the limit.
+            lim["resets_at"] = None
+            events.append("limit:%s:window-from-future" % kind)
+        elif exp and exp <= now:
             if _limit_key(lim) in covered_set:
                 lim["resets_at"] = None
                 events.append("limit:%s:reset-in-progress" % kind)
@@ -604,14 +671,26 @@ def sanitize(usage, covered, now):
 
 
 # --------------------------------------------------------------- spool
-def read_spool(limit):
+def read_spool(limit, budget):
+    """The oldest entries: at most `limit` of them and at most `budget` bytes, counted in
+    UTF-8 the way the backend counts the body. Non-destructive.
+
+    Always a PREFIX of the file, never a selection. `trim_spool` trims by POSITION, so an
+    entry skipped in the middle would be deleted from the spool without ever having been
+    sent; an entry that does not fit therefore ENDS the batch, and it and everything behind
+    it come back on the next cycle. The batch may legitimately come out empty.
+    """
     try:
         with open(SPOOL, "r", encoding="utf-8") as f:
             lines = [l for l in f.read().splitlines() if l.strip()]
     except Exception:
         return [], 0
     out = []
+    used = 0
     for l in lines[:limit]:
+        used += len(l.encode("utf-8")) + 2      # +2: the ", " joining the array
+        if used > budget:
+            break                               # `break`, not `continue` — see the docstring
         rec = _safe(json.loads, l)
         if rec is not None:
             out.append(rec)
@@ -712,7 +791,7 @@ def _iso(epoch):
 # =============================================================== alert: the signaller
 # Detects that Claude Code has stopped and is waiting for a human. This section touches
 # NOTHING from the probe beyond the shared helpers (`_safe`, `load_config`, `_iso`,
-# `_find`, `_extract_block`, `ssl_context`, `post`).
+# `_epoch`, `_find`, `_extract_block`, `ssl_context`, `post`).
 #
 # WHAT WAS MEASURED, AND WHY THE CODE LOOKS EXACTLY LIKE THIS (Claude Code 2.1.221,
 # VS Code, permission_mode=default, Windows; 224 events filtered by session_id):
@@ -1112,33 +1191,6 @@ def registry_seen(session_id):
 # This branch is the only mechanism that clears an alert after a denial in a session that
 # THEN fell silent (`Stop` does not fire on an interrupted turn) — and it does so from the
 # sweep of ANY session, because it walks the whole state directory, not its own prefix.
-
-
-def _epoch(iso):
-    """ISO-8601 UTC -> epoch (float) or None.
-
-    On the PARSED time, never on a substring: `since` has one-second resolution while the
-    transcript has milliseconds, so a lexicographic comparison inverts the result
-    ("...:40.816Z" < "...:40Z", because '.' < 'Z') and would treat a later resolution as
-    an earlier one.
-    """
-    if not isinstance(iso, str) or len(iso) < 19:
-        return None
-    import calendar                 # lazy, like `hashlib` in `call_key`
-    try:
-        base = calendar.timegm(time.strptime(iso[:19], "%Y-%m-%dT%H:%M:%S"))
-    except Exception:
-        return None
-    frac = 0.0
-    if len(iso) > 20 and iso[19] == ".":
-        digits = ""
-        for ch in iso[20:]:
-            if not ch.isdigit():
-                break
-            digits += ch
-        if digits:
-            frac = _safe(float, "0." + digits) or 0.0
-    return base + frac
 
 
 def tail_records(path):
@@ -1803,6 +1855,18 @@ def main():
             "spawn_error": spawn_err,
         },
         "usage": usage,
+        # THE UNTOUCHED CACHE BLOCK, exactly as `~/.claude.json` had it — before `merge`
+        # laid the stdout percentages over it and before `sanitize` zeroed anything.
+        # `raw_payloads` on the backend stores THIS, not `usage`, and that is what makes
+        # AGENTS rule 6 true rather than nearly true: until now the one table built to
+        # answer "what did Anthropic actually send" held our own edit of the answer, so
+        # every boundary `sanitize` zeroed was unrecoverable, and `GET /batches/{id}/raw`
+        # — documented as "Anthropic's raw response" — served the merged object.
+        # Free to carry: `merge` does not mutate its source (there is a test), so this
+        # object is still intact here; no copy. Measured ~1.9 kB, and being free of our
+        # edits it is MORE stable while idle, so `store_raw`'s content addressing dedups
+        # it better than it dedups `usage`.
+        "usage_raw": cached.get("utilization"),
     }
 
     log_local(dict(record, t=round(time.time(), 3), ok=True))   # local log regardless of POST
@@ -1810,7 +1874,15 @@ def main():
     if not cfg.get("ingest_url") or not cfg.get("ingest_token"):
         return 0                                   # "local only" mode — no configuration
 
-    backlog, spool_total = read_spool(MAX_BACKLOG_PER_REQUEST)
+    # Whatever is left of the budget after the live record measured on THIS machine, which
+    # has priority over the backlog — and if nothing is left, this cycle carries no backlog.
+    # An under-count of a few dozen bytes (`sent_at` below, the `"backlog": [ ]` framing)
+    # rides on the margin between MAX_REQUEST_BYTES and the cap. `_safe`, so that a record
+    # json.dumps cannot serialise costs the budget and not the run — `post` raises on it
+    # below either way, inside the try that spools it.
+    body = _safe(json.dumps, record, ensure_ascii=False) or ""
+    backlog, spool_total = read_spool(
+        MAX_BACKLOG_PER_REQUEST, MAX_REQUEST_BYTES - len(body.encode("utf-8")))
 
     # THE AGE ANCHOR. The backend computes `offset = arrived_at - sent_at` from it and dates
     # the measurement as `min(ts + offset, arrived_at)`, that is `received_at - age`. The
@@ -1831,6 +1903,13 @@ def main():
     except Exception:
         append_spool(record)
         return 0
+
+    if code == 413 and backlog:
+        # The budget was wrong: a cap lower than MAX_REQUEST_BYTES on this deployment. Retry
+        # the live record ALONE — otherwise every following cycle rebuilds the same
+        # oversized window and nothing, not even the current measurement, is ever delivered.
+        # No `backlog` in this body, so there is nothing the answer could tell us to trim.
+        code, resp = _safe(post, cfg, cfg["ingest_url"], record) or (code, resp)
 
     if code >= 300:
         append_spool(record)

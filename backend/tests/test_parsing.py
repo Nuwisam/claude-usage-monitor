@@ -12,6 +12,7 @@ from app.parsing import (
     Observation, humanize, limit_series_key, meter_withdrawn, parse_pct, parse_ts,
     parse_usage, window_start_index,
 )
+from tests.iso_cases import CASES, READS, REFUSES
 from tests.team import USAGE_ACTIVE, USAGE_POOL_EXHAUSTED, USAGE_WITHDRAWN, usage
 
 FIX = Path(__file__).parent / "fixtures" / "usage_max.json"
@@ -62,6 +63,34 @@ def test_parse_ts_epoch_and_iso_give_same_moment():
     iso = parse_ts("2026-07-26T20:59:59+00:00")
     epoch = parse_ts(1785099599)
     assert iso == epoch
+
+
+# ------------------------------------------------- the shared table, backend side
+# `tests/iso_cases.py` holds one list of forms read by BOTH date parsers in this project.
+# The two cannot be one function — `parse_ts` truncates to the whole second for the database
+# while the probe's `_epoch` keeps the fraction the signaller orders by — and they cannot
+# share code, because the probe ships as a single file and imports nothing local. So they
+# agree by test instead, and the forms only one side reads are rows in the table rather than
+# omissions from it. `test_probe_parsing.py` runs the same list against `_epoch`.
+@pytest.mark.parametrize("case", [c for c in CASES if c.backend == READS],
+                         ids=lambda c: c.label)
+def test_parse_ts_reads_the_shared_cases(case):
+    assert parse_ts(case.raw) == case.instant.replace(tzinfo=None, microsecond=0), case.why
+
+
+@pytest.mark.parametrize("case", [c for c in CASES if c.backend == REFUSES],
+                         ids=lambda c: c.label)
+def test_parse_ts_refuses_the_shared_cases(case):
+    assert parse_ts(case.raw) is None, case.why
+
+
+def test_the_backend_reads_more_forms_than_the_probe():
+    """A recorded asymmetry, not an accident. The probe declines numeric epochs and anything
+    under 19 characters; `parse_ts` takes them, because the statusline emits epochs. It is
+    why the probe must not zero a boundary it cannot read — the server can, and from probe
+    15 it receives the untouched value in `usage_raw`."""
+    wider = [c.label for c in CASES if c.backend == READS and c.probe == REFUSES]
+    assert wider, "if this ever empties, the two parsers converged and the table should say so"
 
 
 def test_same_reset_window_distinguishes_jitter_from_real_reset():

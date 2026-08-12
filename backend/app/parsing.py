@@ -211,9 +211,15 @@ def carry_reset_window(prev: datetime | None, incoming: datetime | None,
     """Which window boundary the STATE is to hold when the measurement brought none.
 
     A measurement without a boundary does not mean "there is no boundary", only "this
-    reading does not know it". There are two reasons and both are normal: Anthropic reports
-    no boundary for a window at 0% usage, and the probe zeroes a boundary that has gone
-    stale in its OWN cache (the `reset-in-progress` rule, `client/usage-probe.py`).
+    reading does not know it". There are three reasons and all are normal: Anthropic reports
+    no boundary for a window at 0% usage, the probe zeroes a boundary that has gone stale in
+    its OWN cache (the `reset-in-progress` rule, `client/usage-probe.py`), and from probe
+    version 15 it also zeroes one stamped further ahead than `MAX_AHEAD_S` — garbage rather
+    than a boundary (`window-from-future`).
+
+    Note what the third one implies for the branch below: once a bad boundary IS in the
+    state, the probe zeroing its own copy cannot evict it, because `prev > at` keeps holding
+    the stored value. The probe's guard is preventive; repairing a poisoned state is manual.
 
     Both extreme solutions are wrong:
       * overwrite with NULL — we lose a boundary that STILL describes the running window.
@@ -293,12 +299,13 @@ Sample = tuple[datetime, float | None, datetime | None]
 def window_start_index(rows: Sequence[Sample], eps_sec: float, monotonic_eps: float) -> int:
     """Index of the first sample from the CURRENT window. `rows` ascending, no `stale_read`.
 
-    Three signals, because `resets_at` happens to be None for two different reasons and no
+    Three signals, because `resets_at` happens to be None for three different reasons and no
     single one of them sees every reset:
       shift  - the boundary jumped by a whole window (with a tolerance, rule 9),
-      passed - the sample is younger than the known boundary; the only signal for the
-               probe's `reset-in-progress`, where sanitize() zeroes `resets_at` while usage
-               may be rising,
+      passed - the sample is younger than the known boundary; the signal for the probe's
+               `reset-in-progress`, where sanitize() zeroes `resets_at` while usage may be
+               rising — and equally for `window-from-future`, which zeroes it for a different
+               reason but leaves the same hole here,
       drop   - utilization fell; impossible within a window (the monotonicity guard). The
                rescue for a series with no known boundary — at 0% Anthropic reports no
                `resets_at`.

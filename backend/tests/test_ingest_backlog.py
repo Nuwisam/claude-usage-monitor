@@ -159,10 +159,16 @@ async def test_two_different_measurements_in_the_same_second_both_pass(api, db):
     """`parse_ts` truncates to whole seconds, and parallel hooks can fire two probes within
     the same second. The guard has no right to delete the second, DIFFERENT measurement —
     which is why the key holds a sha256 of the payload, not just the time. Without that
-    condition the answer here comes out as 1."""
+    condition the answer here comes out as 1.
+
+    Both entries carry the SAME `usage_raw`, because that is the real shape: the cache block
+    does not move when only a fresh `/usage` dump changes the percentages. So the digest must
+    be taken over `usage` and not over the archived block — over the block these two are one
+    measurement and the second is silently dropped, again giving 1."""
     now = utcnow().replace(microsecond=0)
     a = payload(usage=with_util(five_hour=0.11), captured_at=now)
     b = payload(usage=with_util(five_hour=0.44), captured_at=now)
+    a["usage_raw"] = b["usage_raw"] = {"five_hour": {"utilization": 7}}
 
     p = payload(captured_at=now + timedelta(minutes=1))
     p["backlog"] = [a, b]

@@ -131,9 +131,11 @@ function missingView(suffix: string, reason?: string | null): SeriesView {
  *  lies, and the day changes the wording ("at 20:00", but "on Fri. at 20:00"). The caller has
  *  no right to know which variant came out, so it does not glue on an "at" of its own.
  *
- *  `resetsAt: null` has TWO reasons, and "no reset" merged them into a caption read as "this
+ *  `resetsAt: null` has THREE reasons, and "no reset" merged them into a caption read as "this
  *  window does not reset": (a) Anthropic gives no boundary for a window at 0% usage, (b) the
- *  probe zeroes a stale boundary from the cache (`reset-in-progress`, up to ~5 min). */
+ *  probe zeroes a stale boundary from the cache (`reset-in-progress`, up to ~5 min), (c) the
+ *  probe zeroes a boundary further ahead than 400 days (`window-from-future`) — garbage, not
+ *  a window. All three mean the same thing HERE: we do not know when this window ends. */
 export function resetNote(s: SeriesStatus, nowMs: number): { lead: string; at: string | null } {
   // `source` is a contract enum; a bucket name here would break rule 5.
   if (s.source === "spend" || s.source === "extra_usage") return { lead: "no reset", at: null };

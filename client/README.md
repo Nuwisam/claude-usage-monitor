@@ -419,8 +419,9 @@ The dividing line sits at **using** the token, not at reading the file.
 only `sys, os, json, time, re` — the rest are local, in branches the hot path **never
 touches**: `shutil` and `subprocess` in the CLI measurement, `ssl` in building the context,
 `http.client` with `urllib.parse` in `post()`, `socket` with `hashlib` when assembling the
-record, `hashlib` in `call_key`, `base64` with `subprocess` in `toast()`. The four from
-`post()` and `record` moved down from the top in version 7 and were worth 23 ms on every run.
+record, `hashlib` in `call_key`, `base64` with `subprocess` in `toast()`, `datetime` in
+`_epoch()`. The four from `post()` and `record` moved down from the top in version 7 and were
+worth 23 ms on every run.
 
 Note after the merge: the alert section's imports are **not** "past the throttle" — the
 signaller runs before it. They are gated by something else: they only fire on ENTERING a

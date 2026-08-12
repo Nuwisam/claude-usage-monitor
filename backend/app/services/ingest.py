@@ -151,8 +151,7 @@ async def get_or_create_series(db: AsyncSession, o: Observation,
 async def store_raw(db: AsyncSession, usage: Any) -> tuple[RawPayload, str]:
     """Content-addressed — while idle the response is byte-identical, so instead of
     thousands of copies we have one row and a counter."""
-    body = json.dumps(usage, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    body, digest = _canonical(usage)
     rp = (await db.execute(select(RawPayload).where(RawPayload.sha256 == digest))).scalar_one_or_none()
     now = utcnow()
     if rp is None:
@@ -163,6 +162,18 @@ async def store_raw(db: AsyncSession, usage: Any) -> tuple[RawPayload, str]:
         rp.last_seen_at = now
         rp.seen_count = (rp.seen_count or 0) + 1
     return rp, digest
+
+
+# BELOW its caller on purpose: `store_raw` is referenced by line number from
+# routers/ingest.py, and inserting above it would move it.
+def _canonical(obj: Any) -> tuple[str, str]:
+    """The canonical body and its sha256 — ONE recipe, because these bytes ADDRESS ROWS
+    ALREADY IN THE DATABASE. Change the formula and `raw_payloads` opens a second row for a
+    payload it already holds, while the backlog idempotence key in `_write_observation` —
+    which compares a digest computed now against one written months ago — stops matching and
+    lets a replay duplicate the sample. One home, so that a change is a decision."""
+    body = json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return body, hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
 def measured_at(ts: datetime | None, offset: timedelta,
@@ -490,9 +501,22 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         return {"samples_written": 0, "batch_id": batch.id, "ok": False,
                 "account_uuid": account.account_uuid}
 
-    rp, digest = await store_raw(db, usage)
+    # `usage_raw` — the cache block before the probe merged and sanitized it — from probe
+    # version 15 on. THAT is what rule 6 means by "the raw response": `usage` is our own
+    # edit of it, with every boundary `sanitize` refused already zeroed, and this table is
+    # the only place the original could survive. Older probes (and the whole fleet, until
+    # someone cuts a release) do not send the field, and for them the merged object stays
+    # the best available answer — falling back to it is not a compromise, it is all there is.
+    raw = payload.get("usage_raw")
+    rp, _ = await store_raw(db, raw if isinstance(raw, dict) else usage)
     batch.raw_payload_id = rp.id
-    batch.payload_sha256 = digest
+    # NOT the archive's digest. This field is the discriminator in the backlog idempotence
+    # key (`_write_observation`), and the cache block is IDENTICAL for two measurements that
+    # differ only in a fresh `/usage` dump — keyed on it, the second one collapses into the
+    # first and a replay silently drops it. The digest has to cover exactly what the parser
+    # reads, so it is taken over `usage`, by `store_raw`'s own recipe: entries ingested by
+    # earlier versions were keyed the same way and must keep matching on a replay.
+    _, batch.payload_sha256 = _canonical(usage)
 
     # TWO TIMES IN ONE PAYLOAD. `captured_at` is the time of the Claude Code cache and applies
     # to everything; `measurement.fresh_at` is the time of the `/usage` dump and applies ONLY
