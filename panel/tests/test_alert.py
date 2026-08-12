@@ -506,6 +506,19 @@ def test_waited_does_not_go_below_zero():
     assert fmt.waited(None, 0.0) == "—"
 
 
+def test_the_solo_time_line_fits_without_an_ellipsis():
+    """"waiting: N" is the one string on the card drawn WITHOUT `draw.ellipsize`, so a
+    longer prefix or a wider value would run off it in silence."""
+    from panel import draw, layout as L
+
+    L_ = L.AlertSolo(480, 320)
+    f = draw.font(L_.F_WAITED)
+    room = L_.x1 - L_.x0
+    for value in ("a moment", "59 min", "23 h 59 min", "365 d 23 h"):
+        line = "waiting: %s" % value
+        assert draw.text_width(line, f) <= room, line
+
+
 # --- card layouts -----------------------------------------------------------
 
 def blocks(n):

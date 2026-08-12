@@ -353,7 +353,10 @@ class Renderer:
 
         self._alert_meta(d, (L_.x0, L_.meta_base), row, draw.font(L_.F_META), room,
                          dim_dot=True)
-        d.text((L_.x0, L_.waited_base), "waiting %s" % row.waited,
+        # A colon: without it the sub-minute value reads as the imperative "wait a
+        # moment", and "for" on this card already names WHAT is waited on ("QUESTION FOR
+        # YOU"). A departure from the mockup — see PANEL-ALERT-HANDOUT.md.
+        d.text((L_.x0, L_.waited_base), "waiting: %s" % row.waited,
                font=draw.font(L_.F_WAITED), fill=theme.ACCENT_200, anchor="ls")
 
         if row.detail:

@@ -101,7 +101,7 @@ the same five-minute window.
 
 | Blocks | Layout | What you see |
 |---|---|---|
-| 1 | `AlertSolo` | name at 34 px (26 px when it doesn't fit), tool and machine, "waiting N", `Detail` tile up to two lines, `Mode` strip |
+| 1 | `AlertSolo` | name at 34 px (26 px when it doesn't fit), tool and machine, "waiting: N", `Detail` tile up to two lines, `Mode` strip |
 | 2 | `AlertPair` | two equal halves, name at 30 px, detail cut to one line, no strip |
 | 3 | `AlertList` | reason in a fixed 58 px column, name at 19 px, time to the right, the newest one's detail in the footer |
 | 4+ | `AlertMany` | the three newest with a 17 px name and just the machine, the rest counted in the footer ("+2 MORE" and names) |
@@ -134,7 +134,7 @@ Full contract in [`API.md` § 3.2](API.md). All of them are used:
 | `tool` | row under the name (not in layout 4+, where only the machine remains) |
 | `machine` | same row; a session can run remotely, this says where to go |
 | `detail` | `Detail` tile (2 lines), one line in layout 2, footer in layout 3 |
-| `since` | "waiting N", the hour in the banner, row order, and opening the window for the set |
+| `since` | "waiting: N" (the bare value in the columns of 1b-1d), the hour in the banner, row order, and opening the window for the set |
 | `accountUuid` | which band the marker sits at once folded away |
 | `agentType`, `permissionMode` | `Mode` strip — the answer to "why is it even asking" |
 
@@ -175,6 +175,16 @@ here — `1a-alert` paints it in solid `BG`, while the three `-p` frames give `c
 that's 5.51:1 on the accent, while the 76% version gives 3.84:1 — below AA for 15 px text.
 The hour is the only number on this card, and the card exists so that someone gets up from
 their desk.
+
+**A deliberate departure: the colon in the time line.** The mockup prints `waiting 4 min`, the
+panel prints `waiting: 4 min`. Under a minute `fmt.waited` gives "a moment", and the bare form
+lands on the stock imperative *wait a moment* — from across the room the card would be telling
+**you** to wait, the opposite of what it is for. `waiting for a moment` is worse: the `for` slot
+on this card already names **what** is waited on (`QUESTION FOR YOU`, `Claude is waiting for
+permission`), so it reads as waiting for the right moment, at +39 px. The colon costs 6 px and
+makes the value a datum. Layouts 1b-1d keep the bare value — a column has no verb to punctuate.
+Width is pinned by `test_the_solo_time_line_fits_without_an_ellipsis`: this is the one string on
+the card drawn without `draw.ellipsize` (widest case `waiting: 23 h 59 min`, 231 px of 444).
 
 ---
 
