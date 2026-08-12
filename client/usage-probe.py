@@ -66,7 +66,7 @@ Deliberately a local file, not the repo — a machine token has no business in g
 """
 import sys, os, json, time, re
 
-SCRIPT_VERSION = 13
+SCRIPT_VERSION = 14
 
 # Marker inherited by the child process. `claude -p "/usage"` is a normal Claude Code
 # session — it will fire the Stop hook, which fires the probe, which would fire another
@@ -85,6 +85,7 @@ MAX_SPOOL_LINES = 5000
 MAX_BACKLOG_PER_REQUEST = 200
 CACHE_MAX_AGE_S = 3600          # the same as the read TTL on the Claude Code side
 CLI_MAX_AGE_S = 900             # an older stdout dump is ignored — cache-only data is better
+DEFAULT_THROTTLE_S = 60         # one name for both fallbacks: absent key and unusable value
 MAX_SANE_PCT = 101              # see the guards in parse_usage_text / sanitize
 
 
@@ -112,17 +113,57 @@ def load_config():
         return {}
 
 
+def _throttle_stamp():
+    with open(THROTTLE_FILE) as f:
+        return float(f.read(64))
+
+
 def throttled(seconds):
-    """The marker is written BEFORE the call, so that parallel hooks do not stampede."""
+    """The marker is written BEFORE the call, so that parallel hooks do not stampede.
+
+    THE MARKER'S DATE IS A BOUND, NOT A FACT — an NTP step, a restored state directory or a
+    share stamping the server's clock can put it ahead. A one-sided age test then returned
+    True on every call, and that `return` sits before the write, so the marker was never
+    repaired: the `spawn_refresh` that would order a new measurement lives PAST this gate, so
+    the silence sustained itself with nothing on the machine looking broken.
+
+    The `int()` lives HERE, not at the caller: `seconds` arrives straight out of a hand-edited
+    config.json, where garbage has to mean the default rather than an exception — at the caller
+    it left `main()` through the top-level `except` and the machine stopped measuring in
+    silence. `except Exception` and not the narrow pair `sweep_ttl` uses, because `json.load`
+    accepts a bare `Infinity` and `int(inf)` raises OverflowError, which that pair misses.
+
+    `abs`, not `0 <= age`, because of the RACE rather than the skew: a sibling hook can stamp
+    the marker between our clock read and our `getmtime`, and a hard non-negative test would
+    send us to measure right beside it. A future date then holds us for at most `2 * seconds`.
+
+    That alone does not converge under a CONSTANT skew wider than the window — each repair
+    takes its date from the same skewed clock — so the marker's CONTENT carries our own
+    `time.time()` and is consulted regardless of the SIGN of the date's error. Ablated, a
+    filesystem stamping its own date makes this stop throttling entirely: 400 calls, 400 spawns.
+
+    NOT handled here: a marker that cannot be written at all leaves the throttle off, silently."""
     try:
-        if time.time() - os.path.getmtime(THROTTLE_FILE) < seconds:
+        seconds = int(seconds)
+    except Exception:
+        seconds = DEFAULT_THROTTLE_S
+    now = time.time()
+    try:
+        age = now - os.path.getmtime(THROTTLE_FILE)
+        if abs(age) < seconds:
+            return True
+        # The date did not stop us, which does not yet mean the marker is old. Ask the
+        # content, which carries our own clock. This read is on the anomaly path only: a
+        # marker with a believable date returns above and the file is never opened.
+        own = _safe(_throttle_stamp)
+        if own is not None and 0 <= now - own < seconds:
             return True
     except Exception:
         pass
     try:
         os.makedirs(OUTDIR, exist_ok=True)
         with open(THROTTLE_FILE, "w") as f:
-            f.write(str(time.time()))
+            f.write(str(now))
     except Exception:
         pass
     return False
@@ -359,9 +400,24 @@ def read_fresh():
 
     The file is written by the child process, so a read can land mid-write — which is
     why validation goes through json.loads(): a truncated file simply does not parse and
-    the cycle runs on the cache alone. No locking, no marker file."""
+    the cycle runs on the cache alone. No locking, no marker file.
+
+    The age is SIGNED and the guard tested one side only, so a dump dated AHEAD of the
+    clock passed as "fresh" — and, unlike a stale dump, kept passing until the clock caught
+    up. It also defeats `dump_outdated` (a future `fresh_at` always beats the cache), and the
+    backend rejects a batch whose dump timestamp postdates the send, so the real outcome was
+    a blackout that took the valid cache reading down with the bad dump.
+
+    The ORDER of the two samples is load-bearing, not tidiness. The mtime is read FIRST and
+    `now` only after it, so the child still writing its stdout can be caught only as an
+    already-past timestamp. With the original order — `now` first, the stat second — that
+    same concurrent write lands AHEAD of `now` and the guard throws away a perfectly healthy
+    dump: measured 14-43 false `dump-from-future` per 27,000 reads against a writer process,
+    0 with this order. Hence also one stat, not two: the timestamp returned below is the one
+    the age was checked against, not whatever a second call would have found."""
     try:
-        age = time.time() - os.path.getmtime(CLI_OUT)
+        mtime = os.path.getmtime(CLI_OUT)
+        age = time.time() - mtime
         with open(CLI_OUT, "r", encoding="utf-8", errors="replace") as f:
             d = json.loads(f.read())
     except Exception:
@@ -370,12 +426,14 @@ def read_fresh():
         # num_turns>0 means "/usage" missed the local command and went to the model.
         # Such a result is worthless and expensive — we do not use it and we signal it.
         return None, None, "not-local-command"
+    if age < 0:
+        return None, None, "dump-from-future"
     if age > CLI_MAX_AGE_S:
         return None, None, "stale-dump"
     parsed = parse_usage_text(d.get("result") or "")
     if parsed["session"] is None and parsed["weekly_all"] is None:
         return None, None, "no-percentages"
-    return parsed, os.path.getmtime(CLI_OUT), None
+    return parsed, mtime, None
 
 
 def dump_outdated(fresh_at, cache_at):
@@ -696,7 +754,7 @@ SWEEP_EVENTS = ("UserPromptSubmit", "Stop", "SessionEnd")
 # Fields needed LOCALLY ONLY, for closing from the transcript. `snapshot()` strips them:
 # `transcript_path` carries the user's home-directory path, and `prompt_id` has no
 # recipient in `SessionAlert`.
-LOCAL_FIELDS = ("transcript_path", "prompt_id", "registry_seen")
+LOCAL_FIELDS = ("transcript_path", "prompt_id", "registry_seen", "mono")
 
 # The transcript tail. Measured on sessions that fell silent after being resolved: the
 # distance from the resolution to EOF is at most 366 B (n=8), and allowing <=4 records
@@ -916,6 +974,21 @@ def sweep_ttl(ttl_s, now):
     for name, mtime in entries():
         if now - mtime > ttl_s:
             drop(name)
+        elif mtime > now:
+            # The age above is SIGNED, and BOTH wall-clock stamps an entry carries (this
+            # mtime and `since` in the body) are one reading of one clock at creation — so
+            # a clock that steps BACK afterwards makes the age negative, the test above can
+            # never fire, and the entry is immortal. Nothing is deleted on that evidence and
+            # no stamp is corrected: the entry is dated again on the `mono` reading `enter`
+            # wrote into its body, which counts from boot and no correction can move.
+            # A NEGATIVE age is a PROOF, not an anomaly: the counter restarts only at boot,
+            # and a session waiting for a human does not survive that. An entry written
+            # before the field existed has no reading and keeps today's behavior.
+            mono = (read_entry(name) or {}).get("mono")
+            if isinstance(mono, float):
+                age = time.monotonic() - mono
+                if age < 0 or age > ttl_s:
+                    drop(name)
 
 
 # ----------------------------------------------------- harness session registry
@@ -1384,6 +1457,10 @@ def enter(cfg, hook, reason, key):
         "project": project_name(hook.get("cwd"), hook.get("transcript_path")),
         "cwd": hook.get("cwd"),
         "since": _iso(time.time()),
+        # LOCAL, and read only by `sweep_ttl`'s clock-skew branch — see there for why the
+        # wall clock cannot date an entry once it has stepped back. Boot-relative, so it is
+        # meaningless on any other machine; readable across processes on Windows and Linux.
+        "mono": time.monotonic(),
         "account_uuid": account_uuid(),
         # For diagnostics: the whole measurement ran in `default` mode, while auto-approving
         # modes resolve a call BEFORE the prompt layer.
@@ -1604,7 +1681,7 @@ def main():
     # not spoil the limit measurement.
     _safe(alert_dispatch, cfg, hook)
 
-    if throttled(int(cfg.get("throttle_sec", 60))):
+    if throttled(cfg.get("throttle_sec", DEFAULT_THROTTLE_S)):
         return 0
 
     fresh, fresh_at, fresh_skip = read_fresh()
@@ -1623,6 +1700,18 @@ def main():
 
     cache_at = (cached.get("fetchedAtMs") or 0) / 1000.0
     cache_age = time.time() - cache_at
+    # The age is SIGNED and the expiry test below is one-sided, so a cache stamped AHEAD of
+    # the clock would pass as fresh for as long as the skew lasted. It also poisons the dump
+    # arm: `dump_outdated` compares the dump against `cache_at`, so a future `cache_at` makes
+    # a genuinely fresh dump look "older than the cache" and it is thrown away.
+    # The threshold is a hard `< 0` with no tolerance, and the reason is the ORDER of the two
+    # readings: `cached` was read from disk BEFORE this clock sample, so a write racing us can
+    # only make the age larger, never negative. A negative one therefore says the stamp itself
+    # is wrong, not that we lost a race, and there is nothing here to be lenient about.
+    if cache_age < 0:
+        log_local({"t": round(time.time(), 3), "ok": False, "skip": "cache-from-future",
+                   "cache_age_s": round(cache_age), "spawn": spawn_err})
+        return 0
     if cache_age > CACHE_MAX_AGE_S:
         log_local({"t": round(time.time(), 3), "ok": False, "skip": "cache-expired",
                    "cache_age_s": round(cache_age), "spawn": spawn_err})

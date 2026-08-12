@@ -1002,3 +1002,142 @@ class _Stdin:
 
     def read(self):
         return self.raw.decode("cp1250", "surrogateescape")     # like the real stdin
+
+
+# ----------------------------------------------------- clocks that move backwards
+# Every age in the probe is a SIGNED difference, and each of these guards used to test one
+# side of it. The shape is always the same: a stamp that sits AHEAD of the clock makes the
+# difference negative, the one-sided test can never fire, and the state never resolves on
+# its own. The suite could not see any of it — the four TTL tests above stamp only the PAST,
+# and disabling the whole throttle gate leaves 364/364 green — so these pin the four sites.
+
+def _mono(ss, name, value):
+    """Rewrite an entry's own monotonic reading. Tests cannot reboot the machine, and this
+    is the only field a reboot would move, so it is the one thing worth forging here."""
+    p = os.path.join(ss.STATEDIR, name)
+    stamp = os.stat(p).st_mtime          # rewriting the body would reset it, and the branch
+    with open(p, encoding="utf-8") as f:  # under test is reached only through the file's date
+        body = json.load(f)
+    body["mono"] = value
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(body, f)
+    os.utime(p, (stamp, stamp))
+
+
+def _blocked(ss):
+    ss.alert_dispatch(CFG, hook("PermissionRequest", tool_name="Bash",
+                                tool_input={"command": "ls"}))
+    return names(ss)[0]
+
+
+def test_a_future_dated_throttle_marker_does_not_silence_the_probe(ss):
+    """The marker's age was tested on one side, so a date ahead of the clock returned True
+    on every call — and the `return` sits before the write, so nothing repaired it. The
+    machine then produced no sample, no spawn, no POST and not one log line, for as long as
+    the skew lasted, while the alert section above kept working and the install looked well."""
+    with open(ss.THROTTLE_FILE, "w") as f:
+        f.write(str(time.time() + 3 * 3600))
+    os.utime(ss.THROTTLE_FILE, (time.time() + 3 * 3600,) * 2)
+    assert ss.throttled(60) is False, "a marker from the future throttles the probe forever"
+    with open(ss.THROTTLE_FILE) as f:
+        assert abs(float(f.read(64)) - time.time()) < 5, "the marker was not repaired"
+
+
+def test_a_lying_marker_date_does_not_beat_the_marker_content(ss):
+    """Two-sidedness alone does not converge when the skew is CONSTANT and wider than the
+    window, because every repair takes its date from the same skewed clock. The marker's
+    content carries our own clock, and it is what decides then. This is the discriminating
+    case: the date says the marker is unusable, the content says it is five seconds old, and
+    the probe must still hold back. It is also the assertion that catches the fallback
+    silently going missing -- `_safe` would swallow the NameError and every other test here
+    would stay green."""
+    with open(ss.THROTTLE_FILE, "w") as f:
+        f.write(str(time.time() - 5))
+    ahead = time.time() + 3 * 3600
+    os.utime(ss.THROTTLE_FILE, (ahead, ahead))
+    assert ss.throttled(60) is True, "the content fallback did not run"
+
+
+def test_a_dump_dated_in_the_future_is_not_treated_as_fresh(ss):
+    """`read_fresh` compared the dump's age against a ceiling only. A dump dated ahead was
+    accepted as fresh until the clock caught up — and unlike a stale one, that never ages
+    out. It also defeats `dump_outdated` and makes the server reject the whole batch, so the
+    valid cache reading went down with the bad dump."""
+    with open(ss.CLI_OUT, "w", encoding="utf-8") as f:
+        json.dump({"num_turns": 0, "result": "Current session: 48% used\n"
+                                             "Current week (all models): 47% used\n"}, f)
+    ahead = time.time() + 30 * 86400
+    os.utime(ss.CLI_OUT, (ahead, ahead))
+    parsed, at, skip = ss.read_fresh()
+    assert (parsed, at, skip) == (None, None, "dump-from-future")
+
+
+def test_a_cache_stamped_in_the_future_is_skipped(ss, monkeypatch):
+    """`fetchedAtMs` comes from Claude Code's own cache. Stamped ahead of this machine's
+    clock it passed the expiry test for as long as the skew lasted, so an arbitrarily stale
+    reading was published as fresh with a negative `cache_age_s` — and, measured, it kept
+    landing in the spool when the POST failed."""
+    cached = {"utilization": {"five_hour": {"utilization": 10}},
+              "fetchedAtMs": (time.time() + 3600) * 1000}
+    monkeypatch.setattr(ss, "read_claude_json", lambda: (None, cached, None, None))
+    _run_probe(ss, monkeypatch, hook("Stop"), throttle_fresh=False)
+    with open(ss.LOG, encoding="utf-8") as f:
+        last = json.loads(f.readlines()[-1])
+    assert last["skip"] == "cache-from-future" and last["ok"] is False
+
+
+def test_a_future_dated_entry_expires_on_the_monotonic_clock(ss):
+    """`sweep_ttl` is the only thing that ends an entry's life, and its age was one-sided,
+    so an entry dated ahead outlived every sweep. It is dated again on its own boot-relative
+    reading, which no clock correction can move."""
+    name = _blocked(ss)
+    ahead = time.time() + 30 * ss.DEFAULT_TTL_S
+    os.utime(os.path.join(ss.STATEDIR, name), (ahead, ahead))
+
+    _mono(ss, name, time.monotonic() - 60)
+    ss.sweep_ttl(ss.DEFAULT_TTL_S, time.time())
+    assert names(ss) == [name], "a block open for a minute was deleted"
+
+    _mono(ss, name, time.monotonic() - ss.DEFAULT_TTL_S - 1)
+    ss.sweep_ttl(ss.DEFAULT_TTL_S, time.time())
+    assert names(ss) == [], "the entry outlived its TTL because its file date lied"
+
+
+def test_a_reboot_expires_a_future_dated_entry(ss):
+    """A reading HIGHER than the current one can only mean the counter restarted, and a
+    session waiting for a human does not survive the machine restarting under it. That is a
+    proof of death rather than an inference from a clock, so it may delete."""
+    name = _blocked(ss)
+    ahead = time.time() + 30 * ss.DEFAULT_TTL_S
+    os.utime(os.path.join(ss.STATEDIR, name), (ahead, ahead))
+    _mono(ss, name, time.monotonic() + 60)
+    ss.sweep_ttl(ss.DEFAULT_TTL_S, time.time())
+    assert names(ss) == []
+
+
+def test_a_backward_clock_step_does_not_delete_a_live_entry(ss):
+    """The assertion whose absence let two wrong fixes through a green suite. Both a
+    two-sided `abs()` and repairing the file's date delete a block that is seconds old the
+    moment the clock steps back further than the TTL — unrecoverably, and published to the
+    panel on the same hook."""
+    name = _blocked(ss)
+    ss.sweep_ttl(ss.DEFAULT_TTL_S, time.time() - 2 * ss.DEFAULT_TTL_S)
+    assert names(ss) == [name], "a live block was deleted because the clock moved"
+
+
+def test_an_entry_without_the_monotonic_field_keeps_its_old_behavior(ss):
+    """Entries written before the field existed are on disk right now. They carry no
+    reading, so only the wall-clock test can end them — a leak for those entries, and not a
+    regression for any of them. What must not happen is a raise: one unreadable body would
+    abort the whole sweep and leave genuinely expired entries behind it untouched."""
+    name = _blocked(ss)
+    p = os.path.join(ss.STATEDIR, name)
+    with open(p, encoding="utf-8") as f:
+        body = json.load(f)
+    body.pop("mono", None)                # absent on a probe that never wrote it, too
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(body, f)
+    ahead = time.time() + 30 * ss.DEFAULT_TTL_S
+    os.utime(p, (ahead, ahead))
+    ss.sweep_ttl(ss.DEFAULT_TTL_S, time.time())
+    assert names(ss) == [name]

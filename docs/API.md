@@ -259,12 +259,14 @@ X-Ingest-Key: <INGEST_EDGE_KEY>
 ```
 
 The probe sends **snake_case**, the same shape as the entry on disk — with one exception: the
-**local** fields (`transcript_path`, `prompt_id`, `registry_seen`) get stripped by
+**local** fields (`transcript_path`, `prompt_id`, `registry_seen`, `mono`) get stripped by
 `snapshot()` before sending. They exist purely to clear a block on the client side: the first
 two for closing it out from the transcript, `registry_seen` for the death rule from the
-harness's session registry. `transcript_path` incidentally carries the human's home directory
-name. The models accept both forms (`populate_by_name`), so camelCase goes through too. On the
-way out, in the `alert` frame, the fields are already camelCase like the rest of the contract.
+harness's session registry, and `mono` — a reading of this machine's boot-relative clock —
+for ageing out an entry whose file date the wall clock cannot judge. `transcript_path`
+incidentally carries the human's home directory name. The models accept both forms
+(`populate_by_name`), so camelCase goes through too. On the way out, in the `alert` frame,
+the fields are already camelCase like the rest of the contract.
 
 Four things worth knowing:
 
