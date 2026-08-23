@@ -309,11 +309,27 @@ def load_token_meta():
 
 # --------------------------------------------------------------- measurement via the CLI
 def find_claude(cfg):
+    # An ABSOLUTE claude_bin only: a relative one would be resolved against the hook's
+    # working directory, which is the project directory — the same hijack as below.
+    # README documents this key as a full path; a relative value falls through to PATH.
     b = cfg.get("claude_bin")
-    if b and os.path.isfile(b):
+    if b and os.path.isabs(b) and os.path.isfile(b):
         return b
     import shutil                       # local import — cold path, once every 60 s
-    return shutil.which("claude")
+    # NEVER a bare shutil.which("claude"). On Windows which() prepends the process cwd to
+    # the search path (curdir goes in at index 0, ahead of every real PATH entry), and a
+    # hook's cwd IS the project directory — so a `claude.exe` committed to a repo would
+    # outrank the genuine CLI and get spawned, hidden, once every 60 s. Passing path= does
+    # NOT suppress that: the insert happens after the path argument is split, regardless.
+    # Searching one PATH entry at a time does suppress it — given a cmd WITH a directory
+    # part, which() searches that directory alone and never consults os.curdir, while its
+    # PATHEXT handling stays intact.
+    for d in (os.environ.get("PATH") or os.defpath).split(os.pathsep):
+        if os.path.isabs(d):            # skips "" and "." — both mean the cwd
+            exe = shutil.which(os.path.join(d, "claude"))
+            if exe:
+                return exe
+    return None
 
 
 def spawn_refresh(cfg):
@@ -435,7 +451,9 @@ def read_fresh():
         with open(CLI_OUT, "r", encoding="utf-8", errors="replace") as f:
             d = json.loads(f.read())
     except Exception:
-        return None, None, None
+        return None, None, "dump-unreadable"
+    if not isinstance(d, dict):
+        return None, None, "dump-not-an-object"
     if d.get("num_turns"):
         # num_turns>0 means "/usage" missed the local command and went to the model.
         # Such a result is worthless and expensive — we do not use it and we signal it.
@@ -671,14 +689,23 @@ def sanitize(usage, covered, now):
 
 
 # --------------------------------------------------------------- spool
-def read_spool(limit, budget):
+def read_spool(limit, budget, sent_lines=None):
     """The oldest entries: at most `limit` of them and at most `budget` bytes, counted in
     UTF-8 the way the backend counts the body. Non-destructive.
 
-    Always a PREFIX of the file, never a selection. `trim_spool` trims by POSITION, so an
-    entry skipped in the middle would be deleted from the spool without ever having been
-    sent; an entry that does not fit therefore ENDS the batch, and it and everything behind
-    it come back on the next cycle. The batch may legitimately come out empty.
+    Always a PREFIX of the file, never a selection: `backlogAccepted` comes back as a PREFIX
+    LENGTH over this batch, so an entry skipped in the middle would be deleted from the spool
+    without ever having been sent; an entry that does not fit therefore ENDS the batch, and
+    it and everything behind it come back on the next cycle. The batch may legitimately come
+    out empty.
+
+    `sent_lines`, when the caller hands in an empty list, is filled with what `trim_spool`
+    needs in order to delete this batch BY IDENTITY instead of by position: `sent_lines[i]`
+    is the list of raw lines consumed up to and including the record `out[i]` — exactly what
+    `backlogAccepted == i + 1` stands for. A list of lists, because a line that does not
+    parse is skipped here and can never be sent, yet it still occupies a place inside the
+    prefix, so it has to travel with the record behind it or nothing would ever trim it.
+    The return shape is unchanged; a caller that wants no batch record just omits the list.
     """
     try:
         with open(SPOOL, "r", encoding="utf-8") as f:
@@ -687,13 +714,17 @@ def read_spool(limit, budget):
         return [], 0
     out = []
     used = 0
+    window = []
     for l in lines[:limit]:
         used += len(l.encode("utf-8")) + 2      # +2: the ", " joining the array
         if used > budget:
             break                               # `break`, not `continue` — see the docstring
+        window.append(l)
         rec = _safe(json.loads, l)
         if rec is not None:
             out.append(rec)
+            if sent_lines is not None:
+                sent_lines.append(list(window))     # the prefix this record closes
     return out, len(lines)
 
 
@@ -711,17 +742,37 @@ def append_spool(rec):
         pass
 
 
-def trim_spool(accepted):
+def trim_spool(accepted, sent_lines=None):
     """Trimmed ONLY after confirmation of how many entries were accepted — a failure
-    halfway through loses no data."""
-    if accepted <= 0:
+    halfway through loses no data.
+
+    The accepted prefix is deleted BY IDENTITY, never by position. Nothing locks SPOOL and
+    the probe runs from a hook that fires on every tool, so a sibling process can read the
+    same head and trim it in between our own read and this write; `lines[accepted:]` would
+    then cut a prefix WE never sent — the next window, promoted to the head by that sibling's
+    trim — and destroy unsent measurements while the same records went twice. Matching the
+    exact lines this batch carried makes the trim idempotent and order-independent: a line
+    a sibling already removed is simply not found, an entry appended meanwhile is never in
+    the batch, and a count larger than what we sent can no longer take anything with it.
+
+    `sent_lines` is `read_spool`'s batch record. Without it there is no evidence of what was
+    sent, and a trim that cannot name its own lines deletes nothing."""
+    if accepted <= 0 or not sent_lines:
         return
+    drop = {}
+    for l in sent_lines[min(accepted, len(sent_lines)) - 1]:
+        drop[l] = drop.get(l, 0) + 1            # a COUNT: identical entries are legal
     try:
         with open(SPOOL, "r", encoding="utf-8") as f:
             lines = [l for l in f.read().splitlines() if l.strip()]
+        kept = []
+        for l in lines:
+            if drop.get(l):
+                drop[l] -= 1                    # the oldest occurrences, one each
+                continue
+            kept.append(l)
         with open(SPOOL, "w", encoding="utf-8") as f:
-            rest = lines[accepted:]
-            f.write(("\n".join(rest) + "\n") if rest else "")
+            f.write(("\n".join(kept) + "\n") if kept else "")
     except Exception:
         pass
 
@@ -1372,7 +1423,10 @@ def snapshot():
         data["key"] = name[:-5]
         out.append(data)
     out.sort(key=lambda e: e.get("since") or "")
-    return out[:MAX_ENTRIES]
+    # The ceiling cuts from the FRONT, never the back: past MAX_ENTRIES the tail holds the
+    # block the user is waiting on, and cutting it would silence it twice — absent from the
+    # payload, and (since `publish()` fingerprints exactly this list) no POST at all.
+    return out[-MAX_ENTRIES:]
 
 
 def _fingerprint(items):
@@ -1440,6 +1494,19 @@ def toast(reason, project, detail):
     if os.name != "nt":
         return
     import base64, subprocess
+    # An ABSOLUTE image path, never the bare name. With ["powershell", ...] CreateProcess
+    # searches the PARENT'S CURRENT DIRECTORY before System32, and a hook inherits the
+    # session's cwd — the project working tree, which anything able to write a file into the
+    # repo can poison. Measured: a powershell.exe planted in that cwd runs instead of the
+    # real one, and the real one never starts. The suppressor
+    # NoDefaultCurrentDirectoryInExePath is NOT a stock setting (unset at both the Machine
+    # and the User registry scope here), so it cannot be relied on. The path below is also
+    # the exact binary whose AUMID the script carries, so pinning it narrows nothing.
+    ps = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                      "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    if not os.path.isfile(ps):
+        return              # no Windows PowerShell here — drop the toast rather than fall
+                            # back to a PATH search, which is the hole this closes.
     line1 = TOAST_TITLES.get(reason, "Claude is waiting for you")
     line2 = project or ""
     if detail:
@@ -1460,9 +1527,12 @@ def toast(reason, project, detail):
     encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
     try:
         subprocess.Popen(
-            ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+            [ps, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            cwd=OUTDIR,     # neutral directory, as in spawn_refresh — it keeps the session's
+                            # cwd out of the CHILD's own search order as well. It exists:
+                            # the only caller reaches here past write_excl's makedirs.
             # CREATE_NO_WINDOW | NEW_PROCESS_GROUP — as in spawn_refresh. Do NOT add
             # DETACHED_PROCESS: it overrides CREATE_NO_WINDOW and the console flashes.
             creationflags=0x08000000 | 0x00000200, close_fds=True)
@@ -1750,7 +1820,10 @@ def main():
                    "spawn": spawn_err, "event": hook.get("hook_event_name")})
         return 0
 
-    cache_at = (cached.get("fetchedAtMs") or 0) / 1000.0
+    _fetched = cached.get("fetchedAtMs")
+    cache_at = (_fetched / 1000.0
+                if isinstance(_fetched, (int, float)) and not isinstance(_fetched, bool)
+                else 0.0)
     cache_age = time.time() - cache_at
     # The age is SIGNED and the expiry test below is one-sided, so a cache stamped AHEAD of
     # the clock would pass as fresh for as long as the skew lasted. It also poisons the dump
@@ -1881,8 +1954,9 @@ def main():
     # json.dumps cannot serialise costs the budget and not the run — `post` raises on it
     # below either way, inside the try that spools it.
     body = _safe(json.dumps, record, ensure_ascii=False) or ""
+    sent_lines = []                            # what `trim_spool` is allowed to delete
     backlog, spool_total = read_spool(
-        MAX_BACKLOG_PER_REQUEST, MAX_REQUEST_BYTES - len(body.encode("utf-8")))
+        MAX_BACKLOG_PER_REQUEST, MAX_REQUEST_BYTES - len(body.encode("utf-8")), sent_lines)
 
     # THE AGE ANCHOR. The backend computes `offset = arrived_at - sent_at` from it and dates
     # the measurement as `min(ts + offset, arrived_at)`, that is `received_at - age`. The
@@ -1916,7 +1990,8 @@ def main():
         return 0
 
     parsed = _safe(json.loads, resp) or {}
-    trim_spool(int(parsed.get("backlogAccepted") or parsed.get("backlog_accepted") or 0))
+    trim_spool(int(parsed.get("backlogAccepted") or parsed.get("backlog_accepted") or 0),
+               sent_lines)
     return 0
 
 
