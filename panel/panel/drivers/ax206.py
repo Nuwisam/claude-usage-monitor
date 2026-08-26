@@ -107,8 +107,16 @@ import ctypes as C
 import time
 
 from ..pixels import BIG, pack_rgb565, rgb565_bytes as pack_pixel
+from ._libusb import (DevDesc, context, format_port_path, load, port_chain,
+                      strerror)
 from .base import (Caps, DriverError, Scale, Target, check_rect, release,
                    select)
+
+# Re-exported on purpose: `format_port_path` is part of this module's surface as far
+# as the rest of the tree is concerned (tests/test_device_select.py calls it as
+# `ax206.format_port_path`), and moving the definition must not move the name.
+__all__ = ["NAME", "SELECTOR_KEYS", "caps_for", "unavailable", "discover",
+           "open_panel", "format_port_path", "AX206Error", "AX206"]
 
 VID, PID = 0x1908, 0x0102
 EP_OUT, EP_IN = 0x01, 0x81
@@ -120,10 +128,6 @@ DIR_OUT, DIR_IN = 0, 1
 LIBUSB_ERROR_NOT_FOUND = -5
 LIBUSB_ERROR_TIMEOUT = -7
 LIBUSB_ERROR_PIPE = -9
-
-# Depth of the USB tree: libusb documents a maximum of 7 hubs between the host and
-# the device, so 8 bytes are enough for any real chain.
-MAX_PORT_DEPTH = 8
 
 USBCMD_SETPROPERTY = 0x01
 USBCMD_BLIT = 0x12
@@ -147,125 +151,12 @@ NAME = "ax206"
 BYTES_PER_SEC = 870_000
 
 
-# --- libusb-1.0 structures and bindings -------------------------------------
-
-
-class DevDesc(C.Structure):
-    """`libusb_device_descriptor`. The layout is the same as in the 0.1 API — it is
-    simply the descriptor from the USB standard, byte for byte."""
-
-    _fields_ = [
-        ("bLength", C.c_ubyte), ("bDescriptorType", C.c_ubyte),
-        ("bcdUSB", C.c_ushort), ("bDeviceClass", C.c_ubyte),
-        ("bDeviceSubClass", C.c_ubyte), ("bDeviceProtocol", C.c_ubyte),
-        ("bMaxPacketSize0", C.c_ubyte), ("idVendor", C.c_ushort),
-        ("idProduct", C.c_ushort), ("bcdDevice", C.c_ushort),
-        ("iManufacturer", C.c_ubyte), ("iProduct", C.c_ubyte),
-        ("iSerialNumber", C.c_ubyte), ("bNumConfigurations", C.c_ubyte),
-    ]
-
-
-_dll = None
-_ctx = None
-
-
-def _dll_candidates(dll_path):
-    """Where to take libusb-1.0.dll from, in the order tried.
-
-    The `libusb` package from PyPI carries a win-amd64 binary and is the default
-    route — thanks to that, installing the panel is one `pip install -r`, with
-    no manual steps on a new machine. An explicit path beats everything, because
-    the scheduled task starts with a different PATH than the shell.
-    """
-    if dll_path:
-        yield dll_path
-    try:
-        from libusb._platform import DLL_PATH
-    except Exception:
-        pass
-    else:
-        yield DLL_PATH
-    yield "libusb-1.0.dll"
-
-
-def load(dll_path=None):
-    """libusb-1.0.dll, once per process."""
-    global _dll
-    if _dll is not None:
-        return _dll
-    tried = []
-    dll = None
-    for candidate in _dll_candidates(dll_path):
-        try:
-            dll = C.CDLL(candidate)
-            break
-        except OSError as e:
-            tried.append("%s (%s)" % (candidate, e))
-    if dll is None:
-        raise AX206Error(
-            "cannot load libusb-1.0.dll. Tried: %s. The library comes from the "
-            "`libusb` package in requirements.txt; the device driver stays "
-            "libusb-win32." % "; ".join(tried))
-
-    dll.libusb_init.argtypes = [C.POINTER(C.c_void_p)]
-    dll.libusb_exit.argtypes = [C.c_void_p]
-    dll.libusb_get_device_list.argtypes = [C.c_void_p,
-                                           C.POINTER(C.POINTER(C.c_void_p))]
-    dll.libusb_get_device_list.restype = C.c_ssize_t
-    dll.libusb_free_device_list.argtypes = [C.POINTER(C.c_void_p), C.c_int]
-    dll.libusb_get_device_descriptor.argtypes = [C.c_void_p, C.POINTER(DevDesc)]
-    dll.libusb_get_bus_number.argtypes = [C.c_void_p]
-    dll.libusb_get_bus_number.restype = C.c_ubyte
-    dll.libusb_get_device_address.argtypes = [C.c_void_p]
-    dll.libusb_get_device_address.restype = C.c_ubyte
-    dll.libusb_get_port_numbers.argtypes = [C.c_void_p, C.POINTER(C.c_ubyte), C.c_int]
-    dll.libusb_ref_device.argtypes = [C.c_void_p]
-    dll.libusb_ref_device.restype = C.c_void_p
-    dll.libusb_unref_device.argtypes = [C.c_void_p]
-    dll.libusb_open.argtypes = [C.c_void_p, C.POINTER(C.c_void_p)]
-    dll.libusb_close.argtypes = [C.c_void_p]
-    dll.libusb_claim_interface.argtypes = [C.c_void_p, C.c_int]
-    dll.libusb_release_interface.argtypes = [C.c_void_p, C.c_int]
-    dll.libusb_clear_halt.argtypes = [C.c_void_p, C.c_ubyte]
-    dll.libusb_reset_device.argtypes = [C.c_void_p]
-    dll.libusb_bulk_transfer.argtypes = [C.c_void_p, C.c_ubyte, C.c_char_p, C.c_int,
-                                         C.POINTER(C.c_int), C.c_uint]
-    dll.libusb_get_string_descriptor_ascii.argtypes = [C.c_void_p, C.c_ubyte,
-                                                       C.c_char_p, C.c_int]
-    dll.libusb_strerror.argtypes = [C.c_int]
-    dll.libusb_strerror.restype = C.c_char_p
-    _dll = dll
-    return dll
-
-
-def context(dll_path=None):
-    """The libusb context, once per process. `libusb_exit` is deliberately not
-    called: the context lives as long as the process, and closing it midway would
-    invalidate the device pointers held by open handles."""
-    global _ctx
-    dll = load(dll_path)
-    if _ctx is None:
-        ctx = C.c_void_p()
-        rc = dll.libusb_init(C.byref(ctx))
-        if rc != 0:
-            raise AX206Error("libusb_init: %s" % strerror(dll, rc))
-        _ctx = ctx
-    return _ctx
-
-
-def strerror(dll, code):
-    return "%d (%s)" % (code, dll.libusb_strerror(code).decode(errors="replace"))
-
-
-def format_port_path(ports):
-    """The port chain in the form that goes into panel.json: "3.4".
-
-    The bus number deliberately does NOT go into the key. It is a synthetic
-    controller index assigned at enumeration — the same nature as the registry's
-    `Hub_#`, which broke the previous version of the selector. The port chain
-    describes physical sockets and does not have that problem.
-    """
-    return ".".join(str(p) for p in ports)
+# --- enumeration ------------------------------------------------------------
+#
+# Loading the DLL, the process-wide context, `strerror` and `format_port_path` moved
+# to `_libusb.py` when the TURZX became the second driver on this library. What stayed
+# here is what carries THIS panel's identity: the VID/PID filter and a `Found` whose
+# repr names the AX206. Shared plumbing is shared; a device's own name is not.
 
 
 class Found:
@@ -327,9 +218,7 @@ def find_all(dll_path=None):
                 continue
             if (desc.idVendor, desc.idProduct) != (VID, PID):
                 continue
-            buf = (C.c_ubyte * MAX_PORT_DEPTH)()
-            n = dll.libusb_get_port_numbers(dev, buf, MAX_PORT_DEPTH)
-            ports = tuple(buf[j] for j in range(n)) if n > 0 else ()
+            ports = port_chain(dll, dev)
             out.append(Found(dll, dll.libusb_ref_device(dev),
                              dll.libusb_get_bus_number(dev), ports,
                              dll.libusb_get_device_address(dev),
@@ -525,7 +414,10 @@ class AX206:
         while time.monotonic() < deadline:
             try:
                 return self.open()
-            except AX206Error as e:
+            except DriverError as e:
+                # The whole family, not just AX206Error: since the libusb loader moved
+                # to _libusb.py it raises LibusbError, and a reset that could not reload
+                # the library must keep retrying, not escape this loop.
                 last = e
                 time.sleep(0.5)
         raise AX206Error("the module did not come back after the reset: %s" % last)
