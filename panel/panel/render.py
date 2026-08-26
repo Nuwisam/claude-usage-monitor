@@ -7,7 +7,7 @@ in what form, is settled by the panel layer (panel/surface.py + driver).
 """
 from PIL import Image
 
-from . import draw, layout as L, theme, view as V
+from . import draw, layout as L, layout_wide as LW, theme, view as V
 from .pixels import pack_rgb565
 
 # Only right angles: a display is either mounted the way the canvas is drawn or
@@ -250,18 +250,25 @@ class Frame:
 
 LAYOUTS = {
     (480, 320): L,
+    (1280, 720): LW,
 }
 
 
 def layout_for(width, height):
     """Which layout module draws this canvas.
 
-    The only place that has to learn about a second one. Unknown sizes still get the
-    480x320 set, which is exactly what happened before this lookup existed - a wider
-    canvas came out as the narrow layout stranded in a corner. That is preserved on
-    purpose: this change is a refactor and must not alter a single pixel.
+    The only place that has to learn about a second one, and it REFUSES what it does
+    not know. A layout is a table of positions measured for one canvas; on any other
+    it draws the same picture stranded in a corner, which reads as a broken screen
+    rather than as a missing layout. Failing here names the canvas instead.
     """
-    return LAYOUTS.get((width, height), L)
+    try:
+        return LAYOUTS[(width, height)]
+    except KeyError:
+        raise ValueError(
+            "no layout for a %dx%d canvas; this build draws %s"
+            % (width, height,
+               ", ".join("%dx%d" % wh for wh in sorted(LAYOUTS))))
 
 
 class Renderer:

@@ -262,7 +262,24 @@ class Config:
         self._number(problems, "tick_sec", float, 0.01)
         self._number(problems, "width", int, 1)
         self._number(problems, "height", int, 1)
+        self._canvas_has_a_layout(problems)
         return problems
+
+    def _canvas_has_a_layout(self, problems):
+        """A canvas nothing can draw is a configuration error, not a drawing problem.
+
+        The renderer refuses a size it has no measured layout for. Discovering that in
+        `App.__init__` would put a traceback where nobody sees it and restart the task
+        every minute; here it is one sentence naming the sizes that do exist.
+        """
+        from . import render
+
+        canvas = self._canvas()
+        if canvas is None or canvas in render.LAYOUTS:
+            return
+        problems.append("width/height %dx%d has no layout; this build draws %s"
+                        % (canvas[0], canvas[1],
+                           ", ".join("%dx%d" % wh for wh in sorted(render.LAYOUTS))))
 
     def _check_panels(self, problems):
         """The `panels` list: shape, driver names, selector keys, brightness.
