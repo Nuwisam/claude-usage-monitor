@@ -251,20 +251,33 @@ def cross(d, centre, radius, colour, width=1):
 
 def clock_glyph(d, centre, radius, colour):
     """A clock icon instead of the mockup's Phosphor font — one import fewer
-    and the certainty that at 12 px it will not turn into a smudge."""
+    and the certainty that at 12 px it will not turn into a smudge.
+
+    Stroke and hands come OUT of the radius. A hairline dial is right at 5 px and reads
+    as a speck of dust at 11; the numbers below are the 5 px glyph's, restated as ratios.
+    """
     cx, cy = centre
+    w = max(1, radius // 5)
+    hand = radius - max(2, radius // 2)
     d.ellipse((cx - radius, cy - radius, cx + radius, cy + radius),
-              outline=colour, width=1)
-    d.line((cx, cy, cx, cy - radius + 2), fill=colour, width=1)
-    d.line((cx, cy, cx + radius - 2, cy), fill=colour, width=1)
+              outline=colour, width=w)
+    d.line((cx, cy, cx, cy - hand), fill=colour, width=w)
+    d.line((cx, cy, cx + hand, cy), fill=colour, width=w)
 
 
 def arrow_down_right(d, box, colour):
-    """The arrow next to credits: they are the current rung now."""
+    """The arrow next to credits: they are the current rung now.
+
+    Stroke and head come out of the box, for the same reason as the clock glyph: at
+    three times the size a 1 px stroke with a 3 px head is a scratch, not an arrow.
+    """
     x0, y0, x1, y1 = box
-    d.line((x0, y0, x1, y1), fill=colour, width=1)
-    d.line((x1 - 3, y1, x1, y1), fill=colour, width=1)
-    d.line((x1, y1 - 3, x1, y1), fill=colour, width=1)
+    span = x1 - x0
+    w = max(1, span // 7)
+    head = max(3, (span * 3) // 7)
+    d.line((x0, y0, x1, y1), fill=colour, width=w)
+    d.line((x1 - head, y1, x1, y1), fill=colour, width=w)
+    d.line((x1, y1 - head, x1, y1), fill=colour, width=w)
 
 
 def new_canvas(size, colour=theme.BG):

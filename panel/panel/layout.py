@@ -63,6 +63,52 @@ DIVIDER_H = 1
 F_REASON = 10
 REASON_GAP = 6
 
+# --- the pieces render.py used to place with a bare number --------------------
+#
+# Each of these carries SIZE: a gap, a radius, an offset from the edge of a box. They
+# were literals inside render.py, which is why they sit here rather than in a geometry
+# class — a class holds rectangles, and the renderer needs these where it has no
+# rectangle to hang them off. A layout on another canvas restates them; left behind,
+# they would put 480 px gaps and a 5 px glyph on a canvas of any size.
+HEAD_GAP = 8            # the clock to the plan badge, and the reason to the account name
+CLOCK_MARK_W = 14       # room kept right of the clock for the link mark
+CLOCK_DY = 1            # the clock's ascender, from the top of the header
+BADGE_DY = 5            # the plan badge and the reason, from the top of the header
+#: Two corrections for text this renderer anchors by its TOP. Pillow measures that top
+#: from the font's ascender, CSS spreads the line box's slack evenly above and below the
+#: typeface — so the same box puts the panel's ink lower, by more the larger the type.
+#: Zero here: at this size the difference is under two pixels and the narrow layout was
+#: measured with it already in.
+NAME_DY = 0             # the account name, from the top of the header
+LABEL_DY = 0            # SESSION 5 H / WEEK, from the top of their box
+#: And one for text centred on a rectangle. The mockup sets the percentage in a line box
+#: tighter than the digits (line-height 0.82 and 0.86), which lifts the ink above the
+#: centre of the box it sits in; this renderer centres the ink itself.
+NUM_DY = 0              # the percentage, from the centre of its window
+CREDITS_DY = 0          # the amount and its "/ limit", from the centre of the credits row
+LINK_DX = 4             # the link mark's centre, in from the right edge
+LINK_DY = 9             # ... and down from the top of the header
+LINK_R = 3              # the dot, and the ring when it is not filled
+LINK_CROSS = 4          # the arm of the cross over a dead link
+
+GLYPH_R = 5             # the clock glyph in front of the reset caption
+GLYPH_ADV = 15          # ... and where the caption starts after it
+AGO_W = 86              # room kept at the right of the session caption for the reading age
+AGO_DOT_GAP = 8         # the age's dot, left of its first digit
+AGO_DOT_R = 2
+
+CREDITS_LABEL_DY = 5    # the CREDITS label rides above the centre line of the row
+#: The arrow marking the rung that limits now, as (left, up, right, down) from the
+#: label's left edge and the row's centre. One tuple: four names for one seven-pixel
+#: glyph would read worse than the literal they replace.
+CREDITS_ARROW = (11, 4, 4, 2)
+CREDITS_NODATA_GAP = 8  # after "no data", before the dashed placeholder
+CREDITS_TAIL_GAP = 4    # the amount, then "/ limit currency"
+CREDITS_TAIL_DY = 1     # the tail rides one step lower: a smaller size on a common centre
+CREDITS_BAR_GAP = 10    # ... and then the bar
+
+F_EMPTY = 13            # "second account not configured"
+
 
 # --- blocked-session card ----------------------------------------------------
 #
@@ -78,6 +124,7 @@ BANNER_BASE = 24
 F_BANNER = 15
 BANNER_TRACK = 2        # 0.13em at 15 px
 F_BANNER_AT = 15
+BANNER_AT_GAP = 12      # between the time and the tail of the caption
 
 # Rail on the left edge of the card, below the banner. It is present in BOTH frames:
 # `NEUTRAL_900` in the resting one, `ACCENT` in the full one — flooding repaints the rail,
@@ -99,6 +146,11 @@ MARK_W = 4
 class AlertSolo:
     """A single block. The project name is the hero, because there is a specific window
     to go back to — and with one block it is clear which one."""
+
+    #: Which numbers this class falls back to when the caller passes none. A subclass on
+    #: another canvas points it at its own module; without that, a wide class built on
+    #: its own would silently lay itself out with narrow metrics.
+    M = METRICS
 
     # BASELINES, measured on the rendered mockup — not computed from the CSS boxes.
     #
@@ -122,6 +174,9 @@ class AlertSolo:
     LH_DETAIL_LABEL = 10
     F_DETAIL = 12
     DETAIL_LINE = 16        # 1.35 x 12 px, rounded down, as the ADVANCE between lines
+    #: The same 1.35 x F_DETAIL in TENTHS, because the tile's height is truncated once
+    #: over the whole block and not per line — see `detail_box`.
+    DETAIL_LINE_10 = 162
     DETAIL_LINES = 2
     DETAIL_PAD_X = 12
     DETAIL_PAD_Y = 10
@@ -130,9 +185,10 @@ class AlertSolo:
     MODE_H = 34
     F_MODE_LABEL = 10
     F_MODE = 11
+    MODE_GAP = 8            # between the MODE label and the value
 
     def __init__(self, width, height, m=None):
-        m = m or METRICS
+        m = m or self.M
         self.m = m
         self.width = width
         self.height = height
@@ -159,7 +215,7 @@ class AlertSolo:
         rendered mockup: 51 px, the panel drew 52).
         """
         n = max(1, lines)
-        block = (162 * n) // 10             # floor(16.2 x n)
+        block = (self.DETAIL_LINE_10 * n) // 10
         h = 2 * self.DETAIL_PAD_Y + self.F_DETAIL_LABEL + self.DETAIL_GAP + block
         return (self.x0, self.detail_y, self.x1, self.detail_y + h)
 
@@ -175,6 +231,7 @@ class AlertPair:
     typography. Up to two blocks the project name stays the hero, because there is a
     specific window to go back to and it has to be clear which one."""
 
+    M = METRICS
     F_SHORT = 10
     SHORT_TRACK = 1         # 0.09em at 10 px
     F_WAITED = 17
@@ -195,7 +252,7 @@ class AlertPair:
     DETAIL_BASE = 113
 
     def __init__(self, width, height, m=None):
-        m = m or METRICS
+        m = m or self.M
         self.m = m
         self.width = width
         self.height = height
@@ -218,6 +275,7 @@ class AlertList:
     fixed column on the left. The NEWEST DETAIL lands in the footer — one of them,
     because three would not fit at any readable size."""
 
+    M = METRICS
     ROWS = 3
     FOOTER_H = 49
     REASON_W = 58
@@ -245,7 +303,7 @@ class AlertList:
     FOOT_LABEL = "NEWEST DETAIL"
 
     def __init__(self, width, height, m=None):
-        m = m or METRICS
+        m = m or self.M
         self.m = m
         self.width = width
         self.height = height
@@ -286,7 +344,9 @@ class AlertMany(AlertList):
 
     FOOTER_H = 38           # one line instead of two, because here the footer has no label above the text
     F_PROJECT = 17
-    F_MACHINE = 11
+    # The machine line takes F_META, inherited: `render._alert_row` reads that name in
+    # both branches. A separate F_MACHINE stood here and nothing read it — a size that
+    # a second layout would restate and still not be drawn with.
 
     REASON_BASE = 44
     PROJECT_BASE = 39
@@ -299,8 +359,10 @@ class AlertMany(AlertList):
 class Band:
     """The rectangles of one account band, in SCREEN coordinates."""
 
+    M = METRICS
+
     def __init__(self, top, height, width, m=None):
-        m = m or METRICS
+        m = m or self.M
         self.m = m
         self.top = top
         self.height = height

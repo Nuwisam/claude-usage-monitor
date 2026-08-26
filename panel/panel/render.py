@@ -352,7 +352,7 @@ class Renderer:
         right = x1
         if a.at:
             d.text((right, base), a.at, font=f_at, fill=at_colour, anchor="rs")
-            right -= draw.text_width(a.at, f_at) + 12
+            right -= draw.text_width(a.at, f_at) + self.L.BANNER_AT_GAP
         draw.text_tracked(d, (x0, base),
                           draw.ellipsize_tracked(a.title, f_head, right - x0,
                                                  self.L.BANNER_TRACK),
@@ -596,12 +596,12 @@ class Renderer:
         # `draw.text_tracked` subtracts it from the width it returns. Without it the
         # label has a box one pixel too narrow and the value creeps up against its tail.
         x += draw.text_tracked(d, (x, y), "MODE", f_label, theme.TEXT_45_SUNKEN,
-                               tracking=1, anchor="ls") + 1 + 8
+                               tracking=1, anchor="ls") + 1 + L_.MODE_GAP
         d.text((x, y), draw.ellipsize(mode, f_mode, L_.x1 - x), font=f_mode,
                fill=theme.TEXT_70_SUNKEN, anchor="ls")
 
     def _empty_band(self, d, b):
-        f = draw.font(13)
+        f = draw.font(self.L.F_EMPTY)
         d.text((b.x0, b.top + b.height // 2), "second account not configured",
                font=f, fill=theme.TEXT_40, anchor="lm")
 
@@ -629,17 +629,18 @@ class Renderer:
         right = b.x1
 
         if band.show_clock:
-            self._link_mark(d, (right - 4, y + 9), state.link)
-            right -= 14
+            self._link_mark(d, (right - self.L.LINK_DX, y + self.L.LINK_DY),
+                            state.link)
+            right -= self.L.CLOCK_MARK_W
             w = draw.text_width(state.clock, f_clock)
-            d.text((right, y + 1), state.clock, font=f_clock, fill=theme.TEXT_78,
-                   anchor="ra")
-            right -= w + 8
+            d.text((right, y + self.L.CLOCK_DY), state.clock, font=f_clock,
+                   fill=theme.TEXT_78, anchor="ra")
+            right -= w + self.L.HEAD_GAP
 
         if band.plan:
             w = draw.tracked_width(band.plan.upper(), f_plan, 1)
-            draw.text_tracked(d, (right - w, y + 5), band.plan.upper(), f_plan,
-                              theme.TEXT_50, tracking=1)
+            draw.text_tracked(d, (right - w, y + self.L.BADGE_DY), band.plan.upper(),
+                              f_plan, theme.TEXT_50, tracking=1)
             right -= w + self.L.REASON_GAP
 
         if band.alert:
@@ -648,13 +649,13 @@ class Renderer:
             f_reason = draw.font(self.L.F_REASON)
             word = band.alert.upper()
             w = draw.tracked_width(word, f_reason, 1)
-            draw.text_tracked(d, (right - w, y + 5), word, f_reason,
+            draw.text_tracked(d, (right - w, y + self.L.BADGE_DY), word, f_reason,
                               theme.ACCENT_200, tracking=1)
-            right -= w + 8
+            right -= w + self.L.HEAD_GAP
 
         room = max(20, right - b.x0)
         title = draw.ellipsize(band.title, f_name, room)
-        d.text((b.x0, y), title, font=f_name,
+        d.text((b.x0, y + self.L.NAME_DY), title, font=f_name,
                fill=theme.ACCENT_100 if band.alert else theme.TEXT)
 
     def _link_mark(self, d, centre, link):
@@ -664,13 +665,15 @@ class Renderer:
         reading age grows on both accounts at once and that looks exactly like "the
         work stopped".
         """
+        r = self.L.LINK_R
+        w = max(1, r // 3)          # a hairline ring at 6 px reads as a smudge
         if link == "live":
-            draw.dot(d, centre, 3, theme.ACCENT)
+            draw.dot(d, centre, r, theme.ACCENT)
         elif link == "reconnecting":
-            draw.ring(d, centre, 3, theme.ACCENT_300)
+            draw.ring(d, centre, r, theme.ACCENT_300, width=w)
         else:
-            draw.ring(d, centre, 3, theme.NEUTRAL_600)
-            draw.cross(d, centre, 4, theme.NEUTRAL_600)
+            draw.ring(d, centre, r, theme.NEUTRAL_600, width=w)
+            draw.cross(d, centre, self.L.LINK_CROSS, theme.NEUTRAL_600, width=w)
 
     def _window(self, d, b, band, kind):
         session = kind == "session"
@@ -691,8 +694,8 @@ class Renderer:
         f_label = draw.font(self.L.F_LABEL)
         label = LABEL_SESSION if session else LABEL_WEEK
         colour = theme.ACCENT_200 if session else theme.TEXT_60
-        draw.text_tracked(d, (label_box[0], label_box[1]), label, f_label,
-                          colour, tracking=1)
+        draw.text_tracked(d, (label_box[0], label_box[1] + self.L.LABEL_DY), label,
+                          f_label, colour, tracking=1)
 
         # --- the bar ---
         draw.bar(d, bar_box, v,
@@ -702,11 +705,12 @@ class Renderer:
         f_reset = draw.font(self.L.F_RESET)
         x = line_box[0]
         gy = line_box[1] + self.L.LINE_H // 2
-        draw.clock_glyph(d, (x + 5, gy), 5,
+        glyph_r = self.L.GLYPH_R
+        draw.clock_glyph(d, (x + glyph_r, gy), glyph_r,
                          theme.ACCENT_300 if session else theme.mix(theme.ACCENT_300, 70))
-        x += 15
+        x += self.L.GLYPH_ADV
         text = lead if not at else "%s · %s" % (lead, at)
-        room = line_box[2] - x - (86 if session else 0)
+        room = line_box[2] - x - (self.L.AGO_W if session else 0)
         d.text((x, gy), draw.ellipsize(text, f_reset, room), font=f_reset,
                fill=theme.TEXT_70 if session else theme.TEXT_60, anchor="lm")
 
@@ -715,7 +719,8 @@ class Renderer:
             w = draw.text_width(band.ago, f_ago)
             d.text((line_box[2], gy), band.ago, font=f_ago, fill=theme.TEXT_52,
                    anchor="rm")
-            draw.dot(d, (line_box[2] - w - 8, gy), 2, theme.ACCENT)
+            draw.dot(d, (line_box[2] - w - self.L.AGO_DOT_GAP, gy),
+                     self.L.AGO_DOT_R, theme.ACCENT)
 
     def _number(self, d, b, v, centre, big, tight, small):
         """The number and the % sign, aligned to the RIGHT edge of the narrow column.
@@ -723,6 +728,7 @@ class Renderer:
         With `unknown` the % sign MUST vanish — "unknown %" is a real trap for a naive
         port, because there the percent is part of the template, not of the data.
         """
+        centre += self.L.NUM_DY
         if v.number is None:
             f = draw.font(self.L.F_WORDS)
             base = draw.baseline_for_centre(f, v.words or "?", centre)
@@ -749,25 +755,30 @@ class Renderer:
         label_colour = theme.ACCENT_200 if c.is_current else theme.TEXT_50
         w = draw.tracked_width(LABEL_CREDITS, f_label, 1)
         lx = b.num_right - w
-        draw.text_tracked(d, (lx, cy - 5), LABEL_CREDITS, f_label, label_colour,
-                          tracking=1)
+        draw.text_tracked(d, (lx, cy - self.L.CREDITS_LABEL_DY), LABEL_CREDITS,
+                          f_label, label_colour, tracking=1)
         if c.is_current:
             # The arrow: the week stands at 100%, so credits are now the rung that
             # does the limiting.
-            draw.arrow_down_right(d, (lx - 11, cy - 4, lx - 4, cy + 2), theme.ACCENT_300)
+            al, au, ar, ad = self.L.CREDITS_ARROW
+            draw.arrow_down_right(d, (lx - al, cy - au, lx - ar, cy + ad),
+                                  theme.ACCENT_300)
 
         x = b.block_x0
+        half = self.L.CREDITS_BAR_H // 2
         if c.state == "unknown":
             d.text((x, cy), "no data", font=f_limit, fill=theme.TEXT_45, anchor="lm")
-            x += draw.text_width("no data", f_limit) + 8
-            draw.dashed_rounded(d, (x, cy - 2, x1, cy + 2), 2, theme.TEXT_25)
+            x += draw.text_width("no data", f_limit) + self.L.CREDITS_NODATA_GAP
+            draw.dashed_rounded(d, (x, cy - half, x1, cy + half), half, theme.TEXT_25)
             return
 
-        d.text((x, cy), c.used or "—", font=f_used, fill=theme.TEXT, anchor="lm")
-        x += draw.text_width(c.used or "—", f_used) + 4
+        ty = cy + self.L.CREDITS_DY
+        d.text((x, ty), c.used or "—", font=f_used, fill=theme.TEXT, anchor="lm")
+        x += draw.text_width(c.used or "—", f_used) + self.L.CREDITS_TAIL_GAP
         tail = "/ %s %s" % (c.limit or "—", c.currency or "")
-        d.text((x, cy + 1), tail.strip(), font=f_limit, fill=theme.TEXT_45, anchor="lm")
-        x += draw.text_width(tail.strip(), f_limit) + 10
+        d.text((x, ty + self.L.CREDITS_TAIL_DY), tail.strip(), font=f_limit,
+               fill=theme.TEXT_45, anchor="lm")
+        x += draw.text_width(tail.strip(), f_limit) + self.L.CREDITS_BAR_GAP
 
         if x < x1 - 20:
             bar_y = cy - self.L.CREDITS_BAR_H // 2
