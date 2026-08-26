@@ -248,9 +248,30 @@ class Frame:
         return payload
 
 
+LAYOUTS = {
+    (480, 320): L,
+}
+
+
+def layout_for(width, height):
+    """Which layout module draws this canvas.
+
+    The only place that has to learn about a second one. Unknown sizes still get the
+    480x320 set, which is exactly what happened before this lookup existed - a wider
+    canvas came out as the narrow layout stranded in a corner. That is preserved on
+    purpose: this change is a refactor and must not alter a single pixel.
+    """
+    return LAYOUTS.get((width, height), L)
+
+
 class Renderer:
     def __init__(self, width=480, height=320):
-        self.layout = L.Layout(width, height)
+        # The metrics module, not the geometry object: `self.layout` holds the computed
+        # rectangles, `self.L` holds the constants they were computed from, and drawing
+        # code reads both from the instance instead of from module globals - otherwise a
+        # second layout could never supply its own numbers.
+        self.L = layout_for(width, height)
+        self.layout = self.L.Layout(width, height)
 
     # -- public entry ------------------------------------------------------
 
@@ -280,13 +301,13 @@ class Renderer:
         title, *rest = message if isinstance(message, (list, tuple)) else [message]
         f_title = draw.font(24)
         f_body = draw.font(15)
-        d.text((L.PAD_X, 28), draw.ellipsize(title, f_title,
-                                             self.layout.width - 2 * L.PAD_X),
+        d.text((self.L.PAD_X, 28), draw.ellipsize(title, f_title,
+                                             self.layout.width - 2 * self.L.PAD_X),
                font=f_title, fill=theme.TEXT)
         y = 72
         for line in rest:
-            d.text((L.PAD_X, y), draw.ellipsize(line, f_body,
-                                                self.layout.width - 2 * L.PAD_X),
+            d.text((self.L.PAD_X, y), draw.ellipsize(line, f_body,
+                                                self.layout.width - 2 * self.L.PAD_X),
                    font=f_body, fill=theme.TEXT_60)
             y += 22
 
@@ -316,26 +337,26 @@ class Renderer:
         it gives the card a fixed left edge for its whole life, not only for
         `alert_flash_sec`.
         """
-        f_head = draw.font(L.F_BANNER)
-        f_at = draw.font(L.F_BANNER_AT)
-        draw.fill_rect(d, (0, 0, self.layout.width, L.BANNER_H),
+        f_head = draw.font(self.L.F_BANNER)
+        f_at = draw.font(self.L.F_BANNER_AT)
+        draw.fill_rect(d, (0, 0, self.layout.width, self.L.BANNER_H),
                        theme.ACCENT if a.flood else theme.ACCENT_800)
-        draw.fill_rect(d, (0, L.BANNER_H, L.RAIL_W, self.layout.height),
+        draw.fill_rect(d, (0, self.L.BANNER_H, self.L.RAIL_W, self.layout.height),
                        theme.ACCENT if a.flood else theme.NEUTRAL_900)
         # In a flooded banner the caption drops to the card's background: 5.51:1
         # instead of 2.69:1.
         head_colour = theme.BG if a.flood else theme.ACCENT_100
         at_colour = theme.BG if a.flood else theme.ACCENT_200
 
-        base = L.BANNER_BASE
+        base = self.L.BANNER_BASE
         right = x1
         if a.at:
             d.text((right, base), a.at, font=f_at, fill=at_colour, anchor="rs")
             right -= draw.text_width(a.at, f_at) + 12
         draw.text_tracked(d, (x0, base),
                           draw.ellipsize_tracked(a.title, f_head, right - x0,
-                                                 L.BANNER_TRACK),
-                          f_head, head_colour, tracking=L.BANNER_TRACK, anchor="ls")
+                                                 self.L.BANNER_TRACK),
+                          f_head, head_colour, tracking=self.L.BANNER_TRACK, anchor="ls")
 
     def _alert_solo(self, d, a):
         """1a — one block. The project name is the card's hero."""
@@ -425,7 +446,7 @@ class Renderer:
         for (top, bottom), row in zip(rects, a.rows):
             self._alert_row(d, L_, top, row)
             if bottom < rects[-1][1]:
-                draw.fill_rect(d, (0, bottom, L_.width, bottom + L.DIVIDER_H),
+                draw.fill_rect(d, (0, bottom, L_.width, bottom + self.L.DIVIDER_H),
                                theme.DIVIDER)
         if detail:
             self._alert_footer(d, L_, L_.FOOT_LABEL, detail)
@@ -438,7 +459,7 @@ class Renderer:
         for (top, bottom), row in zip(rects, a.rows):
             self._alert_row(d, L_, top, row, machine_only=True)
             if bottom < rects[-1][1]:
-                draw.fill_rect(d, (0, bottom, L_.width, bottom + L.DIVIDER_H),
+                draw.fill_rect(d, (0, bottom, L_.width, bottom + self.L.DIVIDER_H),
                                theme.DIVIDER)
         self._alert_rest(d, L_, a)
         self._alert_banner(d, a, L_.x0, L_.x1)
@@ -537,9 +558,9 @@ class Renderer:
             x += draw.text_width(text, f)
         if name:
             if row.tool:
-                d.text((x + L.META_DOT_GAP, y), "·", font=f, fill=theme.TEXT_28,
+                d.text((x + self.L.META_DOT_GAP, y), "·", font=f, fill=theme.TEXT_28,
                        anchor="ls")
-                x += 2 * L.META_DOT_GAP + draw.text_width("·", f)
+                x += 2 * self.L.META_DOT_GAP + draw.text_width("·", f)
             d.text((x, y), draw.ellipsize(name, f, xy[0] + room - x), font=f,
                    fill=colour, anchor="ls")
 
@@ -566,7 +587,7 @@ class Renderer:
         f_label = draw.font(L_.F_MODE_LABEL)
         f_mode = draw.font(L_.F_MODE)
         draw.fill_rect(d, L_.mode, theme.SUNKEN)
-        x = L.ALERT_PAD_X
+        x = self.L.ALERT_PAD_X
         # The label and the value sit on a COMMON baseline, not each centred on its
         # own: with two type sizes the centre of the font box falls elsewhere than the
         # centre of the letters, and the caps look as if they had slipped down.
@@ -589,7 +610,7 @@ class Renderer:
             # The bar sits in the margin field (PAD_X 14), so the band's layout does not
             # shift by a single pixel — and it has the band's FULL height, whatever the
             # number of rows the band has inside.
-            draw.fill_rect(d, (0, b.top, L.MARK_W, b.bottom), theme.ACCENT)
+            draw.fill_rect(d, (0, b.top, self.L.MARK_W, b.bottom), theme.ACCENT)
         self._header(d, b, band, state)
         self._window(d, b, band, kind="session")
         self._window(d, b, band, kind="week")
@@ -601,9 +622,9 @@ class Renderer:
             self._credits(d, b, band.credits)
 
     def _header(self, d, b, band, state):
-        f_name = draw.font(L.F_NAME)
-        f_plan = draw.font(L.F_PLAN)
-        f_clock = draw.font(L.F_CLOCK)
+        f_name = draw.font(self.L.F_NAME)
+        f_plan = draw.font(self.L.F_PLAN)
+        f_clock = draw.font(self.L.F_CLOCK)
         y = b.header[1]
         right = b.x1
 
@@ -619,12 +640,12 @@ class Renderer:
             w = draw.tracked_width(band.plan.upper(), f_plan, 1)
             draw.text_tracked(d, (right - w, y + 5), band.plan.upper(), f_plan,
                               theme.TEXT_50, tracking=1)
-            right -= w + L.REASON_GAP
+            right -= w + self.L.REASON_GAP
 
         if band.alert:
             # The reason sits ON THE PLAN'S LINE, not next to the name: the name gets
             # shortened at times, and this caption must not vanish with its tail.
-            f_reason = draw.font(L.F_REASON)
+            f_reason = draw.font(self.L.F_REASON)
             word = band.alert.upper()
             w = draw.tracked_width(word, f_reason, 1)
             draw.text_tracked(d, (right - w, y + 5), word, f_reason,
@@ -662,12 +683,12 @@ class Renderer:
 
         # --- the percent column ---
         self._number(d, b, v, centre,
-                     big=L.F_SES_NUM if session else L.F_WK_NUM,
-                     tight=L.F_SES_NUM_TIGHT if session else L.F_WK_NUM,
-                     small=L.F_SES_PCT if session else L.F_WK_PCT)
+                     big=self.L.F_SES_NUM if session else self.L.F_WK_NUM,
+                     tight=self.L.F_SES_NUM_TIGHT if session else self.L.F_WK_NUM,
+                     small=self.L.F_SES_PCT if session else self.L.F_WK_PCT)
 
         # --- the label ---
-        f_label = draw.font(L.F_LABEL)
+        f_label = draw.font(self.L.F_LABEL)
         label = LABEL_SESSION if session else LABEL_WEEK
         colour = theme.ACCENT_200 if session else theme.TEXT_60
         draw.text_tracked(d, (label_box[0], label_box[1]), label, f_label,
@@ -678,9 +699,9 @@ class Renderer:
                  theme.ACCENT if session else theme.ACCENT_500)
 
         # --- the caption under the bar ---
-        f_reset = draw.font(L.F_RESET)
+        f_reset = draw.font(self.L.F_RESET)
         x = line_box[0]
-        gy = line_box[1] + L.LINE_H // 2
+        gy = line_box[1] + self.L.LINE_H // 2
         draw.clock_glyph(d, (x + 5, gy), 5,
                          theme.ACCENT_300 if session else theme.mix(theme.ACCENT_300, 70))
         x += 15
@@ -690,7 +711,7 @@ class Renderer:
                fill=theme.TEXT_70 if session else theme.TEXT_60, anchor="lm")
 
         if session and band.ago:
-            f_ago = draw.font(L.F_AGO)
+            f_ago = draw.font(self.L.F_AGO)
             w = draw.text_width(band.ago, f_ago)
             d.text((line_box[2], gy), band.ago, font=f_ago, fill=theme.TEXT_52,
                    anchor="rm")
@@ -703,7 +724,7 @@ class Renderer:
         port, because there the percent is part of the template, not of the data.
         """
         if v.number is None:
-            f = draw.font(L.F_WORDS)
+            f = draw.font(self.L.F_WORDS)
             base = draw.baseline_for_centre(f, v.words or "?", centre)
             d.text((b.num_right, base), v.words or "?", font=f,
                    fill=theme.TEXT_50, anchor="rs")
@@ -715,15 +736,15 @@ class Renderer:
         base = draw.baseline_for_centre(f_num, v.number, centre)
         pct_w = draw.text_width("%", f_pct)
         d.text((b.num_right, base), "%", font=f_pct, fill=theme.TEXT_55, anchor="rs")
-        d.text((b.num_right - pct_w - L.PCT_GAP, base), v.number, font=f_num,
+        d.text((b.num_right - pct_w - self.L.PCT_GAP, base), v.number, font=f_num,
                fill=theme.TEXT, anchor="rs")
 
     def _credits(self, d, b, c):
         x0, y0, x1, y1 = b.credits
         cy = b.credits_centre
-        f_label = draw.font(L.F_LABEL)
-        f_used = draw.font(L.F_CREDITS_USED)
-        f_limit = draw.font(L.F_CREDITS_LIMIT)
+        f_label = draw.font(self.L.F_LABEL)
+        f_used = draw.font(self.L.F_CREDITS_USED)
+        f_limit = draw.font(self.L.F_CREDITS_LIMIT)
 
         label_colour = theme.ACCENT_200 if c.is_current else theme.TEXT_50
         w = draw.tracked_width(LABEL_CREDITS, f_label, 1)
@@ -749,11 +770,11 @@ class Renderer:
         x += draw.text_width(tail.strip(), f_limit) + 10
 
         if x < x1 - 20:
-            bar_y = cy - L.CREDITS_BAR_H // 2
-            box = (x, bar_y, x1, bar_y + L.CREDITS_BAR_H)
-            draw.rounded(d, box, L.CREDITS_BAR_H // 2, fill=theme.NEUTRAL_900)
+            bar_y = cy - self.L.CREDITS_BAR_H // 2
+            box = (x, bar_y, x1, bar_y + self.L.CREDITS_BAR_H)
+            draw.rounded(d, box, self.L.CREDITS_BAR_H // 2, fill=theme.NEUTRAL_900)
             w = int(round((x1 - x) * c.bar_pct / 100.0))
             if w > 0:
-                draw.rounded(d, (x, bar_y, x + max(w, L.CREDITS_BAR_H),
-                                 bar_y + L.CREDITS_BAR_H),
-                             L.CREDITS_BAR_H // 2, fill=theme.ACCENT_500)
+                draw.rounded(d, (x, bar_y, x + max(w, self.L.CREDITS_BAR_H),
+                                 bar_y + self.L.CREDITS_BAR_H),
+                             self.L.CREDITS_BAR_H // 2, fill=theme.ACCENT_500)

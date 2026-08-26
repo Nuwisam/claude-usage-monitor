@@ -109,7 +109,16 @@ def main():
                     help="FULL frame: banner flooded with the accent plus the rail")
     ap.add_argument("--marker", choices=("upper", "lower", "both"),
                     help="bands with the alert marker on the edge of the chosen band")
+    ap.add_argument("--canvas", default="480x320", metavar="WxH",
+                    help="which canvas to draw; picks the layout the same way the "
+                         "client does (render.layout_for)")
     args = ap.parse_args()
+    try:
+        canvas = tuple(int(n) for n in args.canvas.lower().split("x"))
+        if len(canvas) != 2 or min(canvas) < 1:
+            raise ValueError
+    except ValueError:
+        ap.error("--canvas takes WxH, e.g. 480x320 or 1280x720")
 
     now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
     state = build(args.scene, now_ms, args.link)
@@ -124,7 +133,7 @@ def main():
     if args.alert:
         state.alert = alert_scene(args.alert, now_ms, flood=args.flood)
 
-    frame = render.Renderer().frame(state)
+    frame = render.Renderer(*canvas).frame(state)
     img = frame.image
     if args.rgb565:
         img = unpack_rgb565(frame.rgb565("be"), img.size)

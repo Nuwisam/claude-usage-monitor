@@ -11,6 +11,14 @@ text steps and nothing in between (10 px for uppercase labels only, 11 px for
 secondary data, 12 px and up for content), and bars in three thicknesses by the
 weight of the window.
 """
+import sys
+
+#: This module's own numbers, as a handle the geometry classes read through instead of
+#: the globals. A second layout is a second module with the same names and different
+#: values; pointing the classes at it reuses every line of arithmetic below verbatim,
+#: which is the only way two layouts can be guaranteed to STACK the same way and to
+#: differ only where the mockup differs. Callers that pass nothing get these.
+METRICS = sys.modules[__name__]
 
 PAD_X = 14
 PAD_TOP = 9
@@ -123,12 +131,14 @@ class AlertSolo:
     F_MODE_LABEL = 10
     F_MODE = 11
 
-    def __init__(self, width, height):
+    def __init__(self, width, height, m=None):
+        m = m or METRICS
+        self.m = m
         self.width = width
         self.height = height
-        self.banner = (0, 0, width, BANNER_H)
-        self.x0 = ALERT_PAD_X
-        self.x1 = width - ALERT_PAD_X
+        self.banner = (0, 0, width, m.BANNER_H)
+        self.x0 = m.ALERT_PAD_X
+        self.x1 = width - m.ALERT_PAD_X
 
         self.project_base = self.PROJECT_BASE
         self.meta_base = self.META_BASE
@@ -184,20 +194,22 @@ class AlertPair:
     META_BASE = 91
     DETAIL_BASE = 113
 
-    def __init__(self, width, height):
+    def __init__(self, width, height, m=None):
+        m = m or METRICS
+        self.m = m
         self.width = width
         self.height = height
-        self.x0 = ALERT_PAD_X
-        self.x1 = width - ALERT_PAD_X
+        self.x0 = m.ALERT_PAD_X
+        self.x1 = width - m.ALERT_PAD_X
         # 282 px for two halves with one hairline of divider: 281 px of content splits
         # into 140.5 px each, and the mockup's browser gives the remainder to the BOTTOM half — the
         # divider lands on row 178, not 179. Measured on the rendered mockup; an earlier
         # comment claimed the opposite, and that is where that one line of difference came from.
-        top = BANNER_H
-        self.divider_y = top + (height - top - DIVIDER_H) // 2
-        self.divider = (0, self.divider_y, width, self.divider_y + DIVIDER_H)
+        top = m.BANNER_H
+        self.divider_y = top + (height - top - m.DIVIDER_H) // 2
+        self.divider = (0, self.divider_y, width, self.divider_y + m.DIVIDER_H)
         self.halves = ((top, self.divider_y),
-                       (self.divider_y + DIVIDER_H, height))
+                       (self.divider_y + m.DIVIDER_H, height))
 
 
 class AlertList:
@@ -232,11 +244,13 @@ class AlertList:
 
     FOOT_LABEL = "NEWEST DETAIL"
 
-    def __init__(self, width, height):
+    def __init__(self, width, height, m=None):
+        m = m or METRICS
+        self.m = m
         self.width = width
         self.height = height
-        self.x0 = ALERT_PAD_X
-        self.x1 = width - ALERT_PAD_X
+        self.x0 = m.ALERT_PAD_X
+        self.x1 = width - m.ALERT_PAD_X
         self.name_x = self.x0 + self.REASON_W + self.COL_GAP
         self.name_x1 = self.x1 - self.TIME_W - self.COL_GAP
 
@@ -250,16 +264,16 @@ class AlertList:
         computed from FRACTIONAL boundaries, not through `//`. With 242 px for three rows
         that gives 81 / 80 / 81, and not 80 / 80 / 80 plus two pixels of background at the footer.
         """
-        top = BANNER_H
+        top = self.m.BANNER_H
         bottom = self.footer[1] if footer else self.height
-        span = bottom - top - (self.ROWS - 1) * DIVIDER_H
+        span = bottom - top - (self.ROWS - 1) * self.m.DIVIDER_H
         out = []
         y = top
         for i in range(self.ROWS):
             h = (round(span * (i + 1) / self.ROWS)
                  - round(span * i / self.ROWS))
             out.append((y, y + h))
-            y += h + DIVIDER_H
+            y += h + self.m.DIVIDER_H
         return out
 
 
@@ -285,44 +299,46 @@ class AlertMany(AlertList):
 class Band:
     """The rectangles of one account band, in SCREEN coordinates."""
 
-    def __init__(self, top, height, width):
+    def __init__(self, top, height, width, m=None):
+        m = m or METRICS
+        self.m = m
         self.top = top
         self.height = height
         self.bottom = top + height
 
-        self.x0 = PAD_X
-        self.x1 = width - PAD_X
-        self.num_right = PAD_X + NUM_W
-        self.block_x0 = self.num_right + NUM_GAP
+        self.x0 = m.PAD_X
+        self.x1 = width - m.PAD_X
+        self.num_right = m.PAD_X + m.NUM_W
+        self.block_x0 = self.num_right + m.NUM_GAP
         self.block_x1 = self.x1
 
-        y = top + PAD_TOP
-        self.header = (self.x0, y, self.x1, y + HEADER_H)
-        y += HEADER_H + ROW_GAP
+        y = top + m.PAD_TOP
+        self.header = (self.x0, y, self.x1, y + m.HEADER_H)
+        y += m.HEADER_H + m.ROW_GAP
 
         self.ses_top = y
-        self.ses_label = (self.block_x0, y, self.block_x1, y + LABEL_H)
-        y += LABEL_H + INNER_GAP
-        self.ses_bar = (self.block_x0, y, self.block_x1, y + SES_BAR_H)
-        y += SES_BAR_H + INNER_GAP
-        self.ses_line = (self.block_x0, y, self.block_x1, y + LINE_H)
-        self.ses_bottom = y + LINE_H
+        self.ses_label = (self.block_x0, y, self.block_x1, y + m.LABEL_H)
+        y += m.LABEL_H + m.INNER_GAP
+        self.ses_bar = (self.block_x0, y, self.block_x1, y + m.SES_BAR_H)
+        y += m.SES_BAR_H + m.INNER_GAP
+        self.ses_line = (self.block_x0, y, self.block_x1, y + m.LINE_H)
+        self.ses_bottom = y + m.LINE_H
         self.ses_centre = (self.ses_top + self.ses_bottom) // 2
 
-        y = self.ses_bottom + ROW_GAP
+        y = self.ses_bottom + m.ROW_GAP
         self.wk_top = y
-        self.wk_label = (self.block_x0, y, self.block_x1, y + LABEL_H)
-        y += LABEL_H + INNER_GAP
-        self.wk_bar = (self.block_x0, y, self.block_x1, y + WK_BAR_H)
-        y += WK_BAR_H + INNER_GAP
-        self.wk_line = (self.block_x0, y, self.block_x1, y + LINE_H)
-        self.wk_bottom = y + LINE_H
+        self.wk_label = (self.block_x0, y, self.block_x1, y + m.LABEL_H)
+        y += m.LABEL_H + m.INNER_GAP
+        self.wk_bar = (self.block_x0, y, self.block_x1, y + m.WK_BAR_H)
+        y += m.WK_BAR_H + m.INNER_GAP
+        self.wk_line = (self.block_x0, y, self.block_x1, y + m.LINE_H)
+        self.wk_bottom = y + m.LINE_H
         self.wk_centre = (self.wk_top + self.wk_bottom) // 2
 
         # Credits glued to the bottom of the band (margin-top: auto in the mockup).
-        cy = self.bottom - PAD_BOT - CREDITS_H
-        self.credits = (self.x0, cy, self.x1, cy + CREDITS_H)
-        self.credits_centre = cy + CREDITS_H // 2
+        cy = self.bottom - m.PAD_BOT - m.CREDITS_H
+        self.credits = (self.x0, cy, self.x1, cy + m.CREDITS_H)
+        self.credits_centre = cy + m.CREDITS_H // 2
 
     @property
     def fits(self):
@@ -332,17 +348,29 @@ class Band:
 
 
 class Layout:
+    #: Which numbers and which geometry classes this layout is made of. A second layout
+    #: overrides these and inherits every line of arithmetic.
+    M = METRICS
+    BAND = Band
+    SOLO = AlertSolo
+    PAIR = AlertPair
+    LIST = AlertList
+    MANY = AlertMany
+
     def __init__(self, width=480, height=320):
+        m = self.M
+        self.m = m
         self.width = width
         self.height = height
         # 319 px for two bands is 159.5 px each — the mockup's browser gives the extra pixel to
         # the TOP band, so the divider falls on row 160, not 159.
-        band_h = (height - DIVIDER_H + 1) // 2
-        self.band_a = Band(0, band_h, width)
-        self.divider = (0, band_h, width, band_h + DIVIDER_H)
-        self.band_b = Band(band_h + DIVIDER_H, height - band_h - DIVIDER_H, width)
+        band_h = (height - m.DIVIDER_H + 1) // 2
+        self.band_a = self.BAND(0, band_h, width, m)
+        self.divider = (0, band_h, width, band_h + m.DIVIDER_H)
+        self.band_b = self.BAND(band_h + m.DIVIDER_H, height - band_h - m.DIVIDER_H,
+                                width, m)
         self.bands = (self.band_a, self.band_b)
-        self.alert_solo = AlertSolo(width, height)
-        self.alert_pair = AlertPair(width, height)
-        self.alert_list = AlertList(width, height)
-        self.alert_many = AlertMany(width, height)
+        self.alert_solo = self.SOLO(width, height, m)
+        self.alert_pair = self.PAIR(width, height, m)
+        self.alert_list = self.LIST(width, height, m)
+        self.alert_many = self.MANY(width, height, m)
