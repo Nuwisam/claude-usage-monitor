@@ -441,7 +441,7 @@ up, because the chain comes from the same enumeration as the handle being
 opened. Which module on the desk is which is, either way, settled only by
 `--identify` — no reading resolves that.
 
-The installer accepts a screen count: `.\deploy\install-task.ps1 -Panels 2`.
+The installer accepts a screen count: `.\deploy\install-task.ps1 -Panels 3`.
 Without it, "OK" after the first line from the log would mean "drawing one out
 of two". The script deliberately does not read `panel.json` — on a first
 install that file does not exist yet.

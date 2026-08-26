@@ -1,4 +1,4 @@
-# AX206 panel — client dependencies.
+# Panel client — dependencies. (Was "AX206 panel"; there are three screens now.)
 #
 # Hard pins: what draws on the display must not change because someone ran
 # `pip install -U` for a different project. The venv lives OUTSIDE the repo,
@@ -28,3 +28,18 @@ certifi==2026.7.22
 # is no way to push through the exact remainder of a truncated bitmap, and that is the
 # only known way out of a desync on a link that acknowledges nothing.
 pyserial==3.5
+# pycryptodome is for the THIRD screen (TURZX 5.2"), whose firmware takes only
+# DES-CBC-sealed command packets — key = IV = a constant string baked into the device.
+# This is NOT cryptography for security; it is obfuscation the firmware demands, and
+# calling it anything else would invite someone to "fix" the hard-coded key.
+#
+# Why not a pure-Python DES: ~200 lines to maintain for one 504 B block per frame,
+# where a wrong S-box would show up as "the panel accepted it and drew nothing" —
+# the failure this link is worst at reporting. A pinned, widely-used implementation
+# costs a 1.8 MB wheel and removes the whole class of mistake.
+#
+# NOTE FOR AN ALREADY-INSTALLED MACHINE: `git pull` does NOT bring this in. The
+# launcher runpy-executes the repo, but only deploy/install-task.ps1 runs
+# `pip install -r requirements.txt` — re-run it, or the third screen reports itself
+# unavailable while the other two keep drawing.
+pycryptodome==3.23.0

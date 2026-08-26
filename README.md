@@ -123,7 +123,7 @@ token — does not apply here at all.
 | Authorization gate: `none` / `header` / `verify` | working |
 | Read API, contract v3 | working |
 | UI — **Live** and **History** | working |
-| Desk panels over SSE — AX206 and Turing rev A | working |
+| Desk panels over SSE — AX206, Turing rev A and TURZX 5.2" | working |
 | "Claude is waiting for you" alert — toast plus card, and a marker on the panel | working; four card layouts depending on the number of blocks |
 
 Diagnostics (events, batches, machines, raw payloads) were deliberately left at `curl` —
@@ -288,7 +288,7 @@ cd ../frontend && npm run typecheck
 cd ../panel && pytest
 ```
 
-364 backend tests and 371 panel tests, including the normalizer and the write path, which run
+364 backend tests and 387 panel tests, including the normalizer and the write path, which run
 against a **real payload** from a Max account (`backend/tests/fixtures/usage_max.json`), not an
 invented one. Billing amounts in the fixtures are rescaled; the percentages stayed
 original, so `spend.percent` still agrees with the `used/limit` pair beside it.

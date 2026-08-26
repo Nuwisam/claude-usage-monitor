@@ -182,11 +182,21 @@ def cmd_probe(args):
             _probe_rects(dev, caps)
 
         if caps.acked:
-            print("missed_csw: %d  (0 = every frame acknowledged)" % dev.missed_csw)
-            # Last: this command is unreliable and a failed attempt spoils the NEXT
-            # transaction, so it cannot come before the test card.
-            print("probe_geometry(): %s  (unreliable — see the header of ax206.py)"
-                  % (dev.probe_geometry(),))
+            # Ask the OBJECT, not the capability. `missed_csw` and `probe_geometry`
+            # are AX206 names that were never in the driver contract, and gating them
+            # on `caps.acked` meant the first other acknowledging driver — the TURZX —
+            # ended --probe with an AttributeError instead of a report.
+            missed = getattr(dev, "missed_csw", None)
+            if missed is None:
+                missed = getattr(dev, "missed_ack", None)
+            if missed is not None:
+                print("unacknowledged frames: %d  (0 = every frame acknowledged)"
+                      % missed)
+            if hasattr(dev, "probe_geometry"):
+                # Last: this command is unreliable and a failed attempt spoils the NEXT
+                # transaction, so it cannot come before the test card.
+                print("probe_geometry(): %s  (unreliable — see the header of ax206.py)"
+                      % (dev.probe_geometry(),))
         else:
             print("this driver acknowledges nothing — judge by eye alone")
     finally:
