@@ -40,8 +40,10 @@ same thing happens to look on a desktop screen, not at what the panel draws.
 
 ## Canvas and material
 
-- **480 × 320 px, one landscape layout.** There is no quarter turn — the panel accepts
-  only 0° or 180°, because a 90° rotation would need a second layout (320 × 480).
+- **Two landscape canvases: 480 × 320 and 1280 × 720.** The second is the same layout
+  with its own numbers, measured on the 1280 × 720 mockup — the same card layouts, the
+  same fields, the same rules. There is still no quarter turn: the panel accepts only
+  0° or 180°, because a 90° rotation would need a portrait layout and neither one is.
 - **RGB565 (5/6/5).** Every background/foreground pair has to survive quantization; that's
   guarded by `panel/tests/test_render.py::test_colors_survive_quantization` and
   `::test_color_pairs_survive_quantization`.
@@ -171,8 +173,9 @@ over the rail.
 
 **A deliberate departure: the hour in the flooded banner.** The mockup disagrees with itself
 here — `1a-alert` paints it in solid `BG`, while the three `-p` frames give `color-mix(BG
-76%, transparent)`, that is, `#493128`. The panel keeps solid `BG` in **all four** layouts:
-that's 5.51:1 on the accent, while the 76% version gives 3.84:1 — below AA for 15 px text.
+76%, transparent)`, that is, `#493128`. The panel keeps solid `BG` in **all four** card
+layouts, on both canvases: that's 5.51:1 on the accent, while the 76% version gives
+3.84:1 — below AA for 15 px text.
 The hour is the only number on this card, and the card exists so that someone gets up from
 their desk.
 

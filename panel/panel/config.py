@@ -289,6 +289,7 @@ class Config:
         of validate() would reach the excepthook under pythonw, where nobody sees
         it and the task restarts every minute.
         """
+        from . import render
         from .drivers import REGISTRY, known
 
         if "panels" in self._raw and "device" in self._raw:
@@ -352,10 +353,21 @@ class Config:
                                 % (where, seen[key]))
             seen.setdefault(key, where)
 
+            # The canvas THIS screen asks for, which is not necessarily the configured
+            # one: a display with a fixed geometry names its own, and the client renders
+            # a frame per distinct canvas. The promise in drivers/base.py is checked
+            # here, before any device exists, and again in link.py when one is opened.
+            caps = mod.caps_for(self._canvas())
+            canvas = tuple(caps.canvas)
+            if canvas not in render.LAYOUTS:
+                problems.append(
+                    "%s: %s asks for a %dx%d canvas and this build draws %s"
+                    % (where, backend, canvas[0], canvas[1],
+                       ", ".join("%dx%d" % wh for wh in sorted(render.LAYOUTS))))
+
             if entry.get("brightness") is not None:
-                scale = mod.caps_for(self._canvas()).brightness
                 self._panel_number(problems, "%s.brightness" % where,
-                                   entry["brightness"], scale)
+                                   entry["brightness"], caps.brightness)
 
             if entry.get("rotate") is not None:
                 self._panel_rotate(problems, where, entry["rotate"])

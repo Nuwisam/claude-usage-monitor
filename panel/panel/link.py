@@ -11,7 +11,7 @@ switched off, the last known limit state stays on the glass.
 """
 import time
 
-from . import device, surface as surfaces
+from . import device, drivers, surface as surfaces
 from .drivers.base import DriverError
 from .log import get as log
 
@@ -47,6 +47,19 @@ class PanelLink:
         # truth the surface would rotate while the acknowledgement ladder consulted
         # an unrotated copy.
         self.caps = None
+        # Which canvas this screen has to be DRAWN on, asked of the driver module and
+        # not of a device: the app groups its panels by this before anything is opened,
+        # and construction has to stay hardware-free. A driver with a fixed geometry
+        # answers with its own size, one that takes what it is given answers with the
+        # configured canvas.
+        try:
+            self.canvas = tuple(drivers.get(spec.backend)
+                                .caps_for((cfg.width, cfg.height)).canvas)
+        except DriverError:
+            # An unknown backend is validate()'s to report and ensure()'s to fail on,
+            # with backoff. Construction must not raise: run.pyw builds links out of a
+            # file it never validated, and a traceback there leaves the glass dark.
+            self.canvas = (cfg.width, cfg.height)
         # Resolved on open: a panel entry may leave it out, and the default is the
         # driver's, because the scales are not comparable across displays.
         self.brightness = spec.brightness
@@ -84,6 +97,15 @@ class PanelLink:
             # try: validate() rejects those, but run.pyw's error card never
             # validates, and a bad angle there must mean backoff, not a traceback.
             caps = dev.caps.rotated(self.spec.rotate)
+            if tuple(caps.canvas) != self.canvas:
+                # The promise in drivers/base.py, finally kept. The app has already
+                # rendered for the canvas the MODULE named; a device answering with a
+                # different one would be handed a frame of the wrong size, and
+                # `surface.for_caps` would build its rectangle from the device's.
+                raise DriverError(
+                    "%s: the module promises a %dx%d canvas and the open device asks "
+                    "for %dx%d" % (self.tag, self.canvas[0], self.canvas[1],
+                                   caps.canvas[0], caps.canvas[1]))
             if caps.reset_on_open:
                 # Reset on EVERY open. 03.08, after taking the module over from
                 # another process, the panel acknowledged every frame (status=0)

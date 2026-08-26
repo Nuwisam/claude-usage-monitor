@@ -66,10 +66,16 @@ class App:
         # `fmt.ServerClock` has been injected from the start — the same idiom, not a new one.
         self.monotonic = monotonic
         self.clock = fmt.ServerClock(monotonic)
-        self.renderer = render.Renderer(cfg.width, cfg.height)
         # One link per configured screen. Constructing them must not enumerate or
         # open anything: App(cfg) has to stay cheap and hardware-free.
         self.panels = [PanelLink(spec, cfg) for spec in cfg.panels]
+        # One renderer per DISTINCT canvas among the screens, built up front so a
+        # canvas nothing can draw fails here and not at the first tick. A dict rather
+        # than a list because the set is read again at every tick: the panels can be
+        # replaced after construction, and the renderer for a canvas is worth keeping.
+        self.renderers = {}
+        for canvas in self._canvases():
+            self._renderer(canvas)
         self.q = queue.Queue()
         self.stop = threading.Event()
 
@@ -303,17 +309,48 @@ class App:
                 and not self.ever_painted
                 and self.monotonic() - self.started < self.cfg.splash_after_sec)
 
+    def _canvases(self):
+        """The distinct canvases the configured screens have to be drawn on, in the
+        order they are configured.
+
+        With no screens at all there is still one canvas: the configured one. `tick`
+        keeps returning a frame in that case, which is what `--out` and the tests read,
+        and what keeps `ever_painted` meaning anything on a desk with nothing plugged in.
+        """
+        out = []
+        for link in self.panels:
+            if link.canvas not in out:
+                out.append(link.canvas)
+        return out or [(self.cfg.width, self.cfg.height)]
+
+    def _renderer(self, canvas):
+        r = self.renderers.get(canvas)
+        if r is None:
+            r = self.renderers[canvas] = render.Renderer(*canvas)
+        return r
+
+    def _frames(self):
+        """One frame per distinct canvas, all from ONE screen state.
+
+        Screens that share a canvas share the frame OBJECT, not a copy of it: the
+        payload and the rotations are memoised on the frame, so two AX206s side by side
+        pack the pixels once between them.
+        """
+        state = self.screen()
+        return dict((canvas, self._renderer(canvas).frame(state))
+                    for canvas in self._canvases())
+
     def tick(self):
         stream.drain(self.q, self.on_event)
         if self.holding():
             return None
-        frame = self.renderer.frame(self.screen())
+        frames = self._frames()
         self.ever_painted = True
-        # Every panel gets the same frame and handles its own failures: one screen
-        # held by another program must not stop the one next to it from drawing.
+        # Every panel gets the frame for ITS canvas and handles its own failures: one
+        # screen held by another program must not stop the one next to it from drawing.
         for link in self.panels:
-            link.send(frame)
-        return frame
+            link.send(frames[link.canvas])
+        return frames[self._canvases()[0]]
 
     def run(self):
         uuids = [a.uuid for a in self.cfg.accounts]
@@ -349,13 +386,20 @@ class App:
             time.sleep(0.2)
         self.stop.set()
         got = self.first_data_at is not None
-        frame = self.renderer.frame(self.screen())
+        # The second rendering site in this file, and it has to group by canvas for the
+        # same reason `tick` does: `force=True` skips the comparison against what is on
+        # the glass, so a frame of the wrong size would go out unchallenged and every
+        # panel would report True.
+        frames = self._frames()
         # Per-panel result, not just the stream's: a run where no screen drew
         # anything used to exit 0 because send()'s answer was thrown away.
-        drew = [(link.tag, link.send(frame, force=True)) for link in self.panels]
+        drew = [(link.tag, link.send(frames[link.canvas], force=True))
+                for link in self.panels]
         for link in self.panels:
             link.close()
-        return got, frame, drew
+        # One frame comes back, for the first screen's canvas — that is the one `--out`
+        # writes. With two sizes on the desk a single file cannot show both.
+        return got, frames[self._canvases()[0]], drew
 
 
 def main(argv=None):

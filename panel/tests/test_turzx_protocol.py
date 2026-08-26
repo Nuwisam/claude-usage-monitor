@@ -181,28 +181,39 @@ def test_rgb565_comes_back_as_the_pixels_that_went_in():
 def test_the_png_on_the_wire_is_rgba(monkeypatch):
     """Three channels are accepted and acknowledged, and draw ghosts. See the header."""
     dev, dll = opened(monkeypatch, [ack_for(t.CMD_UPLOAD_PNG)])
-    dev.write(pack_rgb565(Image.new("RGB", t.ACCEPTS, (10, 20, 30)), LITTLE),
-              (0, 0, *t.ACCEPTS))
+    dev.write(pack_rgb565(Image.new("RGB", t.NATIVE, (10, 20, 30)), LITTLE),
+              (0, 0, *t.NATIVE))
     png = dll.writes[0][t.PACKET:]
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
     assert Image.open(io.BytesIO(png)).mode == "RGBA"
 
 
-def test_the_frame_is_letterboxed_onto_the_real_glass(monkeypatch):
+def test_the_frame_covers_the_glass_edge_to_edge(monkeypatch):
+    """No letterbox and no scaling: the buffer this driver takes IS the glass, so the
+    frame's own colour has to reach the corners."""
     dev, dll = opened(monkeypatch, [ack_for(t.CMD_UPLOAD_PNG)])
-    dev.write(pack_rgb565(Image.new("RGB", t.ACCEPTS, (10, 20, 30)), LITTLE),
-              (0, 0, *t.ACCEPTS))
-    img = Image.open(io.BytesIO(dll.writes[0][t.PACKET:]))
-    assert img.size == t.GLASS == (720, 1280)
-    # The content is centred and the border is black, not the frame's own colour.
-    assert img.convert("RGB").getpixel((0, 0)) == (0, 0, 0)
-    assert img.convert("RGB").getpixel((t.GLASS[0] // 2, t.GLASS[1] // 2)) != (0, 0, 0)
+    dev.write(pack_rgb565(Image.new("RGB", t.NATIVE, (10, 20, 30)), LITTLE),
+              (0, 0, *t.NATIVE))
+    img = Image.open(io.BytesIO(dll.writes[0][t.PACKET:])).convert("RGB")
+    assert img.size == t.NATIVE == (720, 1280)
+    for xy in ((0, 0), (719, 0), (0, 1279), (719, 1279), (360, 640)):
+        # 565 quantisation moves the value; what matters is that no black border is left.
+        assert img.getpixel(xy) != (0, 0, 0)
+
+
+def test_the_canvas_is_the_glass_turned_a_quarter(monkeypatch):
+    """The client renders landscape and the host rotates. A canvas that did not match
+    the glass turned would be caught by link.py, but only after the frame was drawn."""
+    caps = t.caps_for()
+    assert caps.native == (720, 1280)
+    assert caps.canvas == (1280, 720)
+    assert caps.rotate == 90
 
 
 def test_a_buffer_of_the_wrong_size_is_refused_before_anything_goes_out(monkeypatch):
     dev, dll = opened(monkeypatch)
     with pytest.raises(Exception):
-        dev.write(b"\x00" * 10, (0, 0, *t.ACCEPTS))
+        dev.write(b"\x00" * 10, (0, 0, *t.NATIVE))
     assert dll.writes == []
 
 
@@ -222,11 +233,11 @@ def test_open_drains_whatever_the_previous_process_left(monkeypatch):
 def test_one_frame_takes_exactly_one_acknowledgement(monkeypatch):
     dev, dll = opened(monkeypatch, [ack_for(t.CMD_UPLOAD_PNG),
                                     ack_for(t.CMD_UPLOAD_PNG)])
-    payload = pack_rgb565(Image.new("RGB", t.ACCEPTS, (1, 2, 3)), LITTLE)
+    payload = pack_rgb565(Image.new("RGB", t.NATIVE, (1, 2, 3)), LITTLE)
     before = dll.reads
-    assert dev.write(payload, (0, 0, *t.ACCEPTS)) == 0xC8
+    assert dev.write(payload, (0, 0, *t.NATIVE)) == 0xC8
     assert dll.reads == before + 1
-    assert dev.write(payload, (0, 0, *t.ACCEPTS)) == 0xC8
+    assert dev.write(payload, (0, 0, *t.NATIVE)) == 0xC8
     assert dev.missed_ack == 0
 
 
@@ -234,24 +245,24 @@ def test_an_empty_packet_is_not_the_answer_and_is_read_past(monkeypatch):
     """The device sends a zero-length reply before the real one often enough that a
     single read is not a measurement."""
     dev, dll = opened(monkeypatch, [b"", ack_for(t.CMD_UPLOAD_PNG)])
-    assert dev.write(pack_rgb565(Image.new("RGB", t.ACCEPTS), LITTLE),
-                     (0, 0, *t.ACCEPTS)) == 0xC8
+    assert dev.write(pack_rgb565(Image.new("RGB", t.NATIVE), LITTLE),
+                     (0, 0, *t.NATIVE)) == 0xC8
     assert dev.missed_ack == 0
 
 
 def test_no_acknowledgement_returns_none_so_the_link_can_count_it(monkeypatch):
     """`link.py` resets after three `None`s — so `None` must mean exactly 'no answer'."""
     dev, dll = opened(monkeypatch, [])
-    assert dev.write(pack_rgb565(Image.new("RGB", t.ACCEPTS), LITTLE),
-                     (0, 0, *t.ACCEPTS)) is None
+    assert dev.write(pack_rgb565(Image.new("RGB", t.NATIVE), LITTLE),
+                     (0, 0, *t.NATIVE)) is None
     assert dev.missed_ack == 1
 
 
 def test_a_reply_for_another_command_is_not_counted_as_this_ones(monkeypatch):
     """Charging one frame's failure to another is worse than missing it."""
     dev, dll = opened(monkeypatch, [ack_for(t.CMD_SYNC)] * t.ACK_ATTEMPTS)
-    assert dev.write(pack_rgb565(Image.new("RGB", t.ACCEPTS), LITTLE),
-                     (0, 0, *t.ACCEPTS)) is None
+    assert dev.write(pack_rgb565(Image.new("RGB", t.NATIVE), LITTLE),
+                     (0, 0, *t.NATIVE)) is None
     assert dev.missed_ack == 1
 
 
@@ -281,8 +292,8 @@ def test_a_command_carrying_a_value_carries_no_payload(monkeypatch):
 
 def test_capabilities_are_fixed_regardless_of_the_asked_canvas():
     caps = t.caps_for((800, 480))
-    assert caps.canvas == (480, 320)
-    assert caps.native == (320, 480)
+    assert caps.canvas == (1280, 720)
+    assert caps.native == (720, 1280)
     assert caps.rotate == 90
     assert caps.byte_order == LITTLE
     assert caps.rect_updates is False

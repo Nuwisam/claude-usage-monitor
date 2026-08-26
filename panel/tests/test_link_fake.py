@@ -118,6 +118,25 @@ def frames():
 FULL = 480 * 320 * 2
 
 
+def test_an_opened_device_that_wants_another_canvas_backs_off(clock, monkeypatch):
+    """The app has already rendered for the canvas the MODULE named. A device answering
+    with a different one would be handed a frame of the wrong size, and the surface
+    would build its rectangle from the device's answer — so this has to be a failure
+    the link backs off from, not a mismatch nobody notices."""
+    dev = FakeDriver()
+    dev.caps = Caps(name="fake", canvas=(1280, 720), native=(1280, 720), rotate=0,
+                    byte_order=BIG, rect_updates=False, acked=True,
+                    brightness=Scale("steps", 0, 7, 5), bytes_per_sec=870_000)
+    link = link_mod.PanelLink(spec(), cfg())
+    assert link.canvas == (480, 320), "an unknown backend falls back to the configured canvas"
+    monkeypatch.setattr(link_mod.device, "open_panel", lambda *a, **k: dev)
+    monkeypatch.setattr(link_mod.device, "options_for", lambda cfg: {})
+
+    assert link.ensure() is False
+    assert link.dev is None
+    assert "1280x720" in link._last_error and "480x320" in link._last_error
+
+
 def test_first_frame_after_open_is_written_whole(clock):
     dev = FakeDriver()
     link = make_link(dev)

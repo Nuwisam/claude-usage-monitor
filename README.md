@@ -288,7 +288,7 @@ cd ../frontend && npm run typecheck
 cd ../panel && pytest
 ```
 
-364 backend tests and 387 panel tests, including the normalizer and the write path, which run
+364 backend tests and 417 panel tests, including the normalizer and the write path, which run
 against a **real payload** from a Max account (`backend/tests/fixtures/usage_max.json`), not an
 invented one. Billing amounts in the fixtures are rescaled; the percentages stayed
 original, so `spend.percent` still agrees with the `used/limit` pair beside it.

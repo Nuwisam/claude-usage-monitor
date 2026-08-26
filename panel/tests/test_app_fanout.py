@@ -8,9 +8,12 @@ from panel import app as app_mod, config as C
 
 
 class FakeLink:
-    def __init__(self, tag, ok=True):
+    def __init__(self, tag, ok=True, canvas=(480, 320)):
         self.tag = tag
         self.ok = ok
+        # Which canvas this screen wants drawn. The app groups its panels by this
+        # before it renders anything, so a fake without one is never handed a frame.
+        self.canvas = canvas
         self.frames = []
         self.forced = []
         self.closed = 0
@@ -58,6 +61,62 @@ def test_one_frame_reaches_every_panel():
     a, b = FakeLink("a"), FakeLink("b")
     frame = app_with([a, b]).tick()
     assert a.frames == [frame] and b.frames == [frame]
+
+
+WIDE = (1280, 720)
+
+
+def test_two_canvases_are_drawn_in_one_tick():
+    """A wide screen next to a narrow one. Each gets a frame of ITS size, both built
+    from the same screen state — not one frame stretched, and not two ticks."""
+    narrow, wide = FakeLink("narrow"), FakeLink("wide", canvas=WIDE)
+    app_with([narrow, wide]).tick()
+    assert narrow.frames[0].image.size == (480, 320)
+    assert wide.frames[0].image.size == WIDE
+    assert narrow.frames[0] is not wide.frames[0]
+
+
+def test_screens_on_one_canvas_share_the_frame_object():
+    """Not merely equal frames: the payload and the rotations are memoised ON the
+    frame, so two screens of a size have to pack the pixels once between them."""
+    a, b, wide = FakeLink("a"), FakeLink("b"), FakeLink("wide", canvas=WIDE)
+    app_with([a, b, wide]).tick()
+    assert a.frames[0] is b.frames[0]
+
+
+def test_a_canvas_is_rendered_once_however_many_screens_want_it():
+    counted = []
+    app = app_with([FakeLink("a"), FakeLink("b"), FakeLink("wide", canvas=WIDE)])
+    app.tick()                                  # the first tick builds the renderers
+    for canvas, renderer in list(app.renderers.items()):
+        app.renderers[canvas] = _Counting(renderer, counted)
+    app.tick()
+    assert sorted(counted) == [(480, 320), WIDE], \
+        "three screens on two canvases must cost two renders, not three"
+
+
+class _Counting:
+    """A renderer that records the canvas each `frame()` call was for."""
+
+    def __init__(self, inner, log):
+        self._inner = inner
+        self._log = log
+
+    def frame(self, state):
+        out = self._inner.frame(state)
+        self._log.append(out.image.size)
+        return out
+
+
+def test_the_wide_screen_gets_the_wide_layout_not_a_stretched_one():
+    """Drawn by that canvas's own layout, not by the narrow one on a bigger sheet.
+    A stretched frame would be the right SIZE and still wrong everywhere else."""
+    from panel import layout as L, layout_wide as W
+
+    app = app_with([FakeLink("narrow"), FakeLink("wide", canvas=WIDE)])
+    app.tick()
+    assert app.renderers[WIDE].L is W
+    assert app.renderers[(480, 320)].L is L
 
 
 def test_a_failing_panel_does_not_stop_the_others():

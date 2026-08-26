@@ -79,11 +79,18 @@ def _card(lines):
     safe["panels"] = entries
 
     cfg = C.Config(safe)
-    frame = render.Renderer(cfg.width, cfg.height).frame(
-        render.ScreenState(message=lines))
+    state = render.ScreenState(message=lines)
+    # One card per canvas, drawn when a screen of that size first asks for it. The
+    # fallback above widens `entries` to every driver in the registry, so this path
+    # can easily be looking at two sizes at once — and a card of the wrong size is a
+    # card nobody reads, which is the one thing this function exists to prevent.
+    cards = {}
     for spec in cfg.panels:
         link = PanelLink(spec, cfg)
         try:
+            frame = cards.get(link.canvas)
+            if frame is None:
+                frame = cards[link.canvas] = render.Renderer(*link.canvas).frame(state)
             link.send(frame, force=True)
         except Exception:
             # One busy screen must not take the card away from the others.

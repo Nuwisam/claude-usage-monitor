@@ -108,14 +108,12 @@ CMD_SYNC = 10
 CMD_BRIGHTNESS = 14
 CMD_UPLOAD_PNG = 102
 
-# Stage 1 geometry. The renderer draws one 480x320 canvas for every screen, so this
-# driver accepts that canvas rotated (320x480) and letterboxes it onto the real glass
-# inside write(). BOTH of these go away once the client can render per canvas.
-CANVAS = (480, 320)
-ACCEPTS = (320, 480)                     # the buffer we take, NOT the glass
+# The glass is 720x1280, so the canvas is that turned a quarter: the client renders
+# 1280x720 and the host rotates. `NATIVE` is the buffer this driver accepts and it is
+# the glass itself — nothing is scaled or letterboxed on the way in.
+NATIVE = MODELS[0x0050]                  # (720, 1280), device coordinates
+CANVAS = (NATIVE[1], NATIVE[0])          # (1280, 720), renderer coordinates
 ROTATE = 90
-GLASS = MODELS[0x0050]                   # (720, 1280) — what is actually out there
-SCALE = 2                                # integer: the layout is drawn in hairlines
 
 # Measured: 72 kB moved in ~1.5 ms once the pipe is free, so the wire is not the cost.
 BYTES_PER_SEC = 36_000_000
@@ -130,12 +128,10 @@ ACK_ATTEMPTS = 4
 def caps_for(canvas=None):
     """Fixed geometry: `canvas` is accepted and ignored, as on the Turing rev A.
 
-    `native` is the buffer this driver ACCEPTS, which in stage 1 is not the glass —
-    the panel is 720x1280 and we take 320x480, then scale. That is a deliberate,
-    temporary lie in a documented field, and it is why `--probe` prints 320x480 for a
-    720x1280 screen until the client can render a second canvas.
+    The client groups its screens by the canvas named here and renders one frame per
+    distinct canvas, so this answer decides which layout this panel is drawn with.
     """
-    return Caps(name=NAME, canvas=CANVAS, native=ACCEPTS, rotate=ROTATE,
+    return Caps(name=NAME, canvas=CANVAS, native=NATIVE, rotate=ROTATE,
                 byte_order=LITTLE, rect_updates=False, acked=True,
                 reset_on_open=False,
                 brightness=Scale("percent", 0, 100, 40),
@@ -277,8 +273,11 @@ class Turzx:
         self.found = found
         self.dll = load(dll_path)
         self.h = None
-        self.width, self.height = ACCEPTS
-        self.glass = found.glass if found is not None else GLASS
+        # The glass this unit reports through the model table, which is also the buffer
+        # write() takes. One model is known; a second with different dimensions would
+        # need caps_for to learn about it too, since that answers before any device
+        # has been opened.
+        self.width, self.height = found.glass if found is not None else NATIVE
         self.missed_ack = 0          # acknowledgements we asked for and did not get
 
     @property
@@ -350,27 +349,24 @@ class Turzx:
         exactly that and nothing else.
         """
         check_rect(rect, self.width, self.height, len(rgb565))
+        # `convert`, never `putalpha`: the firmware walks the decoded buffer four bytes
+        # to the pixel, and the image the renderer hands out is memoised and shared with
+        # the other screens — mutating it in place would corrupt their frame.
         img = Image.frombytes("RGB", (self.width, self.height), bytes(rgb565),
-                              "raw", "BGR;16")
-        return self._send_image(self._fit(img))
+                              "raw", "BGR;16").convert("RGBA")
+        return self._send_image(img)
 
     def write_image(self, img, at=(0, 0)):
-        """Diagnostics only — the client packs frames once and hands over 565."""
-        return self._send_image(self._fit(img.convert("RGB")))
+        """Diagnostics only — the client packs frames once and hands over 565.
 
-    def _fit(self, img):
-        """The accepted buffer, letterboxed onto the real glass. Stage 1 only.
-
-        Integer scale, because this layout is built out of hairlines and a fractional
-        one would smear them; RGBA by `convert`, never `putalpha`, because the image
-        the renderer hands out is memoised and shared with the other panels — mutating
-        it in place would corrupt their frame.
+        Centred on a black field rather than scaled: the caller's picture may be any
+        size, and the firmware wants a whole frame.
         """
-        big = img.resize((img.width * SCALE, img.height * SCALE), Image.NEAREST)
-        canvas = Image.new("RGBA", self.glass, (0, 0, 0, 255))
-        canvas.paste(big, ((self.glass[0] - big.width) // 2,
-                           (self.glass[1] - big.height) // 2))
-        return canvas
+        glass = Image.new("RGBA", (self.width, self.height), (0, 0, 0, 255))
+        picture = img.convert("RGBA")
+        glass.paste(picture, ((self.width - picture.width) // 2,
+                              (self.height - picture.height) // 2))
+        return self._send_image(glass)
 
     def _send_image(self, rgba):
         buf = io.BytesIO()

@@ -174,3 +174,35 @@ def test_broken_width_does_not_break_panel_validation():
     must not be the place that trips over "480"."""
     ps = problems(width="wide", panels=[{"backend": "ax206", "brightness": 5}])
     assert any("width" in p for p in ps)
+
+
+# --- the canvas each screen asks for ----------------------------------------
+
+
+def test_screens_of_two_sizes_are_both_accepted():
+    """The point of the whole per-canvas change: a 480x320 screen next to a 1280x720
+    one is a valid desk, not a configuration error."""
+    ps = problems(panels=[{"backend": "ax206", "port_path": "3.4"},
+                          {"backend": "turzx-usb", "port_path": "5"}])
+    assert [p for p in ps if "canvas" in p] == []
+
+
+def test_a_screen_asking_for_a_canvas_nobody_draws_is_a_problem():
+    """A driver names its own canvas. If nothing can draw that size the client would
+    otherwise render a frame of the wrong shape and every screen would report success."""
+    from panel import drivers, render
+
+    assert tuple(drivers.get("ax206").caps_for((800, 480)).canvas) == (800, 480), \
+        "the AX206 takes the canvas it is given, which is what makes this reachable"
+    assert (800, 480) not in render.LAYOUTS
+
+    ps = problems(width=800, height=480, panels=[{"backend": "ax206"}])
+    assert any("800x480" in p and "canvas" in p for p in ps)
+
+
+def test_a_driver_with_its_own_geometry_is_not_measured_against_the_configured_canvas():
+    """A screen with a fixed size is drawn at that size. Before per-canvas rendering
+    this pair could only have been a mismatch."""
+    ps = problems(width=480, height=320,
+                  panels=[{"backend": "turzx-usb", "port_path": "5"}])
+    assert [p for p in ps if "canvas" in p] == []

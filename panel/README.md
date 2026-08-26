@@ -3,8 +3,9 @@
 A headless client that subscribes to `/api/stream` and draws the state of the
 limits on screens sitting on a desk. Layout **4a** from the mockup: two accounts
 in bands, the percentage next to the block, credits at the bottom of the band.
-There is one renderer and it draws a single logical 480×320 canvas; the screens
-differ only in what they do with that canvas.
+There is one renderer per **canvas**: 480×320 for the 3.5-inch screens and
+1280×720 for the TURZX, the same layout with its own set of numbers. Screens
+asking for one canvas share one renderer.
 
 ```
 python -m panel                          loop (same as what the scheduled task runs)
@@ -14,8 +15,9 @@ python -m panel --probe [--backend ax206]  test card: colors, bars, descenders, 
 python -m panel --once                   one frame of real data, then exit
 ```
 
-One rendered frame goes to **every** configured screen; each has its own
-connection, its own backoff and its own memory of what it is showing. The
+One rendered frame goes to **every screen of its canvas**, as the same object —
+so the payload and the rotations are packed once between them. Each screen has
+its own connection, its own backoff and its own memory of what it shows. The
 drivers live in [`panel/drivers/`](panel/drivers) — one file per screen type,
 and the registry is an explicit dictionary in `__init__.py`.
 
@@ -184,6 +186,39 @@ write. With partial updates the clock writes something every minute, so timing i
 off "last write" would mean it never fires — and on a link that confirms nothing,
 that repaint is the only way back from a silent desync.
 
+## The third screen: TURZX 5.2" over WinUSB
+
+The first screen here that is not 480 × 320, and the reason the client renders one
+frame per canvas. Driver: [`panel/drivers/turzx_usb.py`](panel/drivers/turzx_usb.py),
+whose header carries the full packet map.
+
+| | |
+|---|---|
+| identity | `1CBE:0050`, vendor class FF/00/00, high speed |
+| driver | **WinUSB**, not libusb-win32 — the library is still libusb-1.0 |
+| endpoints | bulk `0x01` out, `0x81` in, interface 0, max packet 512 |
+| resolution | 720 × 1280 **portrait**; the 1280 × 720 layout is rotated 90° host-side |
+| payload | a whole-frame **PNG**, preceded by a 512-byte DES-CBC header |
+| throughput | ~72 kB at compress level 1; ~70 ms of firmware per frame, ~14 fps |
+| partial updates | none — whole frames only |
+| brightness | percent, 0..100 |
+| acknowledgement | **yes, and it is the only flow control there is** |
+
+Three things measured on this unit that appear in no reference source, all of them
+silent when got wrong:
+
+- **The PNG must be RGBA.** A three-channel one is accepted and acknowledged with the
+  same 0xC8, then drawn as a stack of ghosts stepping down the glass — the firmware
+  walks the decoded buffer four bytes to the pixel.
+- **Brightness rides in header byte `[8]`**, the same field an upload uses for its
+  payload size. At the wrong offset the device acknowledges and goes dark.
+- **Frames fired back to back queue their acknowledgements** until the bulk write
+  itself stalls (measured: 36 queued, then an 8 s timeout). One ack per frame, always,
+  and the IN endpoint is drained on open or every read answers the previous command.
+
+Everything above is from **one** unit; the model table matches on the VID/PID pair, so
+an unmeasured TURZX is not seen rather than drawn wrongly.
+
 ## Where the data comes from
 
 `GET /api/stream?account=<uuid>&account=<uuid>` with `Authorization: Bearer`.
@@ -222,8 +257,9 @@ The presentation is two-stage, and that is a decision, not a phase:
    more — the three newest plus a counter for the rest.
 
    For `alert_flash_sec` the card **blinks**, that is, it swaps the blank frame
-   for one **flooded with the accent**: the banner and the 6 px rail on the left
-   edge turn `ACCENT`, and the text in the banner turns to the background color.
+   for one **flooded with the accent**: the banner and the rail on the left edge
+   (6 px at 480×320, 14 px at 1280×720) turn `ACCENT`, and the text in the
+   banner turns to the background color.
    The rail is there **in both frames** — in the resting one it is
    `NEUTRAL_900` — so the flood changes the color, not the layout, and the card
    keeps a fixed left edge even after the window expires. Without blinking, the
@@ -239,8 +275,9 @@ The presentation is two-stage, and that is a decision, not a phase:
    A full-screen flash is structurally impossible here: that is by definition a
    full frame, and the Turing paints it progressively over 1.87 s (verified on
    the hardware).
-2. It then collapses to a **4 px accent bar on the left edge of the account
-   band** that reported the block; the account name turns `ACCENT_100`, and the
+2. It then collapses to an **accent bar on the left edge of the account band**
+   that reported the block (4 px at 480×320, 9 px at 1280×720); the account
+   name turns `ACCENT_100`, and the
    reason appears in capitals on the line with the plan name. The bar sits in
    the margin area, so the band's layout does not shift by a pixel, and it has
    the band's full height. The state stops being *takeover*; it does not stop
@@ -382,10 +419,10 @@ overwritten when it is updated.
 **`rotate` says how the screen is mounted**, in degrees counter-clockwise,
 **added on top of the rotation the driver applies anyway** (`turing-rev-a` has
 its own 90°, so `180` gives 270°). Only **`0` or `180`** are allowed — a quarter
-turn would need a portrait 320×480 layout, and only one 3:2 layout is drawn;
-changing the angle alone would give either scaling (this layout is hairline
-strokes, it would not survive that) or a payload whose length does not fit the
-rectangle. Omitted means `0`. To check without changing the file:
+turn would need a portrait layout, and the two that exist are both landscape
+(480×320 and 1280×720); changing the angle alone would give either scaling (this
+layout is hairline strokes, it would not survive that) or a payload whose length
+does not fit the rectangle. Omitted means `0`. To check without changing the file:
 `python -m panel --identify turing-rev-a#0 --rotate 180`.
 
 **Brightness is per screen, because the scales are not comparable**: `ax206` is

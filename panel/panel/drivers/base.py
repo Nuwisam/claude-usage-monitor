@@ -75,9 +75,11 @@ class Caps:
     def __init__(self, name, canvas, native, rotate, byte_order, rect_updates,
                  acked, brightness, bytes_per_sec, reset_on_open=False):
         self.name = name
-        # Logical canvas the driver wants to be handed, in renderer coordinates.
-        # Cross-checked against the configured width/height so a screen with a
-        # different aspect ratio fails at startup instead of being drawn wrong.
+        # Logical canvas the driver wants to be handed, in renderer coordinates. The
+        # client groups its screens by this and renders one frame per distinct value,
+        # so it settles which layout this panel is drawn with. Checked twice: config
+        # validation refuses a canvas the build has no layout for, and link.py refuses
+        # an opened device whose answer differs from its own module's.
         self.canvas = canvas
         # Native framebuffer geometry, in device coordinates.
         self.native = native
