@@ -66,7 +66,7 @@ Deliberately a local file, not the repo — a machine token has no business in g
 """
 import sys, os, json, time, re
 
-SCRIPT_VERSION = 15
+SCRIPT_VERSION = 16
 
 # Marker inherited by the child process. `claude -p "/usage"` is a normal Claude Code
 # session — it will fire the Stop hook, which fires the probe, which would fire another
@@ -315,20 +315,29 @@ def find_claude(cfg):
     b = cfg.get("claude_bin")
     if b and os.path.isabs(b) and os.path.isfile(b):
         return b
-    import shutil                       # local import — cold path, once every 60 s
     # NEVER a bare shutil.which("claude"). On Windows which() prepends the process cwd to
     # the search path (curdir goes in at index 0, ahead of every real PATH entry), and a
     # hook's cwd IS the project directory — so a `claude.exe` committed to a repo would
     # outrank the genuine CLI and get spawned, hidden, once every 60 s. Passing path= does
     # NOT suppress that: the insert happens after the path argument is split, regardless.
-    # Searching one PATH entry at a time does suppress it — given a cmd WITH a directory
-    # part, which() searches that directory alone and never consults os.curdir, while its
-    # PATHEXT handling stays intact.
+    # Feeding which() one PATH entry at a time does suppress it, but is NOT portable: given
+    # a cmd WITH a directory part, which() on 3.9-3.11 returns it verbatim if it merely
+    # EXISTS and never appends PATHEXT — on Windows that matches nothing (or picks npm's
+    # extensionless sh shim over claude.cmd). So the walk is explicit and PATHEXT expanded
+    # here: same result on 3.9 through 3.13, os.curdir never consulted, and on Windows only
+    # extensions cmd.exe would accept.
+    if os.name == "nt":
+        exts = [e for e in (os.environ.get("PATHEXT")
+                            or ".COM;.EXE;.BAT;.CMD").split(os.pathsep) if e]
+    else:
+        exts = [""]
     for d in (os.environ.get("PATH") or os.defpath).split(os.pathsep):
-        if os.path.isabs(d):            # skips "" and "." — both mean the cwd
-            exe = shutil.which(os.path.join(d, "claude"))
-            if exe:
-                return exe
+        if not os.path.isabs(d):        # skips "" and "." — both mean the cwd
+            continue
+        for ext in exts:
+            p = os.path.join(d, "claude" + ext)
+            if os.path.isfile(p) and os.access(p, os.X_OK):
+                return p
     return None
 
 
@@ -1433,6 +1442,101 @@ def _fingerprint(items):
     return json.dumps([[e.get("key"), e.get("reason")] for e in items], sort_keys=True)
 
 
+# The publish claim. Its path is derived at CALL time and never bound at import: `OUTDIR` is
+# a module global that backend/tests/test_session_status.py repoints per test (fixture `ss`),
+# and a constant computed at import escapes that redirection — the tests would take the claim
+# in the real, machine-global %LOCALAPPDATA% while appearing to be isolated.
+#
+# CLAIM_STALE_S is the only thing that ever clears a claim left by a process that died
+# mid-POST; until it expires no publish on this machine sends anything. Nothing is LOST in
+# that window (the marker still disagrees with disk, so the next event corrects it), but a
+# block reaches the panel late, so the value must not be larger than it has to be. It must
+# also stay above the longest hold that can END IN A MARKER WRITE, because reaping a live
+# holder puts two publishers on the wire at once. That bound is NOT the socket timeout: a
+# hold long enough to be reaped means the POSTs inside it are timing out, a timed-out POST
+# writes no marker, and the divergence this mechanism prevents needs a SUCCESSFUL post
+# followed by a marker write. Two successful passes against a loaded ingest server measure in
+# single-digit seconds; 30 s is the headroom over that.
+CLAIM_STALE_S = 30.0
+
+
+def _publish_claim_path():
+    return os.path.join(OUTDIR, "session-status-publish.lock")
+
+
+def _claim_publish():
+    """"held", "busy" or "broken" — never an exception, and never a wait.
+
+    "broken" is not a failure to serialise, it is the claim file being uncreatable at all, and
+    for a path inside OUTDIR that means POSTED is unwritable too. The permanent divergence
+    guarded against here REQUIRES a written marker — it is the marker left agreeing with disk
+    while the server holds an older set that makes it permanent — so the unserialised fallback
+    is only ever taken in the one state where the defect it would re-open cannot occur. That
+    is the whole difference between this and a give-up-under-contention fallback, which
+    reopens the defect in precisely the case that produces it.
+    """
+    path = _publish_claim_path()
+    for attempt in (1, 2):
+        try:
+            os.makedirs(OUTDIR, exist_ok=True)
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            if attempt == 2:
+                return "busy"
+            age = _safe(lambda: time.time() - os.path.getmtime(path))
+            if age is None:
+                continue            # released between the two calls — one more attempt
+            if age <= CLAIM_STALE_S:
+                return "busy"
+            try:
+                os.remove(path)     # a holder that died mid-POST
+            except Exception:
+                return "busy"       # someone reaped it first, or Windows refused
+        except Exception:
+            return "broken"
+        else:
+            _safe(os.close, fd)
+            return "held"
+    return "busy"
+
+
+def _marker_is(finger):
+    """An unreadable marker counts as "different", exactly as the bare `try` it replaces."""
+    try:
+        with open(POSTED, "r", encoding="utf-8") as f:
+            return f.read() == finger
+    except Exception:
+        return False
+
+
+def _publish_once(cfg, url):
+    """One pass, run ONLY by the claim holder. True when a set actually went out.
+
+    The snapshot is taken HERE, inside the claim, not handed down by the caller: the caller's
+    snapshot is a short-circuit taken before any serialisation, and posting it would put a set
+    on the wire that predates the claim.
+    """
+    items = snapshot()
+    finger = _fingerprint(items)
+    if _marker_is(finger):
+        return False
+    body = {"entries": items, "sent_at": _iso(time.time()),
+            "script_version": SCRIPT_VERSION}
+    try:
+        code, _resp = post(cfg, url, body)
+    except Exception:
+        return False
+    if code >= 300:
+        return False
+    try:
+        os.makedirs(OUTDIR, exist_ok=True)
+        with open(POSTED, "w", encoding="utf-8") as f:
+            f.write(finger)
+    except Exception:
+        pass
+    return True
+
+
 def publish(cfg):
     """POST only when the SET has changed.
 
@@ -1440,32 +1544,46 @@ def publish(cfg):
     event. A known limitation, built into the design: a blocked session generates no further
     events, so a POST lost exactly at entry waits for the next activity in this or another
     session on the same machine.
+
+    SERIALISED, because the marker is a statement about the SERVER's state while the POSTs
+    that set that state were ordered by nobody. OUTDIR and STATEDIR are machine-global, so two
+    hook processes — parallel subagents, or two sessions — run this concurrently: with the
+    snapshot, the marker check, the POST and the marker write all unguarded, the OLDER set can
+    arrive at the server LAST while the NEWER marker is written last. From then on every
+    publish() finds the marker agreeing with disk and returns without posting, so the panel
+    keeps a set the machine has not been in for hours.
+
+    What the claim buys is one sentence: only a holder posts, and it both snapshots and writes
+    the marker inside the claim, so the last marker written is the last set the server
+    received. A contender does NOT wait (rule 6) and does NOT post — it returns, and its
+    change is carried either by the holder's second pass or by the next event. Either way the
+    marker then DISAGREES with disk, which is the self-healing state; the failure above is the
+    one where it agrees and is wrong.
     """
     items = snapshot()
     finger = _fingerprint(items)
-    try:
-        with open(POSTED, "r", encoding="utf-8") as f:
-            if f.read() == finger:
-                return
-    except Exception:
-        pass
+    if _marker_is(finger):
+        return                      # the common case: unchanged, and nothing was claimed
     url = cfg.get("alert_url")
     if not url or not cfg.get("ingest_token"):
         return                      # local-only mode — files and toast, no network
-    body = {"entries": items, "sent_at": _iso(time.time()),
-            "script_version": SCRIPT_VERSION}
-    try:
-        code, _resp = post(cfg, url, body)
-    except Exception:
-        return
-    if code >= 300:
+    claim = _claim_publish()
+    if claim == "busy":
         return
     try:
-        os.makedirs(OUTDIR, exist_ok=True)
-        with open(POSTED, "w", encoding="utf-8") as f:
-            f.write(finger)
-    except Exception:
-        pass
+        # Two passes at most. The first carries the change that brought us here. The second is
+        # for the contender turned away while pass one was on the wire: it had already written
+        # or dropped its entry BEFORE it called publish(), so pass two sees it and carries its
+        # block to the panel now instead of leaving it for the next event. It costs one
+        # `snapshot()` when nothing changed and a POST only when something did — the very POST
+        # that contender would have sent itself. Two, not "until quiet": the claim is held
+        # across it and rule 6 does not bend.
+        for _ in (1, 2):
+            if not _publish_once(cfg, url):
+                break
+    finally:
+        if claim == "held":
+            _safe(os.remove, _publish_claim_path())
 
 
 # --------------------------------------------------------------- local toast
