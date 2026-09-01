@@ -35,6 +35,34 @@ DEFAULTS = {
     "log_path": None,
     "log_level": "INFO",
     "tick_sec": 1.0,
+    # The clock face, in two independent halves: "30.08.2026" and "21:07:33". Both
+    # govern BOTH faces at once (the header clock and the time in the alert banner), so
+    # the two never read as different shapes. Two keys and not one, because the halves
+    # cost nothing like each other.
+    #
+    # SECONDS are the expensive half, on whichever face is up — the header clock, and the
+    # alert banner once a card takes the screen. Neither waits for work to happen: they
+    # turn one write a minute into one a second. On the TURZX that is ~70 ms of firmware
+    # out of every second, about 7 %; on the AX206, which has no partial updates, a full
+    # 355 ms blit each time — ~2.5 % of USB time becomes ~35 %, permanently.
+    #
+    # Off by default because DEFAULTS is merged UNDER the file (Config.__init__): a `true`
+    # here reaches every panel.json written before the key existed and starts that blit
+    # without anyone choosing it. Put `true` for the ticking second; on a full-frame-only
+    # panel (ax206, turzx) that is what it costs.
+    "clock_seconds": False,
+    # The DATE is free: it changes at midnight and never in between, so it costs width in
+    # the header and nothing on the wire. `false` leaves the bare time, "21:07:33".
+    "clock_date": True,
+    #
+    # Both are TOP-LEVEL, unlike `brightness` and `rotate`, which are per panel — and the
+    # asymmetry is forced, not an oversight. Brightness and rotation are applied by each
+    # driver to a frame it already has; the clock face is drawn INTO the frame, and
+    # `App._frames()` builds one frame per distinct CANVAS and hands the same object to
+    # every screen on it. A per-panel clock would mean a frame per panel, which is the
+    # sharing that commit made deliberate. So the cost lands per screen while the switch
+    # can only be set for all of them: with a fast panel and an AX206 on one desk, the
+    # AX206 is what the setting has to be chosen for.
     # The panel gets a frame only when the image differs. This threshold forces a
     # send despite there being no difference, so that a corrupted patch on the
     # glass does not stay there forever — the panel holds its last frame forever.
@@ -262,6 +290,9 @@ class Config:
         self._number(problems, "tick_sec", float, 0.01)
         self._number(problems, "width", int, 1)
         self._number(problems, "height", int, 1)
+        for name in ("clock_seconds", "clock_date", "session_alerts", "record_sse"):
+            self._flag(problems, name)
+        self._unknown_keys(problems)
         self._canvas_has_a_layout(problems)
         return problems
 
@@ -419,6 +450,33 @@ class Config:
         if not (scale.lo <= value <= scale.hi):
             problems.append("%s is out of the range %s for this driver"
                             % (name, scale.describe()))
+
+    def _flag(self, problems, name):
+        """One boolean field: APPENDS a problem, never raises.
+
+        These are read by TRUTHINESS, which is why they need a check the numbers do not.
+        `"clock_seconds": "false"` is a non-empty string, so it reads as ON — the panel
+        then writes a frame a second, which on an AX206 is a full 355 ms blit each time,
+        and the file says the opposite of what the glass does.
+        """
+        raw = self._d.get(name)
+        if raw is not True and raw is not False:
+            problems.append("%s must be true or false (got: %r)" % (name, raw))
+
+    def _unknown_keys(self, problems):
+        """A top-level key nothing reads — the same check `_check_panels` runs per entry.
+
+        The other half of the same failure, and the reason a value check alone is not
+        enough: `"clock_second": false` is not a bad value, it is a key no one reads, so
+        the default stands and the panel keeps writing every second while the file looks
+        like it says otherwise. Nothing downstream can catch that — such a file is
+        entirely correct to every other check here.
+        """
+        extra = [k for k in self._raw if k not in DEFAULTS and k != "panels"]
+        if extra:
+            problems.append("unknown keys %s; a key nothing reads leaves its default in "
+                            "place, which is how a typo turns into a setting that never "
+                            "took effect" % ", ".join(sorted(extra)))
 
     def _number(self, problems, name, kind, low, high=None):
         """One numeric field: APPENDS a problem, never raises.

@@ -111,6 +111,43 @@ def test_times_are_local():
     d = fmt.parse_utc("2026-07-26T18:00:00Z")
     assert fmt.hm(d) == fmt.hm(fmt.to_local(d))
     assert fmt.hm(None) == "—"
+    assert fmt.dmy(d) == fmt.dmy(fmt.to_local(d))
+    assert fmt.panel_clock(d) == fmt.panel_clock(fmt.to_local(d))
+
+
+def test_from_ms_is_the_inverse_of_ms():
+    """`from_ms` is what lets a caller holding only `now_ms` (the alert card) reach a
+    formatter that wants a datetime. It must land in UTC: everything converts with
+    `to_local()` at the point of display, so an already-local datetime would convert twice."""
+    d = fmt.parse_utc("2026-08-30T19:07:33Z")
+    assert fmt.from_ms(fmt.ms(d)) == d
+    assert fmt.from_ms(fmt.ms(d)).utcoffset().total_seconds() == 0
+    assert fmt.from_ms(None) is None
+    assert fmt.ms(None) is None
+
+
+def test_panel_clock_is_the_date_and_the_time():
+    """The clock face on the glass — panel-only, because the web has no header clock. So this
+    pins the shape directly instead of against time.ts, and `dmy` is pinned here rather than as
+    a port: time.ts exports no `dmy`, only the conditional `.YYYY` suffix that a clock reading
+    NOW would never print."""
+    d = fmt.parse_utc("2026-08-30T19:07:33Z")
+    local = fmt.to_local(d)
+    assert fmt.dmy(d) == "%02d.%02d.%d" % (local.day, local.month, local.year)
+    # Built out of the pieces that ARE ported, so the digits cannot drift away from hm/hms.
+    # All four shapes the two switches reach, and they are INDEPENDENT: the date is free
+    # (it moves at midnight), the seconds are what costs a frame a second, so wanting one
+    # without the other has to work in both directions.
+    assert fmt.panel_clock(d) == "%s %s" % (fmt.dmy(d), fmt.hms(d))
+    assert fmt.panel_clock(d, seconds=False) == "%s %s" % (fmt.dmy(d), fmt.hm(d))
+    assert fmt.panel_clock(d, date=False) == fmt.hms(d)
+    assert fmt.panel_clock(d, seconds=False, date=False) == fmt.hm(d)
+    assert fmt.panel_clock(d).startswith(fmt.panel_clock(d, seconds=False))
+    assert fmt.panel_clock(d).endswith(fmt.panel_clock(d, date=False))
+    assert fmt.dmy(None) == "—"
+    for kw in ({}, {"seconds": False}, {"date": False},
+               {"seconds": False, "date": False}):
+        assert fmt.panel_clock(None, **kw) == "—"
 
 
 _NOW = fmt.parse_utc("2026-07-26T12:00:00Z")     # Sunday, noon UTC

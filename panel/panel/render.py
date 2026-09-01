@@ -74,17 +74,23 @@ class AlertState:
     on 480 x 320.
     """
 
-    __slots__ = ("title", "rows", "count", "at", "rest", "footer", "flood")
+    __slots__ = ("title", "rows", "count", "at", "rest", "footer", "flood", "link")
 
     def __init__(self, title="", rows=(), count=0, at="", rest=(), footer=None,
-                 flood=False):
+                 flood=False, link=None):
         self.flood = flood          # the FULL frame: banner flooded with accent, plus rail
         self.title = title          # banner: NEEDS PERMISSION / WAITING · 3 / ...
         self.rows = list(rows)
         self.count = count          # ALL blocks, including the unlisted ones
-        self.at = at                # the hour of the oldest wait ON SCREEN
+        self.at = at                # the time NOW, the same face as the header clock
         self.rest = list(rest)      # names of the projects that did not fit into the rows
         self.footer = footer        # e.g. a note about a contract mismatch
+        # "live" | "reconnecting" | "down" — the SAME value the bands read from
+        # `ScreenState.link`, or None for "nothing was asked about a stream": the
+        # offline renders (tools/render-png.py, tools/replay.py, the tests) build a
+        # card with no client behind it, and one of those may claim neither that the
+        # link is up nor that it is gone. None draws nothing.
+        self.link = link
 
 
 class ScreenState:
@@ -120,9 +126,15 @@ def alert_title(blocked):
     return "WAITING · %d" % len(blocked)
 
 
-def alert_state(blocked, now_ms=0.0, footer=None, flood=False):
+def alert_state(blocked, now_ms, footer=None, flood=False, seconds=True, date=True,
+                link=None):
     """[status.Blocked] -> AlertState. The order is settled by `status.parse_frame`;
-    there is no decision left to take here beyond how much fits."""
+    there is no decision left to take here beyond how much fits.
+
+    `now_ms` has NO default. It carried `0.0` while `at` was the oldest `since` and the
+    argument only reached `waited`; now `at` IS `now_ms`, and `0.0` is a legal epoch
+    (`fmt.from_ms` tests `is None`, not falsiness), so that default painted
+    "01.01.1970 01:00:00" onto the glass. A missing clock must fail at the call."""
     from . import fmt
 
     if not blocked:
@@ -137,18 +149,32 @@ def alert_state(blocked, now_ms=0.0, footer=None, flood=False):
         detail=b.detail or "",
         mode=b.mode_label,
     ) for b in shown]
-    # The hour in the banner is the start of the OLDEST wait on screen, not the `since`
-    # of the heading: rows run youngest first, so the first entry is by design the
-    # newest — and the banner has to say how long all of this has been waiting.
-    stamps = [b.since for b in shown if b.since is not None]
+    # The banner carries the time NOW, the same face the header wears — the card takes the
+    # whole screen, so without it a blocked session means no clock on the desk at all.
+    #
+    # It used to be the start of the oldest wait, and that reading is not lost: `waited` on
+    # every row says how long THAT block has been going ("a moment" / "4 min" / "2 d 3 h"),
+    # which is the same fact per entry instead of one aggregate. Nothing is lost with it:
+    # the old banner took `min(stamps)` over `shown` alone, so the entries the `many` layout
+    # hides never reached it either — they were named in the footer then and are now.
+    #
+    # This makes it a LIVE clock, so with `clock_seconds` on the card writes a frame every
+    # second for as long as it is up. With `alert_flash_sec` blinking, part of that rate is
+    # already being paid — but only for the blink's own window, 20 s by default against the
+    # card's 300 s. Past that, and with the blink off, this is what buys the clock.
+    #
+    # A moving clock reads as proof that the data behind it is moving too, and this one is
+    # not: it free-runs off the monotonic anchor (`fmt.ServerClock.now_ms`) with the stream
+    # dead. That is why `link` comes down here as well — see `_alert_banner`.
     return AlertState(
         title=alert_title(blocked),
         rows=rows,
         count=len(blocked),
-        at=fmt.hm(min(stamps)) if stamps else "",
+        at=fmt.panel_clock(fmt.from_ms(now_ms), seconds, date),
         rest=[b.project for b in blocked[len(shown):] if b.project],
         footer=footer,
         flood=flood,
+        link=link,
     )
 
 
@@ -357,6 +383,19 @@ class Renderer:
 
         base = self.L.BANNER_BASE
         right = x1
+        if a.link and a.link != "live":
+            # The card is a TAKEOVER: while it is up, `_header` never runs, so the only
+            # link mark on the glass is off it — and `a.at` keeps ticking regardless,
+            # because it free-runs off the monotonic anchor. The same glyph `_header`
+            # draws, in the same place relative to the clock, so the card teaches no
+            # second visual language. Live draws nothing: the mark is the exception,
+            # and the banner has no width to spend on the ordinary case.
+            #
+            # The banner's own centre line, not a new metric: it lands within a pixel
+            # of the clock's optical centre in both layouts (19 vs ~18.5 at 480x320,
+            # 38 vs ~37 at 1280x720), and the glyph is 3 px of radius.
+            self._link_mark(d, (right - self.L.LINK_DX, self.L.BANNER_H // 2), a.link)
+            right -= self.L.CLOCK_MARK_W
         if a.at:
             d.text((right, base), a.at, font=f_at, fill=at_colour, anchor="rs")
             right -= draw.text_width(a.at, f_at) + self.L.BANNER_AT_GAP

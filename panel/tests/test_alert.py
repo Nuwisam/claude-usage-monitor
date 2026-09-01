@@ -6,6 +6,12 @@ import pytest
 
 from panel import app as app_mod, config as C, fmt, render, status, surface, theme
 
+#: The widest clock face the panel draws. DERIVED from the formatter, never hand-typed:
+#: a literal is a second definition of the face, and when the format moves the tests keep
+#: measuring the old width while still passing. The anchor is all-double-digit so the
+#: string stays the widest one `panel_clock` can produce.
+CLOCK = fmt.panel_clock(fmt.parse_utc("2026-08-30T19:07:33Z"))
+
 
 class Clock:
     """Monotonic under the test's control."""
@@ -394,7 +400,7 @@ def test_reason_does_not_push_title_past_band():
         state = render.BandState(title=long_name, plan="MAX 5×", show_clock=True,
                                  alert=alert)
         render.Renderer()._header(d, b, state,
-                                  render.ScreenState(clock="21:07", link="live"))
+                                  render.ScreenState(clock=CLOCK, link="live"))
         px = img.load()
         # The columns right of the band must stay background — nothing spilled outside the margin.
         for x in range(b.x1 + 1, 480):
@@ -415,6 +421,43 @@ def test_reason_does_not_push_title_past_band():
                     break
         lengths.append(end)
     assert lengths[1] < lengths[0], "the reason should shorten the title, not overlap it"
+
+
+@pytest.mark.parametrize("canvas", [(480, 320), (1280, 720)])
+def test_the_clock_face_stays_inside_the_band(canvas):
+    """The clock is anchored right, so it can never spill past `b.x1` — but nothing stops it
+    growing LEFT out of the band.
+
+    `_header` shrinks `right` by the clock's width and then clamps the TITLE with
+    `max(20, right - b.x0)`. That clamp protects the title, not the clock: the floor of 20 px
+    is handed out even when there is no room left, and the clock itself is measured but never
+    bounded. It fits today with a wide margin (128 px of a 452 px header) — this test is here
+    so that a bigger `F_CLOCK`, a wider face or a tighter layout fails loudly instead of
+    printing a date over the left margin.
+    """
+    from panel import draw, render as R
+
+    renderer = R.Renderer(*canvas)
+    b = renderer.layout.bands[0]
+    long_name = ("very.long.account.name.that.nobody.saw.coming"
+                 "@subdomain.example.example.org")
+    img, d = draw.new_canvas(canvas)
+    renderer._header(d, b, render.BandState(title=long_name, plan="MAX 5×",
+                                            show_clock=True, alert="question"),
+                     render.ScreenState(clock=CLOCK, link="live"))
+    px = img.load()
+    rows = range(b.header[1], b.header[3])
+    for x in range(0, b.x0):
+        for y in rows:
+            assert px[x, y] == theme.BG, "header ink in the left margin, column %d" % x
+    for x in range(b.x1 + 1, canvas[0]):
+        for y in rows:
+            assert px[x, y] == theme.BG, "header ink past the right edge, column %d" % x
+    # And the face is whole: right-anchored at `b.x1 - CLOCK_MARK_W`, so its left end has to
+    # land inside the band, not merely fail to paint outside it.
+    face = draw.text_width(CLOCK, draw.font(renderer.L.F_CLOCK))
+    assert b.x1 - renderer.L.CLOCK_MARK_W - face > b.x0, (
+        "the clock face alone does not fit the header on %dx%d" % canvas)
 
 
 def test_band_marker_has_full_height_and_sits_in_the_margin():
@@ -441,7 +484,7 @@ def scene_bands(now_ms):
     from tests import fixtures
     bands = [render.band_state(acc, now_ms=now_ms, show_clock=(i == 0))
              for i, acc in enumerate(fixtures.SCENES["base"]())]
-    return render.ScreenState(clock="21:07", link="live", bands=bands)
+    return render.ScreenState(clock=CLOCK, link="live", bands=bands)
 
 
 def _fraction(a, b):
@@ -456,8 +499,13 @@ def _fraction(a, b):
 def test_transition_to_card_fits_under_full_frame_threshold():
     """Pins the number that `FULL_AT = 0.85` rests on.
 
-    At the old threshold of 0.60 this transition landed 2 points ABOVE it and turned
-    45 crops into a full frame — that is 1.16 s into 1.87 s, for no gain at all.
+    At the old threshold of 0.60 this transition landed ABOVE it and turned a set of
+    crops into a full frame — 1.87 s instead of about 1.1 s, for no gain at all.
+
+    The exact figures move with the scene: the header clock's width is part of the bands
+    frame, so widening the face to a full date re-measured this at 59.0 % in 51 rectangles
+    (it was 62.5 % in 45). The assertion deliberately pins the BAND, not the number —
+    which is why it survived that change and this docstring did not.
     """
     now_ms = fmt.ms(fmt.parse_utc(NOW))
     bands = scene_bands(now_ms)
@@ -557,16 +605,127 @@ def test_list_shows_three_but_counts_all():
     assert "5" in state.title
 
 
-def test_banner_shows_the_oldest_wait_while_the_top_row_shows_the_newest():
-    """The first row is the NEWEST block, while the time in the banner is the start of the
-    OLDEST wait on the screen. Those are two different things and they have to diverge."""
+def test_banner_shows_the_time_now_and_the_rows_carry_the_ages():
+    """The banner is a LIVE clock — the card takes the whole screen, so without it a blocked
+    session leaves the desk with no clock at all.
+
+    It used to show the start of the oldest wait. That reading did not go anywhere: `waited`
+    on each row says how long that block has been going, per entry rather than as one
+    aggregate. This pins both halves of the swap, so a revert cannot pass quietly."""
     now_ms = fmt.ms(fmt.parse_utc(NOW))
+    oldest = "2026-08-05T21:01:00Z"
     state = render.alert_state(status.parse_frame(stream_frame(
         entry(key="plan", reason="plan", since="2026-08-05T21:06:00Z"),
-        entry(key="consent", reason="permission", since="2026-08-05T21:01:00Z"),
+        entry(key="consent", reason="permission", since=oldest),
     )), now_ms)
     assert state.rows[0].short == "plan", "the newest goes first"
-    assert state.at == fmt.hm(fmt.parse_utc("2026-08-05T21:01:00Z"))
+    assert state.at == fmt.panel_clock(fmt.parse_utc(NOW))
+    assert state.at != fmt.panel_clock(fmt.parse_utc(oldest)), "the banner is not the oldest wait"
+    # The ages are still on the screen, one per row: 1 min for the newest, 6 for the oldest.
+    assert [r.waited for r in state.rows] == [fmt.waited(fmt.ms(fmt.parse_utc("2026-08-05T21:06:00Z")), now_ms),
+                                              fmt.waited(fmt.ms(fmt.parse_utc(oldest)), now_ms)]
+
+
+def test_the_banner_clock_advances_between_ticks():
+    """A live clock has to MOVE. With the time frozen at the oldest wait, the card's only
+    changing text was the `waited` label, so a banner stuck at one value would have looked
+    correct — this is the assertion that would have caught it."""
+    blocked = status.parse_frame(stream_frame(
+        entry(key="consent", reason="permission", since="2026-08-05T21:01:00Z")))
+    early = render.alert_state(blocked, fmt.ms(fmt.parse_utc("2026-08-05T21:07:00Z")))
+    later = render.alert_state(blocked, fmt.ms(fmt.parse_utc("2026-08-05T21:07:01Z")))
+    assert early.at != later.at, "one second apart, the banner clock did not move"
+
+
+@pytest.mark.parametrize("kw", [{}, {"seconds": False}, {"date": False},
+                                {"seconds": False, "date": False}])
+def test_banner_time_follows_both_clock_switches(kw):
+    """The card and the header must never wear two different clock shapes, so both switches
+    have to reach the banner: a header without seconds beside a banner with them would read
+    as a bug, and so would a bare time in one place against a full date in the other."""
+    now_ms = fmt.ms(fmt.parse_utc(NOW))
+    blocked = status.parse_frame(stream_frame(
+        entry(key="consent", reason="permission", since="2026-08-05T21:01:00Z")))
+    assert render.alert_state(blocked, now_ms, **kw).at == \
+        fmt.panel_clock(fmt.parse_utc(NOW), **kw)
+
+
+@pytest.mark.parametrize("seconds,date", [(True, True), (False, True),
+                                          (True, False), (False, False)])
+def test_the_config_switches_reach_both_faces_through_the_app(seconds, date):
+    """End to end, panel.json -> glass, through App.screen() and not around it.
+
+    Everything either switch does happens at two call sites in `app.py`, and every
+    other test here enters BELOW them - `fmt.panel_clock` directly, or `alert_state`
+    with the keywords already supplied. So the whole config-to-face wiring could be
+    deleted and the suite would stay green; that is the gap this closes, on both
+    branches of `screen()`, which is also the only place the two faces meet.
+
+    The card needs the debounce to elapse, and advancing the monotonic clock moves the
+    ServerClock with it - so the banner is checked against NOW plus that same debounce,
+    computed here rather than read back from the app, which would be circular.
+    """
+    z = Clock()
+    a = app(z, clock_seconds=seconds, clock_date=date)
+    a.first_data_at = z.t
+    face = dict(seconds=seconds, date=date)
+
+    assert a.screen().clock == fmt.panel_clock(fmt.parse_utc(NOW), **face), (
+        "the band header did not take the switches")
+
+    a.on_event("alert", stream_frame(entry(key="k", reason="permission",
+                                           since="2026-08-05T21:06:00Z")))
+    z.advance(a.cfg.blocked_debounce_sec)
+    later = fmt.from_ms(fmt.ms(fmt.parse_utc(NOW))
+                        + a.cfg.blocked_debounce_sec * 1000.0)
+    card = a.screen().alert
+    assert card is not None, "the card branch was not reached"
+    assert card.at == fmt.panel_clock(later, **face), (
+        "the alert banner did not take the switches")
+
+
+def test_the_card_carries_the_link_state_the_bands_carry():
+    """A live clock over a dead stream is the one thing this panel refuses to draw.
+
+    The card is a TAKEOVER, so `_header` never runs and the only link mark on the glass is
+    off it; the banner clock free-runs off the monotonic anchor and needs no stream to keep
+    ticking; and `self.alerts` is not cleared by "down". Nothing here is wrong on its own —
+    together they show a moving face over a block that may have been answered ten minutes
+    ago. So the card reads the same value the bands read."""
+    z = Clock()
+    a = app(z, alert_takeover_sec="infinity")
+    a.on_event("ping", {})
+    a.on_event("alert", stream_frame(entry()))
+    z.advance(a.cfg.blocked_debounce_sec + 1)
+    assert a.screen().alert.link == "live"
+
+    a.on_event("down", "socket timeout")
+    z.advance(600)
+    dead = a.screen()
+    assert dead.alert is not None, "the card does not come down when the stream does"
+    assert dead.alert.link == "down"
+
+
+def test_a_dead_link_marks_the_banner_and_a_live_one_costs_nothing():
+    """The mark is the exception, not furniture: a live link leaves the card exactly as it
+    was, and only a broken one spends banner width. Asserted on the RENDER, because what is
+    at stake is what reaches the glass, and confined to the banner, because the rows below
+    are the same blocks either way."""
+    now_ms = fmt.ms(fmt.parse_utc(NOW))
+    blocked = status.parse_frame(stream_frame(entry()))
+    R = render.Renderer()
+
+    def card(link):
+        return R.frame(render.ScreenState(
+            alert=render.alert_state(blocked, now_ms, link=link))).image
+
+    unstated, live, down = card(None), card("live"), card("down")
+    assert live.tobytes() == unstated.tobytes(), \
+        "a live link must cost the ordinary card nothing"
+    assert down.tobytes() != live.tobytes(), "a dead link leaves no mark on the glass"
+    below = (0, render.layout_for(480, 320).BANNER_H, 480, 320)
+    assert down.crop(below).tobytes() == live.crop(below).tobytes(), \
+        "the mark belongs to the banner — it must not disturb the rows"
 
 
 def test_fresh_block_is_visible_despite_three_older_ones():
@@ -628,7 +787,7 @@ def test_banner_and_strip_ink_sits_where_the_mockup_says():
     written row is 23 and 305. It was 26 and 308 before — 1.67 px too low, in each of the four
     layouts at once.
     """
-    from panel import layout as L
+    from panel import draw, layout as L
 
     now_ms = fmt.ms(fmt.parse_utc(NOW))
     # With `permissionMode`, otherwise the `MODE` strip is not drawn at all and we would be
@@ -641,8 +800,13 @@ def test_banner_and_strip_ink_sits_where_the_mockup_says():
     assert L.AlertSolo.MODE_BASE == 306, "mockup measurement: bottom of the `MODE` caption at 306.33 px"
 
     # The clock in the banner: the digits do not go below the baseline, so the bottom of the
-    # ink gives it.
-    assert _ink_bottom(px, 380, 470, 0, L.BANNER_H, theme.ACCENT_800) == L.BANNER_BASE - 1
+    # ink gives it. The window is COMPUTED from the string that was drawn, not hard-coded:
+    # the face grew from "21:01" to the full date and a fixed window would keep passing on
+    # the tail of a longer string while measuring something else.
+    at_x1 = 480 - L.ALERT_PAD_X
+    at_x0 = at_x1 - draw.text_width(state.at, draw.font(L.F_BANNER_AT))
+    assert _ink_bottom(px, at_x0, at_x1 + 1, 0, L.BANNER_H,
+                       theme.ACCENT_800) == L.BANNER_BASE - 1
     # The `MODE` strip: neither "MODE" nor "default" has a descender.
     assert _ink_bottom(px, 18, 300, 320 - L.AlertSolo.MODE_H, 320,
                        theme.SUNKEN) == L.AlertSolo.MODE_BASE - 1

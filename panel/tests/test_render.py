@@ -7,8 +7,13 @@ import pytest
 
 from PIL import Image
 
-from panel import draw, layout as L, render, theme, view
+from panel import draw, fmt, layout as L, render, theme, view
 from tests import fixtures
+
+#: The clock face the panel actually draws — DERIVED from the formatter, not hand-typed,
+#: so the scenes cannot keep exercising a face the code stopped producing. The run of
+#: glyphs matters here: it is what competes with the account name for the header.
+CLOCK = fmt.panel_clock(fmt.parse_utc("2026-08-30T19:07:33Z"))
 
 
 # --- geometry ---------------------------------------------------------------
@@ -130,7 +135,7 @@ def test_each_scene_renders(scene):
         bands.append(None if acc is None
                      else render.band_state(acc, now_ms=now_ms, show_clock=(i == 0)))
     frame = render.Renderer().frame(
-        render.ScreenState(clock="21:07", link="live", bands=bands))
+        render.ScreenState(clock=CLOCK, link="live", bands=bands))
     assert frame.image.size == (480, 320)
     assert len(frame.rgb565("be")) == 480 * 320 * 2
 
@@ -144,7 +149,7 @@ def test_same_scene_gives_same_payload():
         bands = [render.band_state(a, now_ms=now_ms, show_clock=(i == 0))
                  for i, a in enumerate(fixtures.base())]
         return render.Renderer().frame(
-            render.ScreenState(clock="21:07", link="live", bands=bands)).rgb565("be")
+            render.ScreenState(clock=CLOCK, link="live", bands=bands)).rgb565("be")
     assert build_payload() == build_payload()
 
 
@@ -156,7 +161,7 @@ def test_status_card_instead_of_bands():
 
 def test_empty_slot_does_not_blow_up():
     frame = render.Renderer().frame(
-        render.ScreenState(clock="21:07", link="down", bands=[None, None]))
+        render.ScreenState(clock=CLOCK, link="down", bands=[None, None]))
     assert len(frame.rgb565("be")) == 480 * 320 * 2
 
 
@@ -169,7 +174,7 @@ def test_three_link_states_give_three_different_images():
         bands = [render.band_state(a, now_ms=now_ms, show_clock=(i == 0))
                  for i, a in enumerate(fixtures.base())]
         return render.Renderer().frame(
-            render.ScreenState(clock="21:07", link=link, bands=bands)).rgb565("be")
+            render.ScreenState(clock=CLOCK, link=link, bands=bands)).rgb565("be")
     assert len({build_frame("live"), build_frame("reconnecting"), build_frame("down")}) == 3
 
 
@@ -220,7 +225,7 @@ def test_withdrawn_credits_still_get_drawn():
                                cascade=cascade, series=[])
         band = render.band_state(acc, now_ms=now_ms)
         return render.Renderer().frame(
-            render.ScreenState(clock="21:07", link="live", bands=[band, None])).rgb565("be")
+            render.ScreenState(clock=CLOCK, link="live", bands=[band, None])).rgb565("be")
 
     amounts = dict(usedMinor=30004, limitMinor=30000, currency="EUR", exponent=2)
     withdrawn = build_frame(state="off", reason="org_level_disabled_until", **amounts)

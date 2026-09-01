@@ -83,7 +83,9 @@ MAX_RECTS = 256
 #
 # 0.85, not 0.60. The bands -> alert card transition measured 62.5% dirty in 45 crops,
 # which landed 2.5 points ABOVE the old threshold and turned 1.17 s of crops into a
-# 1.87 s full frame - for nothing. `coalesce()` provably never covers a clean pixel and
+# 1.87 s full frame - for nothing. The face has widened since and the same transition
+# now measures 59.0% in 51 crops, which is why the test pins a BAND and not a number.
+# `coalesce()` provably never covers a clean pixel and
 # the wire costs 6.1 us/byte with no fixed overhead beyond a 6 B rectangle header, so a
 # set of crops is NEVER heavier than the full frame; the real bound is MAX_RECTS. The
 # README line that justified a low threshold ("the bounding box is the whole frame

@@ -115,9 +115,10 @@ five minutes old; once the window came to belong to the set, rank pushed out of 
 exactly the block that had just taken over the screen. Rationale for the new order: **every
 block was already shown solo when it arrived** — once cut down to three rows, the ones worth
 showing are the ones you haven't seen yet.
-**The hour in the banner is the start of the oldest wait on screen**, not the header's
-`since` — rows go youngest first, so the first of them is by definition the newest, and the
-banner says how long all of this has already been going on.
+**The banner carries the time now**, the same face as the band header's clock: the card is
+a full takeover, so without it a blocked session leaves the desk with no clock at all. How
+long each block has been going is on its own row, in `waited`. Rows go youngest first, so
+the first of them is by definition the newest.
 
 With many blocks the banner reads `WAITING · 3`, not "3 waiting". The banner keeps a fixed
 vocabulary: one word, then a separate counter after the dot. Nothing about the wording depends
@@ -136,7 +137,7 @@ Full contract in [`API.md` § 3.2](API.md). All of them are used:
 | `tool` | row under the name (not in layout 4+, where only the machine remains) |
 | `machine` | same row; a session can run remotely, this says where to go |
 | `detail` | `Detail` tile (2 lines), one line in layout 2, footer in layout 3 |
-| `since` | "waiting: N" (the bare value in the columns of 1b-1d), the hour in the banner, row order, and opening the window for the set |
+| `since` | "waiting: N" (the bare value in the columns of 1b-1d), row order, and opening the window for the set — **not** the banner time, which reads now |
 | `accountUuid` | which band the marker sits at once folded away |
 | `agentType`, `permissionMode` | `Mode` strip — the answer to "why is it even asking" |
 
@@ -171,13 +172,13 @@ rest (a separate layer, different sub-pixel rounding); the panel keeps one basel
 The motion layer draws **last**, over the content: otherwise the `Mode` strip would paint
 over the rail.
 
-**A deliberate departure: the hour in the flooded banner.** The mockup disagrees with itself
+**A deliberate departure: the time in the flooded banner.** The mockup disagrees with itself
 here — `1a-alert` paints it in solid `BG`, while the three `-p` frames give `color-mix(BG
 76%, transparent)`, that is, `#493128`. The panel keeps solid `BG` in **all four** card
 layouts, on both canvases: that's 5.51:1 on the accent, while the 76% version gives
 3.84:1 — below AA for 15 px text.
-The hour is the only number on this card, and the card exists so that someone gets up from
-their desk.
+The time is the only clock reading on this card, and the card exists so that someone gets
+up from their desk.
 
 **A deliberate departure: the colon in the time line.** The mockup prints `waiting 4 min`, the
 panel prints `waiting: 4 min`. Under a minute `fmt.waited` gives "a moment", and the bare form
@@ -196,7 +197,7 @@ the card drawn without `draw.ellipsize` (widest case `waiting: 23 h 59 min`, 231
 Every point here is measured.
 
 **1. A scene change doesn't fit in a tick.** The bands → card transition dirties about
-**62%** of the frame across several dozen rectangles, that is, ~**1.17 s** on the Turing
+**59%** of the frame across ~51 rectangles, that is, ~**1.1 s** on the Turing
 plus 355 ms on the AX206. `link.send` runs its usual loop over the screens, so a tick costs
 the **sum** of both: ≈ **1.5 s** at `tick_sec = 1.0`. The transition drops one tick —
 accepted, not something to hide.
@@ -208,11 +209,21 @@ blocks — not in bytes, only in the number of rectangles. Guarded by
 `test_transition_to_card_fits_under_threshold_for_every_layout`, separately for all four
 layouts.
 
-**3. Time MUST be coarse.** The AX206 has no cropping, so any change to a string is a full
-355 ms. Seconds would turn ~2.5% of USB load into ~35% **for the card's whole life on
-screen**. Hence `fmt.waited()`: "a moment" / "4 min" / "1 h 05 min" / "2 d 3 h". **There is
-no live clock on the card** — the hour in the banner is a static moment. Any element that
-ticks faster than once a minute is forbidden.
+**3. The waiting labels MUST be coarse.** The AX206 has no cropping, so any change to a
+string is a full 355 ms. Hence `fmt.waited()`: "a moment" / "4 min" / "1 h 05 min" /
+"2 d 3 h". No row element may tick faster than once a minute.
+
+**The banner clock is the exception, and with `clock_seconds` on it is not the only thing
+moving at that rate.** It reads NOW, so the card writes a frame every second for as long as
+it is up — and while `alert_flash_sec` runs, the accent blink is already swapping the banner
+on that same one-second phase (`app.py`'s `int(mono) % 2`). Two elements, one rate.
+
+That is why the numbers here are stated per WRITE and not per string: a frame costs the same
+whether one string on it moved or three, so a second ticking element adds nothing to a card
+that is already writing every second. What rule 3 still buys is the card's cost under
+`clock_seconds: false` — there the coarse labels are the difference between one write a
+minute and one per row per second, which on the AX206 is the ~2.5 % -> ~35 % of USB time
+this rule was measured against.
 
 **4. The card gives the screen back 5 minutes after the LAST block.** `alert_takeover_sec`
 (default 300 s, counted from the server's `since`) collapses it to a 4 px bar next to the

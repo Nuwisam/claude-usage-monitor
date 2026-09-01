@@ -166,8 +166,8 @@ rectangle straight out of the full-frame payload. Measured on real frames
 | `base` → `edges` | 69 | 129 920 | 5.8 ms | 793 ms |
 
 So the steady state is ~1 % of a tick and a **scene change costs 0.5–1.2 s** — the
-top of that range is the bands → alert card transition (62.5 % dirty, 45 crops,
-1.17 s), which is the most expensive one this client draws. Rare, always cheaper
+top of that range is the bands → alert card transition (~59 % dirty, ~51
+rectangles, ~1.1 s), which is the most expensive one this client draws. Rare, always cheaper
 than a full frame, and the loop drops ticks rather than catching up. Above 256
 rectangles or 85 % of the frame the client sends the whole frame instead: past that
 many rectangles the Python loop stops being worth it.
@@ -177,9 +177,12 @@ bounding box on a scene change *is* the whole frame — true for a bounding-box
 coalescer, and this one is not that: `coalesce()` provably never covers a clean
 pixel, and the wire is linear at 6.1 µs/byte with only a 6 B rectangle header, so
 a set of crops is **never** heavier than the full frame. The measurement that
-forced the change: the bands → alert card transition dirties 62.5 % of the frame
-in 45 rectangles, landing just above the old threshold and turning 1.16 s of crops
-into a 1.87 s full frame for nothing. `tests/test_alert.py` pins the number.
+forced the change: the bands → alert card transition measured 62.5 % dirty in 45
+crops, landing above the old 60 % threshold and turning 1.17 s of crops into a
+1.87 s full frame for nothing. The exact figures move with the scene — the header
+clock's width is part of the bands frame — and widening the face to a full date
+re-measured the same transition at ~59 % in ~51 rectangles, ~1.1 s. That is why
+`tests/test_alert.py` pins the BAND (`0.55 < fraction < FULL_AT`), not the number.
 
 **The periodic full repaint is timed from the last FULL write**, not from the last
 write. With partial updates the clock writes something every minute, so timing it
@@ -322,15 +325,23 @@ drift out of sync after the first `/login`, and switching accounts is routine
 here. The account comes from `oauthAccount.accountUuid` read on the machine
 running the session — rule 7 in `AGENTS.md`.
 
-The waiting time is **coarse-grained** ("a moment" / "4 min" / "1 h 05 min" /
-"2 d 3 h"), and that is not a matter of taste: the AX206 cannot do partial
-updates, so every change to the text is a full 355 ms, and seconds would turn
-~2.5 % USB load into ~35 % for the card's whole time on screen. There is no
-live clock on the card — the hour in the banner is the static moment the
-prompt appeared, more precisely the start of the **oldest wait on screen**.
-Since rows go newest first, that is usually not the moment of the block that
-just came in: the banner says how long all of this has already been going on,
-and the first row says what arrived most recently.
+The waiting time on each row is **coarse-grained** ("a moment" / "4 min" /
+"1 h 05 min" / "2 d 3 h"), and that is not a matter of taste: the AX206 cannot do
+partial updates, so every change to the text is a full 355 ms, and one such label
+per row ticking in seconds would turn ~2.5 % USB load into ~35 % for the card's
+whole time on screen. That is the cost under `clock_seconds: false`; with the
+seconds on, the card is already writing every second and another moving string adds
+nothing, because a frame costs the same whether one string on it moved or three. Rows go newest first, so the first one says what arrived
+most recently, and its label says how long that block has been going.
+
+The banner carries the **time now**, the same face as the header clock — the card
+takes the whole screen, so without it a blocked session would leave the desk with
+no clock at all. That makes it a live clock and it is charged for like one: with
+`clock_seconds` on, the card writes a frame every second for as long as it is up.
+With `alert_flash_sec` blinking, part of that rate is being paid anyway — but only
+for the blink's own window, 20 s by default against the card's 300 s. It used to show
+the start of the oldest wait instead; that reading is not lost, it lives on the
+rows, one age per entry rather than one aggregate for the set.
 
 The card's design and all four layouts are described in
 `docs/PANEL-ALERT-HANDOUT.md`, with images pushed through the panel's
@@ -354,15 +365,48 @@ not here: `del %LOCALAPPDATA%\claude-usage-monitor\session-status\*`.
 
 A tick every second, but **only what differs** goes to the screen. How much
 that buys depends on the hardware: the AX206 draws full frames only, so the
-saving is in not sending an identical one (measured at rest: 3 frames per
-45 s, ~2.5 % of USB time); the serial screen accepts rectangles, so a typical
-tick is ~1.5 kB instead of 307 kB.
+saving is in not sending an identical one; the serial screen accepts
+rectangles, so a typical tick is ~1.5 kB instead of 307 kB.
+
+**The measurement below is `clock_seconds: false`** — at rest, 3 frames per
+45 s, ~2.5 % of AX206 USB time. With the seconds on, "what differs" differs
+every second by construction, so that saving is gone and the figure to read
+is the ~35 % one in the table below.
 
 Seconds stay where they are in the mockup: in the countdown below an hour, and
 in the reading age below a minute. They come in exactly when you are working —
 which is when they are most needed. Outside work the values roll into minutes
-and hours on their own, and the panel goes quiet. The exception is the clock
-in the header: it ticks independently of work, so it shows HH:MM.
+and hours on their own, and the panel goes quiet.
+
+The exception is the two **clock faces**, and both are `fmt.panel_clock`:
+`30.08.2026 21:07:33`. One sits in the band header, the other in the alert
+banner; both read **now** and both tick independently of work. They are never on
+the screen together — the card is a full takeover — so they carry the same shape
+to be comparable from memory.
+
+The face has **two independent switches in panel.json**, because its halves are
+not the same purchase:
+
+| key | default | off | what it costs |
+|---|---|---|---|
+| `clock_seconds` | `false` | `30.08.2026 21:07` | a write once a **second** instead of once a minute, whichever face is up |
+| `clock_date` | `true` | `21:07:33` | nothing — the date moves at midnight and never in between |
+
+Only the seconds are ever charged for: ~70 ms of TURZX firmware out of every
+second (about 7 %), and on the AX206, which has no partial updates, a full 355 ms
+blit each time — ~2.5 % of USB time becomes ~35 %, permanently. It is off out of the
+box: defaults are merged under your panel.json, so an opt-out would have handed
+that 35 % to every file written before the key existed. **Want the ticking
+second, `clock_seconds: true`** — and on a full-frame-only panel expect to pay
+for it. On the alert card part of that rate is already being paid:
+`alert_flash_sec` blinks the banner on the same one-second phase, but only for
+its own window — 20 s by default against the card's 300 s. Set to `"infinity"`
+the blink runs for the card's whole life and the clock adds nothing; at the
+default the clock pays for all but the first 20 s.
+
+The date is free either way, so it stays or goes on taste alone; what it does
+spend is width, in the header out of the account name's budget and in the banner
+out of the card's title. Both switches govern both faces.
 
 ## Drawing rules that must not be simplified
 
@@ -430,6 +474,24 @@ does not fit the rectangle. Omitted means `0`. To check without changing the fil
 driver's default". A top-level `brightness` next to `panels` is a
 **configuration error**, not a compromise — `5` would mean mid-range on one
 screen and nearly off on the other.
+
+**`clock_seconds` and `clock_date` are the two halves of the clock face**,
+independent, `clock_date` `true` by default and `clock_seconds` `false`: out of
+the box you get `30.08.2026 21:07`, with `clock_seconds: true`
+`30.08.2026 21:07:33`, `21:07:33` without the date, `21:07` with neither. Each
+sets both faces at once — the header clock and the time in the alert banner —
+because two different clock shapes in one product read as a bug.
+
+Two keys and not one because the halves cost nothing like each other. **Only the
+seconds are charged for**, on whichever face is up — the header clock, and the
+alert banner once a card takes the screen. Neither waits for work to happen, so
+they mean one write a second instead of one a minute — ~7 % of the TURZX, and on
+the AX206, with no partial updates, a full 355 ms blit each time and ~35 % of USB
+time instead of ~2.5 %. That is why they are opt-in: your panel.json is merged
+over the defaults, so an opt-out default would start that blit on every AX206
+configured before the key existed, and validation cannot object — such a file is
+entirely correct. The date is free on the wire; it spends width in the header,
+out of the account name's budget, and nothing else.
 
 **The old shape (`"device": {...}` plus a top-level `brightness`) still
 works** and turns into a one-entry `ax206` list. Migrating it automatically is safe,

@@ -27,7 +27,7 @@ def blocked(key, reason, project, tool, machine, ago_s, **kw):
 # Demo data shaped like the mockup: the same reasons, tools, name lengths
 # and stamps, so a PNG can be laid against the design. The project names are MADE UP —
 # just as the account addresses in fixtures.py come from example.org. Time anchor: fixtures.NOW_ISO.
-def alert_scene(kind, now_ms, flood=False):
+def alert_scene(kind, now_ms, flood=False, seconds=True, date=True):
     """Alert card variants — one per layout."""
     kb = dict(key="a", reason="question", project="reporting-panel",
               tool="AskUserQuestion", machine="desktop", ago_s=245,
@@ -59,7 +59,7 @@ def alert_scene(kind, now_ms, flood=False):
     items.sort(key=lambda b: (b.since is None,
                               -b.since.timestamp() if b.since else 0.0,
                               b.key))
-    return render.alert_state(items, now_ms, flood=flood)
+    return render.alert_state(items, now_ms, flood=flood, seconds=seconds, date=date)
 
 
 def _shift(iso, seconds):
@@ -81,7 +81,7 @@ def unpack_rgb565(payload, size):
     return img
 
 
-def build(scene, now_ms, link="live"):
+def build(scene, now_ms, link="live", seconds=True, date=True):
     accounts = fixtures.SCENES[scene]()
     bands = []
     for i, acc in enumerate(accounts):
@@ -89,7 +89,7 @@ def build(scene, now_ms, link="live"):
             bands.append(None)
             continue
         bands.append(render.band_state(acc, now_ms=now_ms, show_clock=(i == 0)))
-    clock = fmt.hm(fmt.parse_utc(fixtures.NOW_ISO))
+    clock = fmt.panel_clock(fmt.parse_utc(fixtures.NOW_ISO), seconds, date)
     return render.ScreenState(clock=clock, link=link, bands=bands)
 
 
@@ -107,6 +107,13 @@ def main():
                     help="instead of the bands: a blocked-session card")
     ap.add_argument("--flood", action="store_true",
                     help="FULL frame: banner flooded with the accent plus the rail")
+    # The clock face has two switches in panel.json, so the preview needs both — without
+    # them this tool renders only the default, and the images in docs/handout/ stop being
+    # "what the glass will show" for anyone who set either one.
+    ap.add_argument("--no-clock-seconds", action="store_true",
+                    help="clock_seconds: false — the face without seconds")
+    ap.add_argument("--no-clock-date", action="store_true",
+                    help="clock_date: false — the bare time, no date")
     ap.add_argument("--marker", choices=("upper", "lower", "both"),
                     help="bands with the alert marker on the edge of the chosen band")
     ap.add_argument("--canvas", default="480x320", metavar="WxH",
@@ -121,7 +128,8 @@ def main():
         ap.error("--canvas takes WxH, e.g. 480x320 or 1280x720")
 
     now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
-    state = build(args.scene, now_ms, args.link)
+    face = dict(seconds=not args.no_clock_seconds, date=not args.no_clock_date)
+    state = build(args.scene, now_ms, args.link, **face)
     if args.marker:
         # The same dictionary as in the panel: `status.SHORT`, not a string typed in here.
         which = {"upper": (0,), "lower": (1,), "both": (0, 1)}[args.marker]
@@ -131,7 +139,7 @@ def main():
     if args.message:
         state.message = args.message.split("|")
     if args.alert:
-        state.alert = alert_scene(args.alert, now_ms, flood=args.flood)
+        state.alert = alert_scene(args.alert, now_ms, flood=args.flood, **face)
 
     frame = render.Renderer(*canvas).frame(state)
     img = frame.image

@@ -9,7 +9,7 @@ import re
 
 import pytest
 
-from panel import draw, layout as L, layout_wide as W, render, status, theme
+from panel import draw, fmt, layout as L, layout_wide as W, render, status, theme
 
 CANVAS = (1280, 720)
 NAME = re.compile(r"^[A-Z][A-Z0-9_]+$")
@@ -103,15 +103,22 @@ def test_banner_and_strip_ink_sits_where_the_mockup_says():
 
     # A MADE-UP project name, as everywhere else in this repo: the mockup this layout
     # was measured against carries real ones, and they do not travel with the geometry.
+    # DERIVED, never hand-typed: a literal is a second definition of the face, and when
+    # the format moves this keeps measuring the old width while still passing.
+    at = fmt.panel_clock(fmt.parse_utc("2026-08-05T17:07:00Z"))
     state = render.ScreenState(alert=render.AlertState(
-        title="QUESTION FOR YOU", at="19:07",
+        title="QUESTION FOR YOU", at=at,
         rows=[render.AlertRow(short="question", project="reporting-panel",
                               tool="AskUserQuestion", machine="desktop",
                               waited="4 min", mode="default")]))
     px = render.Renderer(*CANVAS).frame(state).image.load()
 
-    # The time in the banner: digits do not go below the baseline.
-    assert _ink_bottom(px, 1000, 1240, 0, W.BANNER_H,
+    # The time in the banner: digits do not go below the baseline. The window is COMPUTED
+    # from the string drawn — a hard-coded one keeps passing on the tail of a longer face
+    # while measuring something else.
+    at_x1 = CANVAS[0] - W.ALERT_PAD_X
+    at_x0 = at_x1 - draw.text_width(at, draw.font(W.F_BANNER_AT))
+    assert _ink_bottom(px, at_x0, at_x1 + 1, 0, W.BANNER_H,
                        theme.ACCENT_800) == W.BANNER_BASE - 1
     # The strip: neither "MODE" nor "default" has a descender.
     assert _ink_bottom(px, 40, 700, 720 - W.AlertSolo.MODE_H, 720,

@@ -150,3 +150,38 @@ def test_default_values_are_available():
     c = cfg()
     assert c.width == 480 and c.height == 320 and c.tick_sec == 1.0
     assert c.log_file.endswith("panel.log")
+
+
+def test_the_free_half_of_the_clock_face_is_on_the_costly_one_is_opt_in():
+    """The date is ON out of the box, the seconds are NOT, and each switches ALONE.
+
+    Two keys and not one because the halves cost differently — the date moves at midnight,
+    the seconds cost a frame a second — so the point of the test is that neither switch
+    drags the other with it.
+
+    The booleans go the same way as `session_alerts`: through DEFAULTS and __getattr__, read
+    by truthiness, with no validator. So this also guards that the keys EXIST — without a
+    default, a typo in the name would read as an AttributeError at the first tick."""
+    assert cfg().clock_date is True and cfg().clock_seconds is False
+    on_seconds = cfg(clock_seconds=True)
+    assert on_seconds.clock_seconds is True and on_seconds.clock_date is True
+    off_date = cfg(clock_date=False)
+    assert off_date.clock_date is False and off_date.clock_seconds is False
+
+
+def test_a_panel_json_that_predates_clock_seconds_does_not_get_the_ticking_clock():
+    """The reason the costly half is opt-in and not opt-out.
+
+    DEFAULTS is merged UNDER the file (`Config.__init__`), so a `true` default reaches
+    every panel.json ever written — including the old `{"device": {...}}` shape, which
+    `_migrate_panels` turns into an `ax206` entry. That driver has no partial updates
+    (drivers/ax206.py:258 `rect_updates=False`), so `surface.for_caps` gives it a
+    FullFrameSurface and a header that ticks in seconds is a 307 200-byte write every
+    `tick_sec` — 0.35 s of the 1.0 s tick, for as long as the panel is plugged in.
+    Nothing in validate() can catch it: such a file is entirely correct."""
+    legacy = C.Config({"stream_token": "t", "account_1": {"uuid": "a"},
+                       "device": {"port_path": "3.4"}})
+    assert not legacy.validate()
+    assert [p.backend for p in legacy.panels] == ["ax206"]
+    assert "clock_seconds" not in legacy._raw
+    assert legacy.clock_seconds is False

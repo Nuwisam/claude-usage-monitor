@@ -1,9 +1,14 @@
 """The client loop.
 
 Rhythm: a tick every second, but a frame goes to the panel ONLY when the image
-differs (link.send). With a clock without seconds and rounded countdowns the image
-changes roughly once a minute plus on every SSE event — that is ~2 % of the time
-on USB instead of 38 %.
+differs (link.send). Under `clock_seconds: false` — a clock without seconds, and
+rounded countdowns — the image changes roughly once a minute plus on every SSE
+event, which is ~2 % of the time on USB instead of 38 %.
+
+`clock_seconds` is off by DEFAULT, so that saving is what a fresh install gets.
+Turn it on and it goes away: the clock face then moves every tick, on the bands and
+on the alert card alike, so the image differs every second and a frame goes out
+every second.
 """
 import os
 import queue
@@ -241,8 +246,15 @@ class App:
                       if self.contract_mismatch is not None else None)
             if self._flash_until is not None and mono >= self._flash_until:
                 self._flash_until = None
+            # `link` is the same value the bands get, and for the same reason: the card
+            # covers the header, so this is the only place its mark can come from. The
+            # banner clock ticks off the monotonic anchor whether the stream is alive or
+            # not, and `self.alerts` is never cleared by "down" — so without this the
+            # card is a moving face over a block that may already have been answered.
             return render.ScreenState(
-                alert=render.alert_state(live, now_ms, footer, flood))
+                alert=render.alert_state(live, now_ms, footer, flood,
+                                         link=self.link_state,
+                                         **self._clock_switches()))
         # The card is a pure function of `live`: nothing takeover-worthy, nothing drawn.
         # No state to reconcile and no threshold on the way out — answering hands the
         # screen back on this tick.
@@ -279,8 +291,23 @@ class App:
                                            alert=flagged.get(index)))
         while len(bands) < 2:
             bands.append(None)
-        return render.ScreenState(clock=fmt.hm(self.clock.now()),
+        # `now_ms` and NOT a second `self.clock.now()`: one frame must be one instant.
+        # Sampling the ServerClock twice let the header land on a different second than
+        # the rest of the frame, because the two reads straddle a boundary whenever the
+        # monotonic source advances between them — which it does, every time.
+        return render.ScreenState(clock=fmt.panel_clock(fmt.from_ms(now_ms),
+                                                        **self._clock_switches()),
                                   link=self.link_state, bands=bands)
+
+    def _clock_switches(self):
+        """The two config reads behind BOTH clock faces, in one place.
+
+        The invariant is that the header and the alert banner never wear different clock
+        shapes. It used to rest on two call sites remembering to pass the same pair, which
+        is not an invariant but a habit; here there is one source and the habit cannot
+        rot. Returned as kwargs because its two consumers take them by keyword.
+        """
+        return dict(seconds=self.cfg.clock_seconds, date=self.cfg.clock_date)
 
     # -- the loop ----------------------------------------------------------
 
