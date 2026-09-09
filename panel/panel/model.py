@@ -52,7 +52,8 @@ class SeriesStatus:
                  "kind", "group", "bucket_key", "utilization", "raw_utilization",
                  "resets_at", "seconds_to_reset", "captured_at", "confirmed_at",
                  "value_since", "freshness", "is_active", "severity",
-                 "delta_pct_1h", "delta_from", "primary", "duplicate_of", "extra")
+                 "delta_pct_1h", "delta_from", "primary", "duplicate_of", "extra",
+                 "model_display_name")
 
     def __init__(self, d):
         d = d or {}
@@ -81,6 +82,11 @@ class SeriesStatus:
         self.primary = d.get("primary", True)
         self.duplicate_of = d.get("duplicateOf")
         self.extra = d.get("extra")
+        # Not in the status DTO today -- the backend keeps the model's name in the
+        # composed `label` and in the series key, and `view.scoped_label` reads it from
+        # there. Parsed anyway, at the cost of one line: the day the DTO grows the field,
+        # the panel prefers it without a second change.
+        self.model_display_name = d.get("modelDisplayName")
 
 
 class AccountStatus:

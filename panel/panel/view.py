@@ -135,9 +135,10 @@ def pick_session(series):
 def pick_weekly(series):
     """The weekly row = the AGGREGATE series.
 
-    We deliberately do not show scoped series here (Opus and so on), even though
-    a scoped one is sometimes higher. The reason: the row has to mean the same
-    thing on every day of the week. Diagnostics stay in the web UI.
+    A scoped series (Fable, Opus and so on) never lands here, even when it is the
+    higher of the two: this row has to mean the same thing on every day of the week.
+    That is a division of labour, not a suppression -- `pick_scoped` gives the scoped
+    window a rung of its own, where it says what it is.
     """
     primary = [s for s in series if s.primary]
     for test in (lambda s: s.kind == "weekly_all",
@@ -149,6 +150,55 @@ def pick_weekly(series):
         if s.bucket_key == "seven_day":
             return s
     return None
+
+
+def pick_scoped(series):
+    """The weekly window of ONE model -- Fable today, whatever ships next tomorrow.
+
+    Picked by its KIND, never by a name: a new model has to appear on the panel by
+    itself, the way `plan_label` lets a new tier appear (presentation rule 5 in
+    docs/API.md). Hard-coding "Fable" would mean shipping the panel again for each one.
+
+    An account can carry several. The highest wins, because this rung exists to answer
+    "what stops me first"; the loser is a diagnostic and diagnostics stay in the web UI.
+
+    The comparison is TOTAL -- ties broken on the series key -- because two series at
+    equal utilization must resolve to the same one on every call. `Frame` only pushes a
+    frame to the panel when it differs from the last, so a coin-toss here would repaint
+    the screen over USB for nothing.
+    """
+    scoped = [s for s in series if s.kind == "weekly_scoped"]
+    primary = [s for s in scoped if s.primary]
+    for group in (primary, scoped):
+        if group:
+            return max(group, key=lambda s: (
+                s.utilization if s.utilization is not None
+                else (s.raw_utilization if s.raw_utilization is not None else -1),
+                s.series_key or ""))
+    return None
+
+
+def scoped_label(s):
+    """"FABLE" -- the model's own name, taken from the data rather than a dictionary.
+
+    Three places carry it, in falling order of directness: the field, then the label the
+    backend composes ("Week - Fable", built in backend/app/parsing.py), then the series
+    key ("limit:weekly_scoped|weekly|fable|-"). A backend that changes the label's shape
+    degrades to the key rather than to a wrong word.
+    """
+    if s is not None:
+        if getattr(s, "model_display_name", None):
+            return s.model_display_name.upper()
+        label = s.label or ""
+        for dash in ("—", "–", " - "):
+            if dash in label:
+                # "Week - Fable / API": the surface is a second axis and this rung is
+                # not the place to say it.
+                return label.rsplit(dash, 1)[-1].split("/")[0].strip().upper()
+        parts = (s.series_key or "").split("|")
+        if len(parts) > 2 and parts[2] not in ("", "-"):
+            return parts[2].upper()
+    return "WEEKLY"
 
 
 class CreditsView:

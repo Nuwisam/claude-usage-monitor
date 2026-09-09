@@ -432,11 +432,13 @@ class Band:
         self.header = (self.x0, y, self.x1, y + m.HEADER_H)
         self.rows_top = y + m.HEADER_H + m.ROW_GAP
 
-        self.shapes = {credits: self._shape(credits) for credits in (False, True)}
+        self.shapes = {(scoped, credits): self._shape(scoped, credits)
+                       for scoped in (False, True) for credits in (False, True)}
 
-    def shape(self, credits):
-        """The shape this band takes for a frame that does or does not draw credits."""
-        return self.shapes[bool(credits)]
+    def shape(self, scoped, credits):
+        """The shape this band takes, given whether the account has a scoped weekly
+        window and whether its credits are drawn."""
+        return self.shapes[(bool(scoped), bool(credits))]
 
     def _cells(self, top, bottom, n):
         """Share a span out between n rows, the way `AlertList.rows` does.
@@ -465,7 +467,7 @@ class Band:
         bar = (self.block_x0, y, self.block_x1, y + bar_h)
         return Rung(key, label, bar, f_num, f_num_tight, f_pct)
 
-    def _shape(self, credits):
+    def _shape(self, scoped, credits):
         m = self.m
         if credits:
             # Credits glued to the bottom of the band (margin-top: auto in the mockup);
@@ -478,16 +480,20 @@ class Band:
             box, centre = None, None
             bottom = self.bottom - m.PAD_BOT
 
-        cells = self._cells(self.rows_top, bottom, 2)
-        rungs = [
-            self._rung("session", cells[0], m.SES_BAR_H,
-                       m.F_SES_NUM, m.F_SES_NUM_TIGHT, m.F_SES_PCT),
-            self._rung("week", cells[1], m.WK_BAR_H,
-                       m.F_WK_NUM, m.F_WK_NUM, m.F_WK_PCT),
-        ]
-        content = m.LABEL_H + m.INNER_GAP + max(m.SES_BAR_H, m.WK_BAR_H)
+        # The scoped window is built like the aggregate week and set in the same type:
+        # both are seven-day windows, and one of them being narrower in scope is not a
+        # reason to make it look like a lesser KIND of thing.
+        spec = [("session", m.SES_BAR_H, m.F_SES_NUM, m.F_SES_NUM_TIGHT, m.F_SES_PCT),
+                ("week", m.WK_BAR_H, m.F_WK_NUM, m.F_WK_NUM, m.F_WK_PCT)]
+        if scoped:
+            spec.append(("scoped", m.WK_BAR_H, m.F_WK_NUM, m.F_WK_NUM, m.F_WK_PCT))
+
+        cells = self._cells(self.rows_top, bottom, len(spec))
+        rungs = [self._rung(key, cell, *sizes)
+                 for cell, (key, *sizes) in zip(cells, spec)]
+        content = sum(m.LABEL_H + m.INNER_GAP + s[1] for s in spec)
         fits = all(r.bottom <= bottom for r in rungs) and \
-            bottom - self.rows_top >= 2 * content + m.ROW_GAP
+            bottom - self.rows_top >= content + (len(spec) - 1) * m.ROW_GAP
         return BandShape(rungs, box, centre, fits)
 
     @property

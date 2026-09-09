@@ -15,6 +15,10 @@ from tests import fixtures
 #: glyphs matters here: it is what competes with the account name for the header.
 CLOCK = fmt.panel_clock(fmt.parse_utc("2026-08-30T19:07:33Z"))
 
+#: Every shape a band can take, as (scoped weekly window, credits drawn). A shape is only
+#: reached by the data that selects it, so one of them fitting says nothing about the rest.
+SHAPES = [(s, c) for s in (False, True) for c in (False, True)]
+
 
 # --- geometry ---------------------------------------------------------------
 
@@ -43,15 +47,16 @@ def test_everything_fits_within_screen():
     for mod, size in ((L, (480, 320)), (LW, (1280, 720))):
         lay = mod.Layout(*size)
         for band in lay.bands:
-            for credits in (False, True):
-                shape = band.shape(credits)
+            for scoped, credits in SHAPES:
+                shape = band.shape(scoped, credits)
                 boxes = [("header", band.header)]
                 boxes += [(r.key + " label", r.label) for r in shape.rungs]
                 boxes += [(r.key + " bar", r.bar) for r in shape.rungs]
                 if shape.credits is not None:
                     boxes.append(("credits", shape.credits))
                 for name, (x0, y0, x1, y1) in boxes:
-                    where = "%s (%dx%d, credits=%s)" % (name, size[0], size[1], credits)
+                    where = "%s (%dx%d, scoped=%s credits=%s)" % (
+                        name, size[0], size[1], scoped, credits)
                     assert 0 <= x0 < x1 <= lay.width, "%s runs off horizontally" % where
                     assert band.top <= y0 < y1 <= band.bottom, \
                         "%s runs off vertically" % where
@@ -61,13 +66,26 @@ def test_the_rungs_do_not_run_into_one_another():
     """The share-out gives each rung its own cell; nothing may cross a cell boundary."""
     for mod, size in ((L, (480, 320)), (LW, (1280, 720))):
         for band in mod.Layout(*size).bands:
-            for credits in (False, True):
-                shape = band.shape(credits)
+            for scoped, credits in SHAPES:
+                shape = band.shape(scoped, credits)
                 assert band.header[3] <= shape.rungs[0].top
                 for a, b in zip(shape.rungs, shape.rungs[1:]):
                     assert a.bottom < b.top, "%s runs into %s" % (a.key, b.key)
                 if shape.credits is not None:
                     assert shape.rungs[-1].bottom <= shape.credits[1]
+
+
+def test_the_shape_table_is_the_rule_it_was_asked_for():
+    """The four shapes ARE the decision, so they are asserted rather than described:
+    a scoped window adds a third rung, and nothing else changes the count."""
+    for mod, size in ((L, (480, 320)), (LW, (1280, 720))):
+        band = mod.Layout(*size).band_a
+        for scoped, credits in SHAPES:
+            shape = band.shape(scoped, credits)
+            keys = [r.key for r in shape.rungs]
+            assert keys == (["session", "week", "scoped"] if scoped
+                            else ["session", "week"]), keys
+            assert (shape.credits is not None) is credits
 
 
 def test_number_column_and_bar_column_do_not_overlap():
