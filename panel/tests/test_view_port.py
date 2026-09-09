@@ -157,6 +157,74 @@ def test_week_takes_aggregate_not_scoped():
 def test_no_matching_series_gives_none():
     assert view.pick_session([]) is None
     assert view.pick_weekly([]) is None
+    assert view.pick_scoped([]) is None
+
+
+# --- the model-scoped weekly window -----------------------------------------
+
+def test_scoped_is_picked_by_kind_and_the_highest_one_wins():
+    """By KIND, never by a name -- a model this build has not heard of has to appear on
+    the panel by itself. The highest wins: the rung answers "what stops me first"."""
+    fable = series(seriesKey="limit:weekly_scoped|weekly|fable|-",
+                   kind="weekly_scoped", utilization=48)
+    opus = series(seriesKey="limit:weekly_scoped|weekly|opus|-",
+                  kind="weekly_scoped", utilization=71)
+    week = series(seriesKey="limit:weekly_all|weekly|-|-", kind="weekly_all",
+                  utilization=99)
+    assert view.pick_scoped([fable, opus, week]) is opus
+    assert view.pick_scoped([week]) is None
+
+
+def test_scoped_choice_is_stable_when_two_are_equal():
+    """Frame only pushes a frame that differs from the last, so a coin-toss between two
+    equal series would repaint the panel over USB for nothing."""
+    a = series(seriesKey="limit:weekly_scoped|weekly|aaa|-", kind="weekly_scoped",
+               utilization=50)
+    b = series(seriesKey="limit:weekly_scoped|weekly|zzz|-", kind="weekly_scoped",
+               utilization=50)
+    assert view.pick_scoped([a, b]) is view.pick_scoped([b, a])
+
+
+def test_scoped_label_is_derived_not_tabulated():
+    """A model nobody has heard of draws its own name -- presentation rule 5."""
+    made_up = series(seriesKey="limit:weekly_scoped|weekly|tangelo|-",
+                     kind="weekly_scoped", label="Week — Tangelo")
+    assert view.scoped_label(made_up) == "TANGELO"
+    # No label to read: the key still carries the name.
+    assert view.scoped_label(series(seriesKey="limit:weekly_scoped|weekly|fable|-",
+                                    kind="weekly_scoped", label=None)) == "FABLE"
+    # Neither: something true rather than a wrong word.
+    assert view.scoped_label(None) == "WEEKLY"
+
+
+def test_a_second_of_jitter_still_counts_as_one_boundary():
+    """MEASURED against this deployment's history: the aggregate week and the scoped
+    window never stood more than ONE second apart, and that second is Anthropic writing
+    the same instant as 16:00:00 and as 15:59:59. Exact equality was tried first and
+    split the pair on both live accounts at once."""
+    a = fmt.parse_utc("2026-09-12T16:00:00Z")
+    assert view.resets_aligned(a, fmt.parse_utc("2026-09-12T15:59:59Z"))
+    assert view.resets_aligned(a, a)
+    # The same moment, written two ways, is still one moment.
+    assert view.resets_aligned(a, fmt.parse_utc("2026-09-12T16:00:00+00:00"))
+
+
+def test_a_missing_boundary_is_nothing_to_disagree_with():
+    """Anthropic gives no boundary for a window at 0 % usage -- 3288 of the 3290 readings
+    here with no scoped boundary are exactly that. A null is an absence, not a second
+    deadline, and all nine times the scoped window gained a boundary it was the
+    account's own weekly one."""
+    a = fmt.parse_utc("2026-09-12T16:00:00Z")
+    assert view.resets_aligned(a, None)
+    assert view.resets_aligned(None, a)
+    assert view.resets_aligned(None, None)
+
+
+def test_a_real_divergence_is_not_swallowed_by_the_tolerance():
+    """A boundary belonging to a genuinely different window is hours or days away."""
+    a = fmt.parse_utc("2026-09-12T16:00:00Z")
+    assert not view.resets_aligned(a, fmt.parse_utc("2026-09-12T16:01:00Z"))
+    assert not view.resets_aligned(a, fmt.parse_utc("2026-09-16T11:00:00Z"))
 
 
 # --- credits ----------------------------------------------------------------

@@ -154,9 +154,11 @@ def scoped():
     """Both accounts carry a model-scoped weekly window, exactly as mockup 6f draws it.
 
     The top one has Fable and no credits, so the band is three rungs of the same build.
-    The bottom one has Fable AND credits, the densest band there is. The boundaries of
-    its two weekly windows are deliberately the SAME instant here — the case the mockup
-    glues into one row.
+    The bottom one has Fable AND credits, the densest band there is — and its two weekly
+    boundaries stand ONE SECOND apart, which is what production actually looks like: both
+    live accounts read "16:00:00" from one series and "15:59:59" from the other. They are
+    one boundary and the row glues, which is the whole point of the tolerance in
+    `view.resets_aligned`. Exact equality was tried and split both of them.
     """
     a = account(
         "00000000-0000-4000-8000-000000000003", "you@example.org",
@@ -194,11 +196,28 @@ def scoped():
                    kind="weekly_all", bucketKey="seven_day", sort_order=20,
                    utilization=100, rawUtilization=100, resetsAt=_at(3712),
                    isActive=True, severity="critical"),
+            # One second before the week's, exactly as production reports it.
             series("limit:weekly_scoped|weekly|fable|-", "Week — Fable",
                    kind="weekly_scoped", group="weekly", sort_order=25,
-                   utilization=48, rawUtilization=48, resetsAt=_at(3712)),
+                   utilization=48, rawUtilization=48, resetsAt=_at(3712 - 1 / 60)),
         ])
     return [a, b]
 
 
-SCENES = {"base": base, "states": states, "edges": edges, "scoped": scoped}
+def diverged():
+    """`scoped`, with the bottom account's two weekly boundaries pulled apart.
+
+    The pair has ONE countdown, so it can only stand while both windows reset at the same
+    instant. Here they do not, and the band has to come back apart into three rungs --
+    the case that would otherwise put a confident wrong time under one of the two tracks.
+    The top account is the control: its rungs are separate anyway.
+    """
+    a, b = scoped()
+    for s in b.series:
+        if s.kind == "weekly_scoped":
+            s.resets_at = _at(8213)
+    return [a, b]
+
+
+SCENES = {"base": base, "states": states, "edges": edges, "scoped": scoped,
+          "diverged": diverged}
