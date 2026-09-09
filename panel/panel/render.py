@@ -674,24 +674,41 @@ class Renderer:
         y = b.header[1]
         right = b.x1
 
+        # The right-hand group reads as one line: "1 min ago ● 26.07.2026 21:07:40".
+        #
+        # Everything in it stands on the CLOCK's baseline, derived here once and used by
+        # all three. Two type sizes side by side at separate offsets read as a misprint,
+        # and the band with no clock computes the same baseline anyway, so the age sits
+        # at one height in both bands.
+        base = y + self.L.CLOCK_DY + f_clock.getmetrics()[0]
+
         if band.show_clock:
-            self._link_mark(d, (right - self.L.LINK_DX, y + self.L.LINK_DY),
-                            state.link)
-            right -= self.L.CLOCK_MARK_W
             w = draw.text_width(state.clock, f_clock)
             d.text((right, y + self.L.CLOCK_DY), state.clock, font=f_clock,
                    fill=theme.TEXT_78, anchor="ra")
             right -= w + self.L.HEAD_GAP
 
-        if band.plan:
-            w = draw.tracked_width(band.plan.upper(), f_plan, 1)
-            draw.text_tracked(d, (right - w, y + self.L.BADGE_DY), band.plan.upper(),
-                              f_plan, theme.TEXT_50, tracking=1)
-            right -= w + self.L.REASON_GAP
+            # The link mark BETWEEN the age and the clock, not off in the corner. It is
+            # the online/offline status, and standing there it separates the two stamps
+            # while saying whether either can be believed: a live dot means the age is
+            # being refreshed, a crossed ring means both numbers are the last ones we got.
+            # In the corner it was a mark about nothing in particular.
+            self._link_mark(d, (right - self.L.LINK_R, base - self.L.LINK_DY),
+                            state.link)
+            right -= 2 * self.L.LINK_R + self.L.HEAD_GAP
+
+        # The reading age — one per band, because the backend confirms each account
+        # separately. It used to ride at the end of the session's caption line; that line
+        # goes away so a third window can fit, and the header is where both mockups put it.
+        if band.ago:
+            f_ago = draw.font(self.L.F_AGO)
+            d.text((right, base), band.ago, font=f_ago, fill=theme.TEXT_52, anchor="rs")
+            right -= draw.text_width(band.ago, f_ago) + self.L.HEAD_GAP
 
         if band.alert:
-            # The reason sits ON THE PLAN'S LINE, not next to the name: the name gets
-            # shortened at times, and this caption must not vanish with its tail.
+            # The reason keeps the right-hand group, where the plan badge used to stand,
+            # rather than following the plan to the left: the name gets shortened at
+            # times, and this caption must not vanish with its tail.
             f_reason = draw.font(self.L.F_REASON)
             word = band.alert.upper()
             w = draw.tracked_width(word, f_reason, 1)
@@ -699,10 +716,24 @@ class Renderer:
                               theme.ACCENT_200, tracking=1)
             right -= w + self.L.HEAD_GAP
 
-        room = max(20, right - b.x0)
+        # The name, and the plan glued to it. The plan qualifies the account rather than
+        # the screen — "40 %" means one thing on Max 20x and another on a Team seat — so
+        # it reads as part of the identifier and travels with it, not as a third item
+        # adrift in the header's right-hand group.
+        #
+        # On the NAME's baseline, for the reason the age sits on the clock's: two sizes
+        # side by side, and a shared baseline is the only thing that makes them one line.
+        # The name yields the room, because the plan is short, fixed and cannot be cut.
+        w_plan = draw.tracked_width(band.plan.upper(), f_plan, 1) if band.plan else 0
+        room = max(20, right - b.x0 - (w_plan + self.L.PLAN_GAP if band.plan else 0))
         title = draw.ellipsize(band.title, f_name, room)
         d.text((b.x0, y + self.L.NAME_DY), title, font=f_name,
                fill=theme.ACCENT_100 if band.alert else theme.TEXT)
+        if band.plan:
+            x = b.x0 + draw.text_width(title, f_name) + self.L.PLAN_GAP
+            base = y + self.L.NAME_DY + f_name.getmetrics()[0]
+            draw.text_tracked(d, (x, base), band.plan.upper(), f_plan, theme.TEXT_50,
+                              tracking=1, anchor="ls")
 
     def _link_mark(self, d, centre, link):
         """A filled dot = live, a ring = reconnecting, a crossed ring = down.
@@ -756,17 +787,9 @@ class Renderer:
                          theme.ACCENT_300 if session else theme.mix(theme.ACCENT_300, 70))
         x += self.L.GLYPH_ADV
         text = lead if not at else "%s · %s" % (lead, at)
-        room = line_box[2] - x - (self.L.AGO_W if session else 0)
+        room = line_box[2] - x
         d.text((x, gy), draw.ellipsize(text, f_reset, room), font=f_reset,
                fill=theme.TEXT_70 if session else theme.TEXT_60, anchor="lm")
-
-        if session and band.ago:
-            f_ago = draw.font(self.L.F_AGO)
-            w = draw.text_width(band.ago, f_ago)
-            d.text((line_box[2], gy), band.ago, font=f_ago, fill=theme.TEXT_52,
-                   anchor="rm")
-            draw.dot(d, (line_box[2] - w - self.L.AGO_DOT_GAP, gy),
-                     self.L.AGO_DOT_R, theme.ACCENT)
 
     def _number(self, d, b, v, centre, big, tight, small):
         """The number and the % sign, aligned to the RIGHT edge of the narrow column.
