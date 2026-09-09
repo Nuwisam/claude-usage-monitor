@@ -57,11 +57,14 @@ F_WORDS = 13            # "unknown" instead of a number
 
 DIVIDER_H = 1
 
-# The block reason in the band header, next to the plan badge. The measured slack in the
+# The block reason in the band header, in the right-hand group. The measured slack in the
 # header with the longest real name is 202 px in the top band and 259 px in the bottom one,
 # so a few dozen pixels for one uppercase word bite only when the name is truncated anyway.
 F_REASON = 10
-REASON_GAP = 6
+#: The plan badge, glued to the account name: the plan qualifies the ACCOUNT, so it reads
+#: as part of the identifier. Tighter than HEAD_GAP, which separates the header's groups
+#: from one another — this one joins two halves of one thing.
+PLAN_GAP = 6
 
 # --- the pieces render.py used to place with a bare number --------------------
 #
@@ -86,16 +89,19 @@ LABEL_DY = 0            # SESSION 5 H / WEEK, from the top of their box
 #: centre of the box it sits in; this renderer centres the ink itself.
 NUM_DY = 0              # the percentage, from the centre of its window
 CREDITS_DY = 0          # the amount and its "/ limit", from the centre of the credits row
-LINK_DX = 4             # the link mark's centre, in from the right edge
-LINK_DY = 9             # ... and down from the top of the header
+LINK_DX = 4             # the link mark's centre, in from the right edge -- ALERT CARD only
+#: In a band the mark stands between the reading age and the clock, on their shared
+#: baseline, so what it needs is how far ABOVE that baseline its centre sits: roughly the
+#: middle of the clock's x-height, or the dot rides on the digits' feet.
+LINK_DY = 5
 LINK_R = 3              # the dot, and the ring when it is not filled
 LINK_CROSS = 4          # the arm of the cross over a dead link
 
 GLYPH_R = 5             # the clock glyph in front of the reset caption
 GLYPH_ADV = 15          # ... and where the caption starts after it
-AGO_W = 86              # room kept at the right of the session caption for the reading age
-AGO_DOT_GAP = 8         # the age's dot, left of its first digit
-AGO_DOT_R = 2
+#: The reading age needs no constant of its own: it stands in the header on the CLOCK's
+#: baseline, which `render._header` derives from CLOCK_DY and the clock's ascender. A dot
+#: of its own would be a second accent dot beside the link mark, so it has none.
 
 CREDITS_LABEL_DY = 5    # the CREDITS label rides above the centre line of the row
 #: The arrow marking the rung that limits now, as (left, up, right, down) from the

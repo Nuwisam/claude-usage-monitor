@@ -69,11 +69,11 @@ F_WORDS = 26            # "unknown" instead of a number
 DIVIDER_H = 1           # a hairline at any size: the mockup's bands are 1 px apart here too
 
 F_REASON = 20
-REASON_GAP = 14
+PLAN_GAP = 14
 
-# The header's three groups, right to left: the clock, then the plan badge with the
-# block reason beside it, then the account name. The mockup spaces the groups 22 px
-# apart and the badge from the reason 14 px.
+# The header's groups: the account name with the plan glued to it on the left, and on the
+# right, right to left, the link mark, the clock, the reading age and the block reason.
+# The mockup spaces the groups 22 px apart.
 HEAD_GAP = 22
 CLOCK_MARK_W = 28
 CLOCK_DY = 3
@@ -85,15 +85,12 @@ LABEL_DY = -4
 NUM_DY = -3
 CREDITS_DY = -4
 LINK_DX = 8
-LINK_DY = 19
+LINK_DY = 9
 LINK_R = 6
 LINK_CROSS = 8
 
 GLYPH_R = 11            # the mockup draws the clock glyph as a 22 px box
 GLYPH_ADV = 34
-AGO_W = 170
-AGO_DOT_GAP = 16
-AGO_DOT_R = 5
 
 CREDITS_LABEL_DY = 15
 CREDITS_ARROW = (29, 11, 7, 11)
