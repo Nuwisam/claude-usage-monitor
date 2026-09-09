@@ -180,25 +180,32 @@ def pick_scoped(series):
 
 #: How far apart two weekly boundaries may stand and still count as ONE boundary.
 #:
-#: MEASURED, not guessed. Across every reading this deployment holds -- 2026-07-26 to
-#: 2026-09-09, two accounts, 909 samples where both windows had a boundary -- the largest
-#: gap ever seen between the aggregate week and the scoped one is ONE SECOND, and 88 % of
-#: them agree exactly. The odd second is Anthropic reporting the same instant as
-#: "16:00:00" from one series and "15:59:59" from the other. A boundary that genuinely
-#: belonged to a different window would be hours or days away, so anything in this range
-#: is rounding and nothing else. Exact equality was tried first and was wrong: it split
-#: the pair on BOTH live accounts at once.
-RESET_ALIGN_TOLERANCE_S = 5
+#: The SAME NUMBER the backend settles the same question with -- `RESET_WINDOW_EPS_SEC`,
+#: 300 s, read `backend/app/parsing.py::same_reset_window` for the reasoning. It is
+#: restated rather than imported because the panel is a separate deployable that knows the
+#: backend only over HTTP; it must not be a SECOND number. The backend's argument is the
+#: one to keep: a threshold of minutes is two orders of magnitude above the wobble and two
+#: below the shortest window, so nothing in between can be mistaken for either.
+#:
+#: Confirmed here on the weekly pair specifically. Across every reading this deployment
+#: holds -- 2026-07-26 to 2026-09-09, two accounts, 909 samples where both windows had a
+#: boundary -- the largest gap between the aggregate week and the scoped one is ONE
+#: SECOND, and 88 % agree exactly; the odd second is Anthropic reporting the same instant
+#: as "16:00:00" from one series and "15:59:59" from the other. Exact equality was tried
+#: first and was wrong: it split the pair on BOTH live accounts at once.
+RESET_ALIGN_TOLERANCE_S = 300
 
 
 def resets_aligned(a, b):
     """Whether two windows close at the same moment, and so can share one countdown.
 
-    A missing boundary counts as aligned. Anthropic gives no boundary for a window at
-    0 % usage -- 3288 of the 3290 readings with no scoped boundary here are exactly that
-    -- so a null is "nothing to disagree with", not a second, different deadline. And the
-    boundary, when it does appear, has never once appeared different: all nine times the
-    scoped window gained one, it was the account's own weekly boundary.
+    A missing boundary counts as aligned, and this is where the panel's question parts
+    company with the backend's. `same_reset_window` calls a null on ONE side a change,
+    because it is asking "has anything moved". This asks "can one countdown speak for
+    both", and a window with no boundary has nothing to contradict: Anthropic gives none
+    for a window at 0 % usage, which is 3288 of the 3290 readings with no scoped boundary
+    here. The history says the same the other way -- all nine times the scoped window
+    gained a boundary out of nothing, it was the account's own weekly one.
     """
     if a is None or b is None:
         return True
