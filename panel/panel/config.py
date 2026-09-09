@@ -63,6 +63,14 @@ DEFAULTS = {
     # sharing that commit made deliberate. So the cost lands per screen while the switch
     # can only be set for all of them: with a fast panel and an AX206 on one desk, the
     # AX206 is what the setting has to be chosen for.
+    #
+    # An account with BOTH a model-scoped weekly window and credits carries four things
+    # in one band. `true` puts its two weekly windows in one row of two tracks, under one
+    # label and one countdown — the two are the same seven days at two scopes, and side
+    # by side "how much of it is the week and how much is the model" is one glance.
+    # `false` gives each its own rung; they fit either way, so this is a question about
+    # reading and not about room. Bands without both are unaffected.
+    "glue_weekly_pair": True,
     # The panel gets a frame only when the image differs. This threshold forces a
     # send despite there being no difference, so that a corrupted patch on the
     # glass does not stay there forever — the panel holds its last frame forever.
@@ -290,7 +298,8 @@ class Config:
         self._number(problems, "tick_sec", float, 0.01)
         self._number(problems, "width", int, 1)
         self._number(problems, "height", int, 1)
-        for name in ("clock_seconds", "clock_date", "session_alerts", "record_sse"):
+        for name in ("clock_seconds", "clock_date", "session_alerts", "record_sse",
+                     "glue_weekly_pair"):
             self._flag(problems, name)
         self._unknown_keys(problems)
         self._canvas_has_a_layout(problems)

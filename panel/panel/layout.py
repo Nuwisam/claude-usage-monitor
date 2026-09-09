@@ -40,6 +40,17 @@ WK_BAR_H = 9
 CREDITS_BAR_H = 5
 CREDITS_H = 14
 
+# --- the glued weekly pair (mockup 6g) ---------------------------------------
+#
+# The two weekly windows in ONE row of two tracks, under one label and one countdown.
+# Not a way of saving room -- three separate rungs and the credits fit on both canvases
+# -- but a way of reading: the two are the same seven days seen at two scopes, and
+# "how much of it is the week and how much is the model" is one glance rather than a
+# jump down the band. `glue_weekly_pair` in panel.json turns it off.
+PAIR_GAP = 4            # label to the first track, and track to track
+PAIR_BAR_H = 8
+PAIR_NUM_PITCH = 22     # between the CENTRES of the two stacked numbers
+
 # Fonts
 F_NAME = 15
 F_PLAN = 10
@@ -52,6 +63,13 @@ F_SES_NUM_TIGHT = 34    # a three-digit value drops one step, otherwise it does 
 F_SES_PCT = 14
 F_WK_NUM = 30
 F_WK_PCT = 12
+#: In the glued shape the session pays for the third rung: it steps down so the pair and
+#: the credits have room, and the pair's own numbers are smaller again than a lone week's.
+F_SES_NUM_PAIR = 34
+F_SES_PCT_PAIR = 12
+SES_BAR_H_PAIR = 11
+F_PAIR_NUM = 20
+F_PAIR_PCT = 10
 F_CREDITS_USED = 14
 F_CREDITS_LIMIT = 11
 F_WORDS = 13            # "unknown" instead of a number
@@ -390,14 +408,37 @@ class Rung:
         self.f_pct = f_pct
 
 
+class Pair:
+    """The two weekly windows in ONE row: one label line, two tracks under it, and
+    their two numbers stacked in the number column."""
+
+    __slots__ = ("keys", "label", "bars", "centres", "top", "bottom", "centre",
+                 "f_num", "f_num_tight", "f_pct")
+
+    def __init__(self, keys, label, bars, centres, f_num, f_pct):
+        self.keys = keys
+        self.label = label
+        self.bars = bars
+        self.centres = centres
+        self.top = label[1]
+        self.bottom = bars[-1][3]
+        self.centre = (self.top + self.bottom) // 2
+        self.f_num = f_num
+        # A pair's number never steps down: at this size "100" already fits the column,
+        # so `big` and `tight` are one and the same.
+        self.f_num_tight = f_num
+        self.f_pct = f_pct
+
+
 class BandShape:
-    """What one band looks like for one KIND of account: the rungs it carries, and
-    whether the credits close it off."""
+    """What one band looks like for one KIND of account: the rungs it carries, whether
+    two of them are glued into a pair, and whether the credits close it off."""
 
-    __slots__ = ("rungs", "credits", "credits_centre", "fits")
+    __slots__ = ("rungs", "pair", "credits", "credits_centre", "fits")
 
-    def __init__(self, rungs, credits, credits_centre, fits):
+    def __init__(self, rungs, pair, credits, credits_centre, fits):
         self.rungs = rungs
+        self.pair = pair
         self.credits = credits
         self.credits_centre = credits_centre
         self.fits = fits
@@ -432,13 +473,15 @@ class Band:
         self.header = (self.x0, y, self.x1, y + m.HEADER_H)
         self.rows_top = y + m.HEADER_H + m.ROW_GAP
 
-        self.shapes = {(scoped, credits): self._shape(scoped, credits)
-                       for scoped in (False, True) for credits in (False, True)}
+        self.shapes = {k: self._shape(*k) for k in
+                       [(s, c, g) for s in (False, True)
+                        for c in (False, True) for g in (False, True)]}
 
-    def shape(self, scoped, credits):
+    def shape(self, scoped, credits, glue=True):
         """The shape this band takes, given whether the account has a scoped weekly
-        window and whether its credits are drawn."""
-        return self.shapes[(bool(scoped), bool(credits))]
+        window, whether its credits are drawn, and whether the two weekly windows are
+        allowed to share a row."""
+        return self.shapes[(bool(scoped), bool(credits), bool(glue))]
 
     def _cells(self, top, bottom, n):
         """Share a span out between n rows, the way `AlertList.rows` does.
@@ -467,7 +510,27 @@ class Band:
         bar = (self.block_x0, y, self.block_x1, y + bar_h)
         return Rung(key, label, bar, f_num, f_num_tight, f_pct)
 
-    def _shape(self, scoped, credits):
+    def _pair(self, cell):
+        """The two weekly windows glued into one cell."""
+        m = self.m
+        content = m.LABEL_H + 2 * (m.PAIR_GAP + m.PAIR_BAR_H)
+        y = cell[0] + (cell[1] - cell[0] - content) // 2
+        label = (self.block_x0, y, self.block_x1, y + m.LABEL_H)
+        y += m.LABEL_H + m.PAIR_GAP
+        bars = []
+        for _ in range(2):
+            bars.append((self.block_x0, y, self.block_x1, y + m.PAIR_BAR_H))
+            y += m.PAIR_BAR_H + m.PAIR_GAP
+        pair = Pair(("week", "scoped"), label, bars, None,
+                    m.F_PAIR_NUM, m.F_PAIR_PCT)
+        # The numbers are stacked on the ROW's centre rather than on their own tracks:
+        # at these sizes a number is taller than the 8 px track it belongs to, so
+        # centring each on its track would overlap them.
+        half = m.PAIR_NUM_PITCH // 2
+        pair.centres = (pair.centre - half, pair.centre - half + m.PAIR_NUM_PITCH)
+        return pair
+
+    def _shape(self, scoped, credits, glue):
         m = self.m
         if credits:
             # Credits glued to the bottom of the band (margin-top: auto in the mockup);
@@ -480,21 +543,38 @@ class Band:
             box, centre = None, None
             bottom = self.bottom - m.PAD_BOT
 
+        # The two weekly windows share a row only when the band ALSO carries the credits
+        # -- not because three rungs and the credits would not fit (they do, on both
+        # canvases), but because at that density the pair reads better side by side than
+        # stacked. `glue` is the panel.json switch that says otherwise.
+        glued = scoped and credits and glue
+
         # The scoped window is built like the aggregate week and set in the same type:
         # both are seven-day windows, and one of them being narrower in scope is not a
         # reason to make it look like a lesser KIND of thing.
-        spec = [("session", m.SES_BAR_H, m.F_SES_NUM, m.F_SES_NUM_TIGHT, m.F_SES_PCT),
-                ("week", m.WK_BAR_H, m.F_WK_NUM, m.F_WK_NUM, m.F_WK_PCT)]
-        if scoped:
-            spec.append(("scoped", m.WK_BAR_H, m.F_WK_NUM, m.F_WK_NUM, m.F_WK_PCT))
+        if glued:
+            spec = [("session", m.SES_BAR_H_PAIR, m.F_SES_NUM_PAIR,
+                     m.F_SES_NUM_PAIR, m.F_SES_PCT_PAIR)]
+            heights = [m.LABEL_H + m.INNER_GAP + m.SES_BAR_H_PAIR,
+                       m.LABEL_H + 2 * (m.PAIR_GAP + m.PAIR_BAR_H)]
+        else:
+            spec = [("session", m.SES_BAR_H, m.F_SES_NUM, m.F_SES_NUM_TIGHT,
+                     m.F_SES_PCT),
+                    ("week", m.WK_BAR_H, m.F_WK_NUM, m.F_WK_NUM, m.F_WK_PCT)]
+            if scoped:
+                spec.append(("scoped", m.WK_BAR_H, m.F_WK_NUM, m.F_WK_NUM, m.F_WK_PCT))
+            heights = [m.LABEL_H + m.INNER_GAP + s[1] for s in spec]
 
-        cells = self._cells(self.rows_top, bottom, len(spec))
+        n = len(spec) + (1 if glued else 0)
+        cells = self._cells(self.rows_top, bottom, n)
         rungs = [self._rung(key, cell, *sizes)
                  for cell, (key, *sizes) in zip(cells, spec)]
-        content = sum(m.LABEL_H + m.INNER_GAP + s[1] for s in spec)
-        fits = all(r.bottom <= bottom for r in rungs) and \
-            bottom - self.rows_top >= content + (len(spec) - 1) * m.ROW_GAP
-        return BandShape(rungs, box, centre, fits)
+        pair = self._pair(cells[-1]) if glued else None
+
+        lowest = pair.bottom if pair else rungs[-1].bottom
+        fits = lowest <= bottom and \
+            bottom - self.rows_top >= sum(heights) + (n - 1) * m.ROW_GAP
+        return BandShape(rungs, pair, box, centre, fits)
 
     @property
     def fits(self):
