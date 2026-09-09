@@ -35,23 +35,31 @@ def _credits_shown(c):
 class BandState:
     """Everything the account band has to show. Assembled in app.py."""
 
-    __slots__ = ("title", "plan", "session", "weekly", "credits",
-                 "session_view", "weekly_view", "reset_session", "reset_week",
+    __slots__ = ("title", "plan", "session", "weekly", "scoped", "credits",
+                 "session_view", "weekly_view", "scoped_view", "scoped_label",
+                 "reset_session", "reset_week", "reset_scoped",
                  "ago", "note", "show_clock", "alert")
 
-    def __init__(self, title="", plan="", session=None, weekly=None, credits=None,
-                 session_view=None, weekly_view=None, reset_session=("", None),
-                 reset_week=("", None), ago="", note=None, show_clock=False,
+    def __init__(self, title="", plan="", session=None, weekly=None, scoped=None,
+                 credits=None, session_view=None, weekly_view=None, scoped_view=None,
+                 scoped_label="", reset_session=("", None), reset_week=("", None),
+                 reset_scoped=("", None), ago="", note=None, show_clock=False,
                  alert=False):
         self.title = title
         self.plan = plan
         self.session = session
         self.weekly = weekly
+        #: The weekly window of ONE model. None on an account that has none, and that is
+        #: what decides whether the band carries a third rung.
+        self.scoped = scoped
         self.credits = credits
         self.session_view = session_view or V.missing_view()
         self.weekly_view = weekly_view or V.missing_view()
+        self.scoped_view = scoped_view or V.missing_view()
+        self.scoped_label = scoped_label
         self.reset_session = reset_session
         self.reset_week = reset_week
+        self.reset_scoped = reset_scoped
         self.ago = ago
         self.note = note
         self.show_clock = show_clock
@@ -207,20 +215,22 @@ def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None,
 
     session = V.pick_session(account.series)
     weekly = V.pick_weekly(account.series)
+    scoped = V.pick_scoped(account.series)
     credits = V.credits(account.rung("credits"))
 
     # The age is taken from the CONFIRMATION, not from the sample's write: dedup
     # does not write a sample when the value has not changed, so `capturedAt` is at
     # times hours older than the last measurement (frontend/src/lib/freshness.ts:43-45).
     #
-    # From the OLDER of the two windows, not from whichever comes first. This label
-    # is the ONLY carrier of freshness (see view.py) and it sits next to the
-    # session row only — while the backend confirms every series SEPARATELY, so the
-    # week is at times days older than the session. Taking the session's stamp, the
-    # panel would write "3 s ago" right next to a confident-looking week bar from
-    # three days back. The age may overstate staleness, never freshness.
+    # From the OLDEST of the windows the band DRAWS, not from whichever comes first.
+    # This label is the ONLY carrier of freshness (see view.py) and there is one of it
+    # per band — while the backend confirms every series SEPARATELY, so the week is at
+    # times days older than the session. Taking the session's stamp, the panel would
+    # write "3 s ago" right next to a confident-looking week bar from three days back.
+    # The age may overstate staleness, never freshness — which is why the scoped window
+    # joins the reckoning the moment it gets a rung.
     moments = []
-    for candidate in (session, weekly):
+    for candidate in (session, weekly, scoped):
         if candidate is not None:
             moment = fmt.parse_utc(candidate.confirmed_at or candidate.captured_at)
             if moment is not None:
@@ -236,11 +246,15 @@ def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None,
         plan=V.plan_label(account),
         session=session,
         weekly=weekly,
+        scoped=scoped,
         credits=credits,
         session_view=V.describe_series(session) if session else V.missing_view(),
         weekly_view=V.describe_series(weekly) if weekly else V.missing_view(),
+        scoped_view=V.describe_series(scoped) if scoped else V.missing_view(),
+        scoped_label=V.scoped_label(scoped),
         reset_session=V.reset_note(session, now_ms),
         reset_week=V.reset_note(weekly, now_ms),
+        reset_scoped=V.reset_note(scoped, now_ms),
         ago=age,
         note=note,
         show_clock=show_clock,
@@ -673,7 +687,7 @@ class Renderer:
         # The shape is CHOSEN here, from the data, out of the ones the band computed for
         # itself. `_credits_shown` decides it and the drawing below, so a band can never
         # reserve a row it then does not paint.
-        shape = b.shape(_credits_shown(band.credits))
+        shape = b.shape(band.scoped is not None, _credits_shown(band.credits))
         for rung in shape.rungs:
             self._window(d, b, band, rung)
         if shape.credits is not None:
@@ -766,10 +780,16 @@ class Renderer:
 
     def _window(self, d, b, band, rung):
         session = rung.key == "session"
-        v = band.session_view if session else band.weekly_view
+        # The scoped rung's label is the MODEL's name and comes from the data, so there
+        # is no LABEL_SCOPED beside the other two. That absence is the genericity made
+        # visible: a model this build has never heard of draws its own name.
+        v, (lead, at), label = {
+            "session": (band.session_view, band.reset_session, LABEL_SESSION),
+            "week": (band.weekly_view, band.reset_week, LABEL_WEEK),
+            "scoped": (band.scoped_view, band.reset_scoped, band.scoped_label),
+        }[rung.key]
         bar_box = rung.bar
         label_box = rung.label
-        lead, at = band.reset_session if session else band.reset_week
 
         # --- the percent column ---
         # The sizes come off the RUNG, not off the rung's name: the same window is set
@@ -794,7 +814,6 @@ class Renderer:
 
         # --- the label ---
         f_label = draw.font(self.L.F_LABEL)
-        label = LABEL_SESSION if session else LABEL_WEEK
         colour = theme.ACCENT_200 if session else theme.TEXT_60
         room = (label_box[2] - draw.text_width(text, f_reset)
                 - self.L.RESET_GAP - label_box[0])

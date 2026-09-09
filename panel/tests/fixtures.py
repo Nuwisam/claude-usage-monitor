@@ -150,4 +150,55 @@ def edges():
     return [a, None]
 
 
-SCENES = {"base": base, "states": states, "edges": edges}
+def scoped():
+    """Both accounts carry a model-scoped weekly window, exactly as mockup 6f draws it.
+
+    The top one has Fable and no credits, so the band is three rungs of the same build.
+    The bottom one has Fable AND credits, the densest band there is. The boundaries of
+    its two weekly windows are deliberately the SAME instant here — the case the mockup
+    glues into one row.
+    """
+    a = account(
+        "00000000-0000-4000-8000-000000000003", "you@example.org",
+        cascade=[rung("session", "on", isCurrent=True, utilization=31),
+                 rung("weekly", "on", utilization=30),
+                 rung("credits", "off"),
+                 rung("hard_block", "unknown")],
+        series=[
+            series("limit:session|session|-|-", "Session", kind="session",
+                   bucketKey="five_hour", utilization=31, rawUtilization=31,
+                   resetsAt=_at(52), isActive=True, severity="normal",
+                   confirmedAt=_at(-0.32)),
+            series("bucket:seven_day", "Week (all models)",
+                   kind="weekly_all", bucketKey="seven_day", sort_order=20,
+                   utilization=30, rawUtilization=30, resetsAt=_at(8213)),
+            series("limit:weekly_scoped|weekly|fable|-", "Week — Fable",
+                   kind="weekly_scoped", group="weekly", sort_order=25,
+                   utilization=64, rawUtilization=64, resetsAt=_at(6833)),
+        ])
+    b = account(
+        "00000000-0000-4000-8000-000000000005", "billing@example.org",
+        org_type="claude_team", tier="default_claude_team_standard",
+        subscription="team", last_sample=_at(-0.93),
+        cascade=[rung("session", "on", utilization=12),
+                 rung("weekly", "on", utilization=100),
+                 rung("credits", "on", isCurrent=True, utilization=42,
+                      usedMinor=3820, limitMinor=9000, currency="USD", exponent=2),
+                 rung("hard_block", "on", limitMinor=9000, currency="USD",
+                      exponent=2)],
+        series=[
+            series("limit:session|session|-|-", "Session", kind="session",
+                   bucketKey="five_hour", utilization=12, rawUtilization=12,
+                   resetsAt=_at(112), confirmedAt=_at(-0.93)),
+            series("bucket:seven_day", "Week (all models)",
+                   kind="weekly_all", bucketKey="seven_day", sort_order=20,
+                   utilization=100, rawUtilization=100, resetsAt=_at(3712),
+                   isActive=True, severity="critical"),
+            series("limit:weekly_scoped|weekly|fable|-", "Week — Fable",
+                   kind="weekly_scoped", group="weekly", sort_order=25,
+                   utilization=48, rawUtilization=48, resetsAt=_at(3712)),
+        ])
+    return [a, b]
+
+
+SCENES = {"base": base, "states": states, "edges": edges, "scoped": scoped}
