@@ -36,8 +36,8 @@ def test_credits_do_not_overlap_week():
 def test_everything_fits_within_screen():
     lay = L.Layout(480, 320)
     for band in lay.bands:
-        for name in ("header", "ses_label", "ses_bar", "ses_line",
-                     "wk_label", "wk_bar", "wk_line", "credits"):
+        for name in ("header", "ses_label", "ses_bar",
+                     "wk_label", "wk_bar", "credits"):
             x0, y0, x1, y1 = getattr(band, name)
             assert 0 <= x0 < x1 <= lay.width, "%s runs off horizontally" % name
             assert band.top <= y0 < y1 <= band.bottom, "%s runs off vertically" % name

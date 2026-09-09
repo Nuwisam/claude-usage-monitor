@@ -15,12 +15,10 @@ There is no single multiplier and none may be derived. Type sizes come out at ex
 6->14 is 2.33x, and the bars 12/9/5->22/17/10 are 1.83x/1.89x/2.00x. A value that looks
 like a clean double is a coincidence, not a rule.
 
-Two of the stack's constants are the SHARE-OUT of a distance, not a CSS box, and they
-are the only place this module departs from what the mockup's markup says:
+One of the stack's constants is the SHARE-OUT of a distance, not a CSS box, and it is
+the only place this module departs from what the mockup's markup says:
 
-  HEADER_H 33 + ROW_GAP 18 = 51, the mockup's 37.5 px header box plus its 14 px gap;
-  LINE_H 30, between the session caption's line box (34.09) and the week's (26.39),
-  because one constant serves both and the mockup's own two rows differ.
+  HEADER_H 33 + ROW_GAP 18 = 51, the mockup's 37.5 px header box plus its 14 px gap.
 
 `Band` is not subclassed. It reads every number through the metrics handle already, so
 a subclass would be an empty one.
@@ -42,8 +40,7 @@ NUM_GAP = 26
 PCT_GAP = 4         # gap between the number and the % sign
 
 HEADER_H = 33
-LABEL_H = 20
-LINE_H = 30
+LABEL_H = 24
 
 SES_BAR_H = 22
 WK_BAR_H = 17
@@ -89,8 +86,8 @@ LINK_DY = 9
 LINK_R = 6
 LINK_CROSS = 8
 
-GLYPH_R = 11            # the mockup draws the clock glyph as a 22 px box
-GLYPH_ADV = 34
+RESET_DY = 0
+RESET_GAP = 18
 
 CREDITS_LABEL_DY = 15
 CREDITS_ARROW = (29, 11, 7, 11)

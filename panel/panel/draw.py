@@ -249,22 +249,6 @@ def cross(d, centre, radius, colour, width=1):
     d.line((cx - radius, cy + radius, cx + radius, cy - radius), fill=colour, width=width)
 
 
-def clock_glyph(d, centre, radius, colour):
-    """A clock icon instead of the mockup's Phosphor font — one import fewer
-    and the certainty that at 12 px it will not turn into a smudge.
-
-    Stroke and hands come OUT of the radius. A hairline dial is right at 5 px and reads
-    as a speck of dust at 11; the numbers below are the 5 px glyph's, restated as ratios.
-    """
-    cx, cy = centre
-    w = max(1, radius // 5)
-    hand = radius - max(2, radius // 2)
-    d.ellipse((cx - radius, cy - radius, cx + radius, cy + radius),
-              outline=colour, width=w)
-    d.line((cx, cy, cx, cy - hand), fill=colour, width=w)
-    d.line((cx, cy, cx + hand, cy), fill=colour, width=w)
-
-
 def arrow_down_right(d, box, colour):
     """The arrow next to credits: they are the current rung now.
 
