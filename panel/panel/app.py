@@ -354,7 +354,7 @@ class App:
         r = self.renderers.get(canvas)
         if r is None:
             r = self.renderers[canvas] = render.Renderer(
-                *canvas, glue_pair=self.cfg.glue_weekly_pair)
+                *canvas, glue_pair=self.cfg.glue_aligned_weekly_pair)
         return r
 
     def _frames(self):

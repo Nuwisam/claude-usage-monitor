@@ -178,6 +178,33 @@ def pick_scoped(series):
     return None
 
 
+#: How far apart two weekly boundaries may stand and still count as ONE boundary.
+#:
+#: MEASURED, not guessed. Across every reading this deployment holds -- 2026-07-26 to
+#: 2026-09-09, two accounts, 909 samples where both windows had a boundary -- the largest
+#: gap ever seen between the aggregate week and the scoped one is ONE SECOND, and 88 % of
+#: them agree exactly. The odd second is Anthropic reporting the same instant as
+#: "16:00:00" from one series and "15:59:59" from the other. A boundary that genuinely
+#: belonged to a different window would be hours or days away, so anything in this range
+#: is rounding and nothing else. Exact equality was tried first and was wrong: it split
+#: the pair on BOTH live accounts at once.
+RESET_ALIGN_TOLERANCE_S = 5
+
+
+def resets_aligned(a, b):
+    """Whether two windows close at the same moment, and so can share one countdown.
+
+    A missing boundary counts as aligned. Anthropic gives no boundary for a window at
+    0 % usage -- 3288 of the 3290 readings with no scoped boundary here are exactly that
+    -- so a null is "nothing to disagree with", not a second, different deadline. And the
+    boundary, when it does appear, has never once appeared different: all nine times the
+    scoped window gained one, it was the account's own weekly boundary.
+    """
+    if a is None or b is None:
+        return True
+    return abs((a - b).total_seconds()) <= RESET_ALIGN_TOLERANCE_S
+
+
 def scoped_label(s):
     """"FABLE" -- the model's own name, taken from the data rather than a dictionary.
 

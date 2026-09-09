@@ -37,14 +37,14 @@ class BandState:
 
     __slots__ = ("title", "plan", "session", "weekly", "scoped", "credits",
                  "session_view", "weekly_view", "scoped_view", "scoped_label",
-                 "reset_session", "reset_week", "reset_scoped",
+                 "reset_session", "reset_week", "reset_scoped", "reset_aligned",
                  "ago", "note", "show_clock", "alert")
 
     def __init__(self, title="", plan="", session=None, weekly=None, scoped=None,
                  credits=None, session_view=None, weekly_view=None, scoped_view=None,
                  scoped_label="", reset_session=("", None), reset_week=("", None),
-                 reset_scoped=("", None), ago="", note=None, show_clock=False,
-                 alert=False):
+                 reset_scoped=("", None), reset_aligned=True, ago="", note=None,
+                 show_clock=False, alert=False):
         self.title = title
         self.plan = plan
         self.session = session
@@ -60,6 +60,10 @@ class BandState:
         self.reset_session = reset_session
         self.reset_week = reset_week
         self.reset_scoped = reset_scoped
+        #: Whether the two weekly windows reset at the same INSTANT. The glued pair has
+        #: one countdown, so it can only be honest while this holds; when it stops
+        #: holding, the pair comes apart into two rungs by itself.
+        self.reset_aligned = reset_aligned
         self.ago = ago
         self.note = note
         self.show_clock = show_clock
@@ -255,6 +259,12 @@ def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None,
         reset_session=V.reset_note(session, now_ms),
         reset_week=V.reset_note(weekly, now_ms),
         reset_scoped=V.reset_note(scoped, now_ms),
+        # On the INSTANTS and with a tolerance -- see view.RESET_ALIGN_TOLERANCE_S for
+        # what was measured. Strings would not do (the same moment arrives as
+        # "...T16:00:00Z" and as "...T16:00:00+00:00") and neither would exact equality.
+        reset_aligned=V.resets_aligned(
+            fmt.parse_utc(weekly.resets_at) if weekly else None,
+            fmt.parse_utc(scoped.resets_at) if scoped else None),
         ago=age,
         note=note,
         show_clock=show_clock,
@@ -691,8 +701,12 @@ class Renderer:
         # The shape is CHOSEN here, from the data, out of the ones the band computed for
         # itself. `_credits_shown` decides it and the drawing below, so a band can never
         # reserve a row it then does not paint.
+        # The glue takes BOTH a configuration that allows it and two weekly windows that
+        # actually share a boundary. The row carries one countdown, so a drifted pair
+        # would have it say the wrong thing about one of its two tracks; the pair comes
+        # apart into two rungs instead, which is what the mockup's own caption asks for.
         shape = b.shape(band.scoped is not None, _credits_shown(band.credits),
-                        self.glue_pair)
+                        self.glue_pair and band.reset_aligned)
         for rung in shape.rungs:
             self._window(d, b, band, rung)
         if shape.pair is not None:
@@ -838,12 +852,21 @@ class Renderer:
 
         The label names both -- "WEEK / FABLE" -- and the tracks are in the order the
         label reads, so which number belongs to which is answered by reading left to
-        right rather than by a legend. The countdown is ONE because in this shape the two
-        windows share a boundary; when they do not, each track takes its own.
+        right rather than by a legend.
+
+        The countdown is ONE, and this shape is only ever reached when the two windows
+        share a boundary, so it speaks for both. `_band` is what guarantees that: a
+        drifted pair never gets here.
+
+        It is the WEEK's countdown, unless the week is the one with no boundary -- one of
+        the two being null is a way of sharing a boundary too (see `view.resets_aligned`),
+        and the row should show the deadline that exists rather than the absence.
         """
         f_reset = draw.font(self.L.F_RESET)
         gy = (pair.label[1] + pair.label[3]) // 2 + self.L.RESET_DY
-        lead, at = band.reset_week
+        lead, at = (band.reset_week
+                    if band.weekly is not None and band.weekly.resets_at
+                    else band.reset_scoped)
         text = draw.ellipsize(lead if not at else "%s · %s" % (lead, at),
                               f_reset, pair.label[2] - pair.label[0])
         d.text((pair.label[2], gy), text, font=f_reset, fill=theme.TEXT_60,

@@ -115,8 +115,8 @@ def main():
     ap.add_argument("--no-clock-date", action="store_true",
                     help="clock_date: false — the bare time, no date")
     ap.add_argument("--no-glue-pair", action="store_true",
-                    help="glue_weekly_pair: false — the two weekly windows get a rung "
-                         "each instead of sharing one row of two tracks")
+                    help="glue_aligned_weekly_pair: false — the two weekly windows get "
+                         "a rung each instead of sharing one row of two tracks")
     ap.add_argument("--marker", choices=("upper", "lower", "both"),
                     help="bands with the alert marker on the edge of the chosen band")
     ap.add_argument("--canvas", default="480x320", metavar="WxH",
