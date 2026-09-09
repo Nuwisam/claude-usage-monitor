@@ -7,7 +7,7 @@ import pytest
 
 from PIL import Image
 
-from panel import draw, fmt, layout as L, render, theme, view
+from panel import draw, fmt, layout as L, layout_wide as LW, render, theme, view
 from tests import fixtures
 
 #: The clock face the panel actually draws — DERIVED from the formatter, not hand-typed,
@@ -27,20 +27,47 @@ def test_bands_divide_screen_without_overlap():
 
 
 def test_credits_do_not_overlap_week():
-    """The credits row is glued to the bottom of the band. Were the band too short,
-    it would overlap the week countdown and nobody would notice that on a PNG."""
+    """The credits row is glued to the bottom of the band and the rungs share out what is
+    left above it. Were the band too short, they would run into each other and nobody
+    would notice that on a PNG.
+
+    `fits` spans EVERY shape the band can take, so this asks the question once per shape
+    rather than once per band."""
     for band in L.Layout(480, 320).bands:
         assert band.fits, "credits overlap week"
 
 
 def test_everything_fits_within_screen():
-    lay = L.Layout(480, 320)
-    for band in lay.bands:
-        for name in ("header", "ses_label", "ses_bar",
-                     "wk_label", "wk_bar", "credits"):
-            x0, y0, x1, y1 = getattr(band, name)
-            assert 0 <= x0 < x1 <= lay.width, "%s runs off horizontally" % name
-            assert band.top <= y0 < y1 <= band.bottom, "%s runs off vertically" % name
+    """Every box of every shape, on both canvases -- a shape is only reached by the data
+    that selects it, so a band that fits in one of them says nothing about the others."""
+    for mod, size in ((L, (480, 320)), (LW, (1280, 720))):
+        lay = mod.Layout(*size)
+        for band in lay.bands:
+            for credits in (False, True):
+                shape = band.shape(credits)
+                boxes = [("header", band.header)]
+                boxes += [(r.key + " label", r.label) for r in shape.rungs]
+                boxes += [(r.key + " bar", r.bar) for r in shape.rungs]
+                if shape.credits is not None:
+                    boxes.append(("credits", shape.credits))
+                for name, (x0, y0, x1, y1) in boxes:
+                    where = "%s (%dx%d, credits=%s)" % (name, size[0], size[1], credits)
+                    assert 0 <= x0 < x1 <= lay.width, "%s runs off horizontally" % where
+                    assert band.top <= y0 < y1 <= band.bottom, \
+                        "%s runs off vertically" % where
+
+
+def test_the_rungs_do_not_run_into_one_another():
+    """The share-out gives each rung its own cell; nothing may cross a cell boundary."""
+    for mod, size in ((L, (480, 320)), (LW, (1280, 720))):
+        for band in mod.Layout(*size).bands:
+            for credits in (False, True):
+                shape = band.shape(credits)
+                assert band.header[3] <= shape.rungs[0].top
+                for a, b in zip(shape.rungs, shape.rungs[1:]):
+                    assert a.bottom < b.top, "%s runs into %s" % (a.key, b.key)
+                if shape.credits is not None:
+                    assert shape.rungs[-1].bottom <= shape.credits[1]
 
 
 def test_number_column_and_bar_column_do_not_overlap():
