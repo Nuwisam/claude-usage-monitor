@@ -20,6 +20,18 @@ LABEL_WEEK = "WEEK"
 LABEL_CREDITS = "CREDITS"
 
 
+def _credits_shown(c):
+    """Whether a band draws the credits row -- asked by the SHAPE and by the drawing,
+    which is why it lives here rather than inline in one of them. Answered twice by two
+    conditions, a band would reserve a row it never paints.
+
+    Everything except "off and with no amounts" is drawn; there is nothing to show there.
+    Credits cut off by the organization DO have amounts -- the last measurement -- and
+    that row stays.
+    """
+    return c is not None and not (c.state == "off" and c.used is None)
+
+
 class BandState:
     """Everything the account band has to show. Assembled in app.py."""
 
@@ -658,14 +670,14 @@ class Renderer:
             # number of rows the band has inside.
             draw.fill_rect(d, (0, b.top, self.L.MARK_W, b.bottom), theme.ACCENT)
         self._header(d, b, band, state)
-        self._window(d, b, band, kind="session")
-        self._window(d, b, band, kind="week")
-        # We draw everything except "off and with no amounts" — there is nothing to show
-        # there. Credits cut off by the organization DO have amounts (the last
-        # measurement) and the row stays.
-        if band.credits is not None and not (band.credits.state == "off"
-                                             and band.credits.used is None):
-            self._credits(d, b, band.credits)
+        # The shape is CHOSEN here, from the data, out of the ones the band computed for
+        # itself. `_credits_shown` decides it and the drawing below, so a band can never
+        # reserve a row it then does not paint.
+        shape = b.shape(_credits_shown(band.credits))
+        for rung in shape.rungs:
+            self._window(d, b, band, rung)
+        if shape.credits is not None:
+            self._credits(d, b, band.credits, shape)
 
     def _header(self, d, b, band, state):
         f_name = draw.font(self.L.F_NAME)
@@ -752,19 +764,18 @@ class Renderer:
             draw.ring(d, centre, r, theme.NEUTRAL_600, width=w)
             draw.cross(d, centre, self.L.LINK_CROSS, theme.NEUTRAL_600, width=w)
 
-    def _window(self, d, b, band, kind):
-        session = kind == "session"
+    def _window(self, d, b, band, rung):
+        session = rung.key == "session"
         v = band.session_view if session else band.weekly_view
-        bar_box = b.ses_bar if session else b.wk_bar
-        label_box = b.ses_label if session else b.wk_label
-        centre = b.ses_centre if session else b.wk_centre
+        bar_box = rung.bar
+        label_box = rung.label
         lead, at = band.reset_session if session else band.reset_week
 
         # --- the percent column ---
-        self._number(d, b, v, centre,
-                     big=self.L.F_SES_NUM if session else self.L.F_WK_NUM,
-                     tight=self.L.F_SES_NUM_TIGHT if session else self.L.F_WK_NUM,
-                     small=self.L.F_SES_PCT if session else self.L.F_WK_PCT)
+        # The sizes come off the RUNG, not off the rung's name: the same window is set
+        # smaller in a band that has to carry more of them.
+        self._number(d, b, v, rung.centre,
+                     big=rung.f_num, tight=rung.f_num_tight, small=rung.f_pct)
 
         # --- the caption, at the RIGHT end of the label's line ---
         #
@@ -818,9 +829,9 @@ class Renderer:
         d.text((b.num_right - pct_w - self.L.PCT_GAP, base), v.number, font=f_num,
                fill=theme.TEXT, anchor="rs")
 
-    def _credits(self, d, b, c):
-        x0, y0, x1, y1 = b.credits
-        cy = b.credits_centre
+    def _credits(self, d, b, c, shape):
+        x0, y0, x1, y1 = shape.credits
+        cy = shape.credits_centre
         f_label = draw.font(self.L.F_LABEL)
         f_used = draw.font(self.L.F_CREDITS_USED)
         f_limit = draw.font(self.L.F_CREDITS_LIMIT)

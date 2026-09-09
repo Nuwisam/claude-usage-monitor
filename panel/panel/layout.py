@@ -367,8 +367,51 @@ class AlertMany(AlertList):
     FOOT_GAP = 10
 
 
+class Rung:
+    """One window inside a band: its two boxes, and the type its number is set in.
+
+    The sizes travel WITH the rung rather than being picked by the renderer from the
+    rung's name, because the same window is set differently in different shapes -- the
+    session steps down when the band has to carry three rungs and the credits.
+    """
+
+    __slots__ = ("key", "label", "bar", "top", "bottom", "centre",
+                 "f_num", "f_num_tight", "f_pct")
+
+    def __init__(self, key, label, bar, f_num, f_num_tight, f_pct):
+        self.key = key
+        self.label = label
+        self.bar = bar
+        self.top = label[1]
+        self.bottom = bar[3]
+        self.centre = (self.top + self.bottom) // 2
+        self.f_num = f_num
+        self.f_num_tight = f_num_tight
+        self.f_pct = f_pct
+
+
+class BandShape:
+    """What one band looks like for one KIND of account: the rungs it carries, and
+    whether the credits close it off."""
+
+    __slots__ = ("rungs", "credits", "credits_centre", "fits")
+
+    def __init__(self, rungs, credits, credits_centre, fits):
+        self.rungs = rungs
+        self.credits = credits
+        self.credits_centre = credits_centre
+        self.fits = fits
+
+
 class Band:
-    """The rectangles of one account band, in SCREEN coordinates."""
+    """The rectangles of one account band, in SCREEN coordinates.
+
+    A band does not have ONE set of rectangles. An account with credits carries a row
+    the next account does not, and the rows above it must give up the height for it --
+    so the band computes every shape it can take at construction and hands one out per
+    frame by lookup. Building them once keeps `Layout` built once, as it always was;
+    the frame's data SELECTS a shape, it never builds one.
+    """
 
     M = METRICS
 
@@ -387,38 +430,72 @@ class Band:
 
         y = top + m.PAD_TOP
         self.header = (self.x0, y, self.x1, y + m.HEADER_H)
-        y += m.HEADER_H + m.ROW_GAP
+        self.rows_top = y + m.HEADER_H + m.ROW_GAP
 
-        # Two rows per window, not three: the label line carries the reset caption at its
-        # right end. Three windows in a 160 px band need 196 px with a caption line of
-        # their own and 129 px without one, so this is what makes a third window possible
-        # at all -- and the mockup says so in as many words ("reset wraca do linii
-        # etykiety").
-        self.ses_top = y
-        self.ses_label = (self.block_x0, y, self.block_x1, y + m.LABEL_H)
+        self.shapes = {credits: self._shape(credits) for credits in (False, True)}
+
+    def shape(self, credits):
+        """The shape this band takes for a frame that does or does not draw credits."""
+        return self.shapes[bool(credits)]
+
+    def _cells(self, top, bottom, n):
+        """Share a span out between n rows, the way `AlertList.rows` does.
+
+        The rows DIVIDE the band's free height instead of stacking from the top with the
+        remainder left at the bottom. Stacked, three rungs read as top-heavy and nothing
+        like the mockup; shared out, they land within a pixel of it. Boundaries are taken
+        from the fractional split so the rounding error never accumulates.
+        """
+        m = self.m
+        span = bottom - top - (n - 1) * m.ROW_GAP
+        out, y = [], top
+        for i in range(n):
+            h = round(span * (i + 1) / n) - round(span * i / n)
+            out.append((y, y + h))
+            y += h + m.ROW_GAP
+        return out
+
+    def _rung(self, key, cell, bar_h, f_num, f_num_tight, f_pct):
+        """One rung, its content centred in the cell it was given."""
+        m = self.m
+        content = m.LABEL_H + m.INNER_GAP + bar_h
+        y = cell[0] + (cell[1] - cell[0] - content) // 2
+        label = (self.block_x0, y, self.block_x1, y + m.LABEL_H)
         y += m.LABEL_H + m.INNER_GAP
-        self.ses_bar = (self.block_x0, y, self.block_x1, y + m.SES_BAR_H)
-        self.ses_bottom = y + m.SES_BAR_H
-        self.ses_centre = (self.ses_top + self.ses_bottom) // 2
+        bar = (self.block_x0, y, self.block_x1, y + bar_h)
+        return Rung(key, label, bar, f_num, f_num_tight, f_pct)
 
-        y = self.ses_bottom + m.ROW_GAP
-        self.wk_top = y
-        self.wk_label = (self.block_x0, y, self.block_x1, y + m.LABEL_H)
-        y += m.LABEL_H + m.INNER_GAP
-        self.wk_bar = (self.block_x0, y, self.block_x1, y + m.WK_BAR_H)
-        self.wk_bottom = y + m.WK_BAR_H
-        self.wk_centre = (self.wk_top + self.wk_bottom) // 2
+    def _shape(self, credits):
+        m = self.m
+        if credits:
+            # Credits glued to the bottom of the band (margin-top: auto in the mockup);
+            # the rungs share out what is left above them.
+            cy = self.bottom - m.PAD_BOT - m.CREDITS_H
+            box = (self.x0, cy, self.x1, cy + m.CREDITS_H)
+            centre = cy + m.CREDITS_H // 2
+            bottom = cy - m.ROW_GAP
+        else:
+            box, centre = None, None
+            bottom = self.bottom - m.PAD_BOT
 
-        # Credits glued to the bottom of the band (margin-top: auto in the mockup).
-        cy = self.bottom - m.PAD_BOT - m.CREDITS_H
-        self.credits = (self.x0, cy, self.x1, cy + m.CREDITS_H)
-        self.credits_centre = cy + m.CREDITS_H // 2
+        cells = self._cells(self.rows_top, bottom, 2)
+        rungs = [
+            self._rung("session", cells[0], m.SES_BAR_H,
+                       m.F_SES_NUM, m.F_SES_NUM_TIGHT, m.F_SES_PCT),
+            self._rung("week", cells[1], m.WK_BAR_H,
+                       m.F_WK_NUM, m.F_WK_NUM, m.F_WK_PCT),
+        ]
+        content = m.LABEL_H + m.INNER_GAP + max(m.SES_BAR_H, m.WK_BAR_H)
+        fits = all(r.bottom <= bottom for r in rungs) and \
+            bottom - self.rows_top >= 2 * content + m.ROW_GAP
+        return BandShape(rungs, box, centre, fits)
 
     @property
     def fits(self):
-        """Whether the credits stay clear of the week. Held to it by
-        tests/test_render.py::test_credits_do_not_overlap_week."""
-        return self.credits[1] >= self.wk_bottom
+        """Whether EVERY shape this band can take still fits inside it -- the rungs in
+        their share of the height, and clear of the credits when those are drawn. Held to
+        it by tests/test_render.py::test_credits_do_not_overlap_week."""
+        return all(s.fits for s in self.shapes.values())
 
 
 class Layout:
