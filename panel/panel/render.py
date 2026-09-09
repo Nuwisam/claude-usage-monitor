@@ -757,7 +757,6 @@ class Renderer:
         v = band.session_view if session else band.weekly_view
         bar_box = b.ses_bar if session else b.wk_bar
         label_box = b.ses_label if session else b.wk_label
-        line_box = b.ses_line if session else b.wk_line
         centre = b.ses_centre if session else b.wk_centre
         lead, at = band.reset_session if session else band.reset_week
 
@@ -767,29 +766,34 @@ class Renderer:
                      tight=self.L.F_SES_NUM_TIGHT if session else self.L.F_WK_NUM,
                      small=self.L.F_SES_PCT if session else self.L.F_WK_PCT)
 
+        # --- the caption, at the RIGHT end of the label's line ---
+        #
+        # It is drawn before the label because it is the one that cannot be shortened:
+        # it names a time, and half a time is a wrong time. The label is a fixed word
+        # and takes whatever room is left.
+        # No clock glyph in front of it any more. It was there to say "this is a time"
+        # when the caption had a line of its own; sharing the label's line, the caption
+        # is already the only thing on the right and the word "reset" says the rest.
+        f_reset = draw.font(self.L.F_RESET)
+        gy = (label_box[1] + label_box[3]) // 2 + self.L.RESET_DY
+        text = lead if not at else "%s · %s" % (lead, at)
+        text = draw.ellipsize(text, f_reset, label_box[2] - label_box[0])
+        d.text((label_box[2], gy), text, font=f_reset,
+               fill=theme.TEXT_70 if session else theme.TEXT_60, anchor="rm")
+
         # --- the label ---
         f_label = draw.font(self.L.F_LABEL)
         label = LABEL_SESSION if session else LABEL_WEEK
         colour = theme.ACCENT_200 if session else theme.TEXT_60
-        draw.text_tracked(d, (label_box[0], label_box[1] + self.L.LABEL_DY), label,
-                          f_label, colour, tracking=1)
+        room = (label_box[2] - draw.text_width(text, f_reset)
+                - self.L.RESET_GAP - label_box[0])
+        draw.text_tracked(d, (label_box[0], label_box[1] + self.L.LABEL_DY),
+                          draw.ellipsize(label, f_label, room), f_label, colour,
+                          tracking=1)
 
         # --- the bar ---
         draw.bar(d, bar_box, v,
                  theme.ACCENT if session else theme.ACCENT_500)
-
-        # --- the caption under the bar ---
-        f_reset = draw.font(self.L.F_RESET)
-        x = line_box[0]
-        gy = line_box[1] + self.L.LINE_H // 2
-        glyph_r = self.L.GLYPH_R
-        draw.clock_glyph(d, (x + glyph_r, gy), glyph_r,
-                         theme.ACCENT_300 if session else theme.mix(theme.ACCENT_300, 70))
-        x += self.L.GLYPH_ADV
-        text = lead if not at else "%s · %s" % (lead, at)
-        room = line_box[2] - x
-        d.text((x, gy), draw.ellipsize(text, f_reset, room), font=f_reset,
-               fill=theme.TEXT_70 if session else theme.TEXT_60, anchor="lm")
 
     def _number(self, d, b, v, centre, big, tight, small):
         """The number and the % sign, aligned to the RIGHT edge of the narrow column.

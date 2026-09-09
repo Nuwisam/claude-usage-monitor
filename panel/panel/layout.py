@@ -31,8 +31,9 @@ NUM_GAP = 12
 PCT_GAP = 2         # gap between the number and the % sign
 
 HEADER_H = 17
-LABEL_H = 11
-LINE_H = 14
+#: The label's line, which also carries the reset caption at its right end -- so it is
+#: the CAPTION's size that governs the height, not the label's.
+LABEL_H = 12
 
 SES_BAR_H = 12
 WK_BAR_H = 9
@@ -97,8 +98,12 @@ LINK_DY = 5
 LINK_R = 3              # the dot, and the ring when it is not filled
 LINK_CROSS = 4          # the arm of the cross over a dead link
 
-GLYPH_R = 5             # the clock glyph in front of the reset caption
-GLYPH_ADV = 15          # ... and where the caption starts after it
+#: The caption shares the label's line, at its right end. RESET_DY corrects its centre
+#: against the centre of that box -- the label is anchored by its top and the caption by
+#: its middle, so the two do not agree by construction. RESET_GAP is the least room left
+#: between the label's tail and the caption before the label starts being cut.
+RESET_DY = 0
+RESET_GAP = 8
 #: The reading age needs no constant of its own: it stands in the header on the CLOCK's
 #: baseline, which `render._header` derives from CLOCK_DY and the clock's ascender. A dot
 #: of its own would be a second accent dot beside the link mark, so it has none.
@@ -384,13 +389,16 @@ class Band:
         self.header = (self.x0, y, self.x1, y + m.HEADER_H)
         y += m.HEADER_H + m.ROW_GAP
 
+        # Two rows per window, not three: the label line carries the reset caption at its
+        # right end. Three windows in a 160 px band need 196 px with a caption line of
+        # their own and 129 px without one, so this is what makes a third window possible
+        # at all -- and the mockup says so in as many words ("reset wraca do linii
+        # etykiety").
         self.ses_top = y
         self.ses_label = (self.block_x0, y, self.block_x1, y + m.LABEL_H)
         y += m.LABEL_H + m.INNER_GAP
         self.ses_bar = (self.block_x0, y, self.block_x1, y + m.SES_BAR_H)
-        y += m.SES_BAR_H + m.INNER_GAP
-        self.ses_line = (self.block_x0, y, self.block_x1, y + m.LINE_H)
-        self.ses_bottom = y + m.LINE_H
+        self.ses_bottom = y + m.SES_BAR_H
         self.ses_centre = (self.ses_top + self.ses_bottom) // 2
 
         y = self.ses_bottom + m.ROW_GAP
@@ -398,9 +406,7 @@ class Band:
         self.wk_label = (self.block_x0, y, self.block_x1, y + m.LABEL_H)
         y += m.LABEL_H + m.INNER_GAP
         self.wk_bar = (self.block_x0, y, self.block_x1, y + m.WK_BAR_H)
-        y += m.WK_BAR_H + m.INNER_GAP
-        self.wk_line = (self.block_x0, y, self.block_x1, y + m.LINE_H)
-        self.wk_bottom = y + m.LINE_H
+        self.wk_bottom = y + m.WK_BAR_H
         self.wk_centre = (self.wk_top + self.wk_bottom) // 2
 
         # Credits glued to the bottom of the band (margin-top: auto in the mockup).

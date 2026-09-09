@@ -506,6 +506,10 @@ def test_transition_to_card_fits_under_full_frame_threshold():
     frame, so widening the face to a full date re-measured this at 59.0 % in 51 rectangles
     (it was 62.5 % in 45). The assertion deliberately pins the BAND, not the number —
     which is why it survived that change and this docstring did not.
+
+    Dropping the clock glyph in front of the reset captions took the bands frame's ink
+    down again, to 54.7 %, so the floor moves 0.55 -> 0.50. The floor is only a tripwire
+    against the scene collapsing to nothing; the ceiling is the number that matters.
     """
     now_ms = fmt.ms(fmt.parse_utc(NOW))
     bands = scene_bands(now_ms)
@@ -513,7 +517,7 @@ def test_transition_to_card_fits_under_full_frame_threshold():
     card.alert = render.alert_state(
         status.parse_frame(stream_frame(entry(since="2026-08-05T21:00:00Z"))), now_ms)
     fraction, rects = _fraction(bands, card)
-    assert 0.55 < fraction < surface.FULL_AT, \
+    assert 0.50 < fraction < surface.FULL_AT, \
         "transition to the card changes %.1f%% of the frame — the FULL_AT threshold needs revisiting" % (
             fraction * 100)
     assert rects <= surface.MAX_RECTS
