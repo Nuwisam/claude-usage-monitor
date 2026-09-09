@@ -4,6 +4,9 @@ The most important test in this file is `test_unknown_shows_last_measurement_not
 confident-looking zero is the worst failure mode of this tool: the user fires off a
 big job and hits a wall.
 """
+import pathlib
+import re
+
 import pytest
 
 from panel import fmt, model, view
@@ -221,10 +224,23 @@ def test_a_missing_boundary_is_nothing_to_disagree_with():
 
 
 def test_a_real_divergence_is_not_swallowed_by_the_tolerance():
-    """A boundary belonging to a genuinely different window is hours or days away."""
+    """The tolerance sits two orders of magnitude above the wobble and two below the
+    shortest window, so there is nothing it can confuse: a boundary belonging to a
+    genuinely different window is hours or days away, never minutes."""
     a = fmt.parse_utc("2026-09-12T16:00:00Z")
-    assert not view.resets_aligned(a, fmt.parse_utc("2026-09-12T16:01:00Z"))
+    assert not view.resets_aligned(a, fmt.parse_utc("2026-09-12T17:00:00Z"))
     assert not view.resets_aligned(a, fmt.parse_utc("2026-09-16T11:00:00Z"))
+
+
+def test_the_panel_agrees_with_the_backend_on_what_one_window_is():
+    """One rule, one number. The panel cannot import the backend -- separate deployable,
+    HTTP between them -- so the constant is restated, and this is what stops the two
+    copies drifting apart."""
+    cfg = (pathlib.Path(__file__).resolve().parents[2]
+           / "backend" / "app" / "config.py").read_text(encoding="utf-8")
+    match = re.search(r"reset_window_eps_sec:\s*int\s*=\s*Field\((\d+)", cfg)
+    assert match, "the backend stopped declaring reset_window_eps_sec under that name"
+    assert view.RESET_ALIGN_TOLERANCE_S == int(match.group(1))
 
 
 # --- credits ----------------------------------------------------------------
