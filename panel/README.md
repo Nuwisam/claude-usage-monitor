@@ -240,6 +240,43 @@ lost frame is harmless.
   the full `n` bytes, so later cards and pings would sit stuck in the buffer,
   and the panel would be stuck on the first frame **looking alive**.
 
+## What a band carries
+
+A band does not have one fixed set of rows. It carries the 5-hour session, the
+weekly window, and then whatever the account actually has:
+
+- **A model's own weekly limit** — Fable today — gets a rung of its own. It is
+  picked by `kind == "weekly_scoped"` and never by a name, and its label is
+  derived from the data (`view.scoped_label`), so the model that ships next
+  appears on the glass without a new build. Where an account has several, the
+  highest one wins: the rung answers "what stops me first", and the rest are
+  diagnostics, which stay in the web UI.
+- **Credits**, once a weekly pool is exhausted.
+
+With both at once the band carries four things, and the two weekly windows then
+share ONE row of two tracks under one label and one countdown — `WEEK / FABLE`.
+Not to save room (three separate rungs and the credits fit on both canvases, 151 px
+of the narrow band's 160) but to read: the two are the same seven days at two
+scopes, and side by side, how much is the week and how much is the model is one
+glance instead of a jump down the band.
+
+| key | default | off |
+|---|---|---|
+| `glue_aligned_weekly_pair` | `true` | each weekly window keeps a rung of its own |
+
+**`aligned` is not decoration.** The shared row has one countdown, so it is only
+honest while both windows close at the same instant. When they drift apart the
+pair comes back apart by itself, whatever the switch says — the setting can
+withhold the gluing, never force it.
+
+The comparison carries a tolerance, and must keep it: Anthropic's boundary
+wobbles, and the two windows are reported a second apart as often as not
+("16:00:00" from one series, "15:59:59" from the other). Exact equality was tried
+and split every pair on the panel. The threshold is the backend's own
+`RESET_WINDOW_EPS_SEC`, for the reasoning in `parsing.same_reset_window`. A window
+with **no** boundary counts as aligned — Anthropic gives none at 0 % usage, so that
+is an absence and not a second deadline.
+
 ## A blocked Claude Code session
 
 The panel shows not only usage but also the fact that **Claude is waiting on
@@ -355,7 +392,7 @@ python tools/render-png.py --alert many   --zoom 3 --rgb565 --out ../docs/handou
 python tools/render-png.py --alert solo --flood --zoom 3 --rgb565 --out ../docs/handout/card-flooded.png
 python tools/render-png.py --marker upper --zoom 3 --rgb565 --out ../docs/handout/bands-marker-upper.png
 python tools/render-png.py --marker lower --zoom 3 --rgb565 --out ../docs/handout/bands-marker-lower.png
-python tools/render-png.py                --zoom 3 --rgb565 --out ../docs/handout/bands-no-alert.png
+python tools/render-png.py --scene scoped --zoom 3 --rgb565 --out ../docs/handout/bands-no-alert.png
 ```
 
 If an alert got stuck, the escape hatch is on the machine running the session,

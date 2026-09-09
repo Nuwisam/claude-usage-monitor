@@ -3,7 +3,7 @@
 **Your Claude limit on a small screen next to the monitor.** Always lit, always current — no tab
 to open, no page to refresh, nothing to click. You just glance at it.
 
-![The desk panel: two accounts, session and week, credits, time to reset](docs/handout/bands-no-alert.png)
+![The desk panel: two accounts, the session, the week, a model's own weekly window, credits, time to reset](docs/handout/bands-no-alert.png)
 
 ## 🖥️ The panel is the whole point
 
@@ -14,6 +14,8 @@ whole loop: the number is simply in your field of view, the way a clock is.
 What is on the glass, per account:
 
 - ⏳ **The 5-hour session and the weekly window,** each as a percentage and a bar.
+- 🧩 **A model's own weekly limit** — Fable today — when the account has one, on a rung of its
+  own. It is picked by kind and labelled from the data, so the next model appears by itself.
 - 🕐 **A live countdown to the reset** — seconds under an hour, so "wait it out or push on?"
   is a look, not a calculation.
 - 💳 **Credits,** once a weekly pool is exhausted and the work starts costing money.
