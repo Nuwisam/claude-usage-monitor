@@ -114,6 +114,9 @@ def main():
                     help="clock_seconds: false — the face without seconds")
     ap.add_argument("--no-clock-date", action="store_true",
                     help="clock_date: false — the bare time, no date")
+    ap.add_argument("--no-glue-pair", action="store_true",
+                    help="glue_weekly_pair: false — the two weekly windows get a rung "
+                         "each instead of sharing one row of two tracks")
     ap.add_argument("--marker", choices=("upper", "lower", "both"),
                     help="bands with the alert marker on the edge of the chosen band")
     ap.add_argument("--canvas", default="480x320", metavar="WxH",
@@ -141,7 +144,7 @@ def main():
     if args.alert:
         state.alert = alert_scene(args.alert, now_ms, flood=args.flood, **face)
 
-    frame = render.Renderer(*canvas).frame(state)
+    frame = render.Renderer(*canvas, glue_pair=not args.no_glue_pair).frame(state)
     img = frame.image
     if args.rgb565:
         img = unpack_rgb565(frame.rgb565("be"), img.size)

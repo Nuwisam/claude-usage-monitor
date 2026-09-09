@@ -47,6 +47,10 @@ WK_BAR_H = 17
 CREDITS_BAR_H = 10
 CREDITS_H = 43
 
+PAIR_GAP = 9
+PAIR_BAR_H = 15
+PAIR_NUM_PITCH = 50
+
 # Fonts
 F_NAME = 30
 F_PLAN = 20
@@ -59,6 +63,11 @@ F_SES_NUM_TIGHT = 68    # named in the mockup: at 100 % the session percentage s
 F_SES_PCT = 28
 F_WK_NUM = 60
 F_WK_PCT = 24
+F_SES_NUM_PAIR = 76
+F_SES_PCT_PAIR = 24
+SES_BAR_H_PAIR = 20
+F_PAIR_NUM = 44
+F_PAIR_PCT = 20
 F_CREDITS_USED = 28
 F_CREDITS_LIMIT = 22
 F_WORDS = 26            # "unknown" instead of a number

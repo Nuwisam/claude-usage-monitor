@@ -324,13 +324,17 @@ def layout_for(width, height):
 
 
 class Renderer:
-    def __init__(self, width=480, height=320):
+    def __init__(self, width=480, height=320, glue_pair=True):
         # The metrics module, not the geometry object: `self.layout` holds the computed
         # rectangles, `self.L` holds the constants they were computed from, and drawing
         # code reads both from the instance instead of from module globals - otherwise a
         # second layout could never supply its own numbers.
         self.L = layout_for(width, height)
         self.layout = self.L.Layout(width, height)
+        #: Whether a band dense enough for it glues its two weekly windows into one row.
+        #: A CONFIGURATION constant, not per-frame data, which is why it belongs to the
+        #: renderer: `App` keeps one of these per canvas for the life of the run.
+        self.glue_pair = glue_pair
 
     # -- public entry ------------------------------------------------------
 
@@ -687,9 +691,12 @@ class Renderer:
         # The shape is CHOSEN here, from the data, out of the ones the band computed for
         # itself. `_credits_shown` decides it and the drawing below, so a band can never
         # reserve a row it then does not paint.
-        shape = b.shape(band.scoped is not None, _credits_shown(band.credits))
+        shape = b.shape(band.scoped is not None, _credits_shown(band.credits),
+                        self.glue_pair)
         for rung in shape.rungs:
             self._window(d, b, band, rung)
+        if shape.pair is not None:
+            self._pair(d, b, band, shape.pair)
         if shape.credits is not None:
             self._credits(d, b, band.credits, shape)
 
@@ -824,6 +831,37 @@ class Renderer:
         # --- the bar ---
         draw.bar(d, bar_box, v,
                  theme.ACCENT if session else theme.ACCENT_500)
+
+    def _pair(self, d, b, band, pair):
+        """The two weekly windows in one row of two tracks, under one label and one
+        countdown.
+
+        The label names both -- "WEEK / FABLE" -- and the tracks are in the order the
+        label reads, so which number belongs to which is answered by reading left to
+        right rather than by a legend. The countdown is ONE because in this shape the two
+        windows share a boundary; when they do not, each track takes its own.
+        """
+        f_reset = draw.font(self.L.F_RESET)
+        gy = (pair.label[1] + pair.label[3]) // 2 + self.L.RESET_DY
+        lead, at = band.reset_week
+        text = draw.ellipsize(lead if not at else "%s · %s" % (lead, at),
+                              f_reset, pair.label[2] - pair.label[0])
+        d.text((pair.label[2], gy), text, font=f_reset, fill=theme.TEXT_60,
+               anchor="rm")
+
+        f_label = draw.font(self.L.F_LABEL)
+        room = (pair.label[2] - draw.text_width(text, f_reset)
+                - self.L.RESET_GAP - pair.label[0])
+        label = "%s / %s" % (LABEL_WEEK, band.scoped_label)
+        draw.text_tracked(d, (pair.label[0], pair.label[1] + self.L.LABEL_DY),
+                          draw.ellipsize(label, f_label, room), f_label,
+                          theme.TEXT_60, tracking=1)
+
+        views = (band.weekly_view, band.scoped_view)
+        for view_, bar_box, centre in zip(views, pair.bars, pair.centres):
+            draw.bar(d, bar_box, view_, theme.ACCENT_500)
+            self._number(d, b, view_, centre,
+                         big=pair.f_num, tight=pair.f_num_tight, small=pair.f_pct)
 
     def _number(self, d, b, v, centre, big, tight, small):
         """The number and the % sign, aligned to the RIGHT edge of the narrow column.
