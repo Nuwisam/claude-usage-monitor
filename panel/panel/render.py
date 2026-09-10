@@ -206,28 +206,52 @@ def alert_state(blocked, now_ms, footer=None, flood=False, seconds=True, date=Tr
 #: reads it as WITHDRAWN rather than merely quiet.
 #:
 #: Every series NAMED by a reading is confirmed from that reading's own stamp
-#: (backend/app/services/ingest.py:349-386), so a window that is still being reported lags
-#: the freshest of the others by about nothing — production's largest gap between the two
-#: weekly windows is one second (view.RESET_ALIGN_TOLERANCE_S records the measurement). An
-#: hour is therefore orders of magnitude above the wobble of one late or partial batch, and
-#: an order of magnitude BELOW the backend's own `client_silent_sec` (6 h,
+#: (backend/app/services/ingest.py:349-386), so a window still being reported lags the
+#: freshest of the others by a batch rather than by a window — and measurably never by
+#: more than the figure below.
+#:
+#: MEASURED, rather than reasoned from the neighbouring constants:
+#:
+#:   what    the gap between the scoped series' `confirmed_at` and the LATEST of the
+#:           session's and the aggregate week's `confirmed_at` in the SAME batch, which
+#:           is the quantity this constant thresholds, read from the raw ingest
+#:   where   the deployment's MariaDB: `limit_samples` self-joined on `batch_id` and
+#:           `account_id`, scoped against session and `weekly_all`
+#:   when    2026-07-26 to 2026-09-09, the whole history this deployment holds
+#:   who     2 accounts, 5817 readings carrying all three series in one batch
+#:   result  worst 445 s, none over an hour
+#:
+#: A DIFFERENT population from the 909 readings behind `view.RESET_ALIGN_TOLERANCE_S`:
+#: that one counts readings where both weekly windows carried a BOUNDARY, this one counts
+#: readings where the three series were confirmed together. Neither number bounds the
+#: other, and setting them side by side without saying so is how this comment came to
+#: contradict itself.
+#:
+#: Half an hour is four times the worst observed and still an order of magnitude below
+#: the backend's `client_silent_sec` (6 h,
 #: backend/app/config.py:75), the horizon past which it stops believing a value at all. The
-#: panel drops a window nobody reports well before the backend gives up on a silent client.
-SCOPED_WITHDRAWN_LAG_S = 3600
+#: earlier hour was picked from that 6 h ceiling downwards; this one is picked from the data
+#: upwards, and it halves the window in which a withdrawn series can pin a stale age.
+SCOPED_WITHDRAWN_LAG_S = 1800
 
 
 def _scoped_still_reported(scoped, session, weekly):
-    """The scoped pick, or None when nothing reports that window any more.
+    """Whether anything still reports this scoped window.
 
     A scoped series the account stops naming is never pruned — its row survives forever
     once it has ever carried a value (backend/app/services/status.py:241) — and its
-    confirmation never advances again (ingest.py:349-386), while `view.pick_scoped` chooses
+    confirmation never advances again (ingest.py:349-386), while `view.pick_scoped` ranks
     on utilization alone. Drawn, such a rung shows a measurement from an unbounded time ago
     and, because the reading age is the OLDEST of the windows the band draws, drags the
     band's ONE freshness label back with it: an otherwise live account reads "30 d 0 h ago".
     Withdrawing the rung is what keeps that label honest — the age then describes exactly
     what is on the glass, and the band falls back to the two-rung shape it has on every
     account with no scoped window at all.
+
+    A PREDICATE, handed to `pick_scoped` as its `keep`, because the order matters: a series
+    this test rejects must never reach the ranking. Applied to the winner instead, two
+    scoped series where the stale one carries the higher number would cost the band its
+    rung entirely — the fresh one never gets compared.
 
     Judged on the STAMPS, not on `freshness`: when the client itself goes quiet every window
     turns stale together and nothing here may change — the old age is then the truth. Only a
@@ -236,26 +260,29 @@ def _scoped_still_reported(scoped, session, weekly):
     from . import fmt
 
     if scoped is None:
-        return None
+        return False
     mine = fmt.parse_utc(scoped.confirmed_at or scoped.captured_at)
     if mine is None:
         # Nothing to judge by — and with no stamp it pins no age either, so leave it.
-        return scoped
+        return True
     others = [m for m in (fmt.parse_utc(s.confirmed_at or s.captured_at)
                           for s in (session, weekly) if s is not None)
               if m is not None]
     if not others:
-        return scoped
-    if (max(others) - mine).total_seconds() > SCOPED_WITHDRAWN_LAG_S:
-        return None
-    return scoped
+        return True
+    return (max(others) - mine).total_seconds() <= SCOPED_WITHDRAWN_LAG_S
 
 
-def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None,
+def band_state(account, now_ms, name=None, show_clock=False, note=None,
                alert=False):
     """model.AccountStatus -> BandState. The ONLY place this transition happens, shared
     by the client and by tools/render-png.py — otherwise the diagnostic tool would
-    show something other than the panel."""
+    show something other than the panel.
+
+    `now_ms` has NO default, for the same reason as in `alert_state`: `0.0` is a legal
+    epoch, and it now also reaches `resets_aligned`, where an 1970 anchor lies before
+    every real boundary and so switches the spent-boundary rule silently off. A missing
+    clock must fail at the call."""
     from . import fmt
 
     if account is None:
@@ -268,9 +295,11 @@ def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None,
 
     session = V.pick_session(account.series)
     weekly = V.pick_weekly(account.series)
-    # A scoped window that has stopped being reported is dropped here rather than drawn
-    # from its last measurement: see `_scoped_still_reported`.
-    scoped = _scoped_still_reported(V.pick_scoped(account.series), session, weekly)
+    # A scoped window that has stopped being reported is dropped BEFORE the ranking rather
+    # than after it, so a withdrawn series cannot outrank a live one: see
+    # `_scoped_still_reported` and `view.pick_scoped`'s `keep`.
+    scoped = V.pick_scoped(account.series,
+                           keep=lambda s: _scoped_still_reported(s, session, weekly))
     credits = V.credits(account.rung("credits"))
 
     # The age is taken from the CONFIRMATION, not from the sample's write: dedup
@@ -313,9 +342,12 @@ def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None,
         # On the INSTANTS and with a tolerance -- see view.RESET_ALIGN_TOLERANCE_S for
         # what was measured. Strings would not do (the same moment arrives as
         # "...T16:00:00Z" and as "...T16:00:00+00:00") and neither would exact equality.
+        # `now` is what lets a boundary that has already been spent count as missing
+        # instead of as a week's disagreement -- see `view.resets_aligned`.
         reset_aligned=V.resets_aligned(
             fmt.parse_utc(weekly.resets_at) if weekly else None,
-            fmt.parse_utc(scoped.resets_at) if scoped else None),
+            fmt.parse_utc(scoped.resets_at) if scoped else None,
+            now=fmt.from_ms(now_ms)),
         ago=age,
         note=note,
         show_clock=show_clock,
@@ -916,6 +948,14 @@ class Renderer:
         It is the WEEK's countdown, unless the week is the one with no boundary -- one of
         the two being null is a way of sharing a boundary too (see `view.resets_aligned`),
         and the row should show the deadline that exists rather than the absence.
+
+        A SPENT week boundary cannot arrive here beside a LIVE scoped one, and that is a
+        property of the gate rather than of the expression below: `view.resets_aligned`
+        refuses to align a spent boundary with a live one, precisely so that no glued row
+        ever needs a caption that is a week wrong for one of its tracks. The only glued row
+        carrying a spent week is one where BOTH are spent, and there either caption says
+        the same thing. So the picker below is complete -- but complete BECAUSE of that
+        rule, and anything loosening which spent boundaries may glue has to come back here.
         """
         from . import fmt
 

@@ -175,6 +175,35 @@ def test_scoped_is_picked_by_kind_and_the_highest_one_wins():
     assert view.pick_scoped([week]) is None
 
 
+def test_a_renamed_kind_is_reported_instead_of_silently_dropped(caplog):
+    """A kind that maps to no panel word, on something that is plainly a weekly window,
+    reaches the log. The silent version of this drew a smaller, entirely plausible band
+    and passed every test in this file -- the tests carry their own copy of the literal,
+    so a backend rename broke nothing here and nothing on the glass said so either."""
+    view._reported_kinds.clear()
+    renamed = series(seriesKey="limit:weekly_scoped_v2|weekly|fable|-",
+                     kind="weekly_scoped_v2", group="weekly",
+                     bucketKey="seven_day_fable", utilization=48)
+    with caplog.at_level("WARNING"):
+        assert view.pick_scoped([renamed]) is None
+        assert view.pick_scoped([renamed]) is None, "no rung on the next frame either"
+    said = [r for r in caplog.records if "weekly_scoped_v2" in r.getMessage()]
+    assert len(said) == 1, "said once per kind, not once per repaint"
+
+    # The words the panel knows, and the ones it has no opinion about, stay quiet --
+    # a warning nobody can act on is worth as much as no warning at all.
+    caplog.clear()
+    view._reported_kinds.clear()
+    with caplog.at_level("WARNING"):
+        view.pick_scoped([series(seriesKey="limit:weekly_all|weekly|-|-",
+                                 kind="weekly_all", group="weekly",
+                                 bucketKey="seven_day", utilization=30),
+                          series(),
+                          series(seriesKey="bucket:seven_day_opus", kind=None,
+                                 bucketKey="seven_day_opus", utilization=7)])
+    assert caplog.records == []
+
+
 def test_scoped_choice_is_stable_when_two_are_equal():
     """Frame only pushes a frame that differs from the last, so a coin-toss between two
     equal series would repaint the panel over USB for nothing."""
@@ -241,6 +270,79 @@ def test_a_gap_the_countdown_would_render_differently_is_not_aligned():
     assert not view.resets_aligned(a, fmt.parse_utc("2026-09-16T16:04:10Z"))
     assert view.RESET_ALIGN_TOLERANCE_S < 60, \
         "a tolerance of a minute or more can glue two visibly different countdowns"
+
+
+def test_one_spent_boundary_beside_a_live_one_cannot_share_a_countdown():
+    """A glued row has ONE countdown. With one window rolled over and the other not, no
+    caption is honest: the live deadline lies about the rolled-over track, and "reset has
+    passed" lies about a track with a week still to run. So the pair comes apart -- for
+    the span of a probe interval at every rollover, which is the truth about the data at
+    that moment rather than a wobble to damp.
+
+    An earlier version of this test asserted the opposite and shipped a HIGH: the pair
+    stayed glued, and the row drew the expired week's caption while the scoped track's
+    live "reset in 7 d 0 h" was discarded."""
+    now = fmt.parse_utc("2026-09-12T16:00:30Z")
+    spent = fmt.parse_utc("2026-09-12T16:00:00Z")       # 30 s ago
+    ahead = fmt.parse_utc("2026-09-19T16:00:00Z")       # next week
+    assert not view.resets_aligned(spent, ahead, now=now)
+    assert not view.resets_aligned(ahead, spent, now=now), "and the same the other way"
+    # Told nothing about now, the test is exactly what it always was.
+    assert not view.resets_aligned(spent, ahead)
+    # The spent rule only ever adds a reason to REFUSE alignment; it never grants one.
+    assert not view.resets_aligned(ahead, fmt.parse_utc("2026-09-19T17:00:00Z"), now=now)
+
+
+def test_two_spent_boundaries_are_the_null_case_in_another_guise():
+    """Neither window has a live deadline, so the shared row has no countdown it could get
+    wrong -- days apart or seconds, both captions say the same thing. That is why a spent
+    boundary is a THIRD case and not simply a missing one."""
+    now = fmt.parse_utc("2026-09-12T16:00:30Z")
+    assert view.resets_aligned(fmt.parse_utc("2026-09-12T16:00:00Z"),
+                               fmt.parse_utc("2026-09-05T16:00:00Z"), now=now)
+
+
+def test_spent_is_decided_on_the_same_second_as_the_caption():
+    """One instant may not answer two ways in one frame.
+
+    `reset_note` and `fmt.countdown` call a boundary passed on the ROUNDED whole second,
+    and view.py's own comment says why they must agree ("otherwise a 300 ms difference
+    produces the splice 'reset in past reset'"). The alignment decision is built from the
+    SAME `now_ms`, in the same `BandState`, for the same frame. Decided on an exact
+    `t <= now` instead, a boundary 400 ms out was still "ahead" to the alignment decision
+    while the caption beside it already read "reset has passed".
+
+    The invariant is that the two thresholds AGREE, not which way they fall: a boundary the
+    caption calls spent must be spent here too, and so must give the same answer as one
+    plainly behind us."""
+    now = fmt.parse_utc("2026-09-12T16:00:00Z")
+    just_ahead = fmt.parse_utc("2026-09-12T16:00:00.400Z")   # 400 ms -> rounds to 0 s
+    plainly_spent = fmt.parse_utc("2026-09-12T15:59:00Z")
+    next_week = fmt.parse_utc("2026-09-19T16:00:00Z")
+    assert fmt.countdown(fmt.ms(just_ahead), fmt.ms(now)) == "past reset", \
+        "the caption's threshold is the whole second, not the exact instant"
+    # Beside a LIVE boundary, both are spent and both part the pair.
+    assert view.resets_aligned(just_ahead, next_week, now=now) \
+        == view.resets_aligned(plainly_spent, next_week, now=now) is False
+    # Beside another SPENT one, both are the null case and both keep it together.
+    assert view.resets_aligned(just_ahead, plainly_spent, now=now) is True
+    # A whole second out is live on BOTH thresholds, and a week's gap still parts them.
+    assert not view.resets_aligned(fmt.parse_utc("2026-09-12T16:00:01Z"),
+                                   next_week, now=now)
+
+
+def test_the_scoped_pick_drops_the_withdrawn_before_it_ranks_them():
+    """The bug this guards: `keep` used to be applied to the WINNER instead of to the
+    candidates. A stale series carrying the higher number won the ranking and was then
+    rejected, so an account whose scoped window was live drew no scoped rung at all."""
+    stale = series(seriesKey="limit:weekly_scoped|weekly|opus|-",
+                   kind="weekly_scoped", utilization=90)
+    live = series(seriesKey="limit:weekly_scoped|weekly|fable|-",
+                  kind="weekly_scoped", utilization=12)
+    assert view.pick_scoped([stale, live]) is stale, "unfiltered, the highest still wins"
+    assert view.pick_scoped([stale, live], keep=lambda s: s is not stale) is live
+    # Nothing survives the filter -> no rung, rather than a rejected winner.
+    assert view.pick_scoped([stale, live], keep=lambda s: False) is None
 
 
 # --- credits ----------------------------------------------------------------

@@ -21,7 +21,7 @@ A false, confident-looking zero is the worst failure mode of this tool. The dash
 track and the words `unknown` stay only for the case in which a measurement has
 NEVER been taken — there really is nothing to draw.
 """
-from . import fmt
+from . import fmt, log, model as M
 
 
 class SeriesView:
@@ -141,7 +141,7 @@ def pick_weekly(series):
     window a rung of its own, where it says what it is.
     """
     primary = [s for s in series if s.primary]
-    for test in (lambda s: s.kind == "weekly_all",
+    for test in (lambda s: M.panel_kind(s.kind) == M.AGGREGATE_WEEKLY,
                  lambda s: s.bucket_key == "seven_day"):
         for s in primary:
             if test(s):
@@ -152,7 +152,47 @@ def pick_weekly(series):
     return None
 
 
-def pick_scoped(series):
+#: Kinds already reported, so an unknown word is said ONCE per process rather than once
+#: per frame -- `pick_scoped` runs on every repaint. Log de-duplication and nothing else:
+#: no decision reads this set, so `pick_scoped` stays the pure function `band_state` and
+#: `tools/replay.py` need -- the same series in the same frame picks the same rung whether
+#: or not the line was written.
+_reported_kinds = set()
+
+
+def _looks_weekly(s):
+    """Whether a series is plainly a weekly window, whatever its kind is called.
+
+    Read off the two fields a RENAMED KIND would not touch: the group the backend files it
+    under ("weekly") and the bucket it came from ("seven_day", "seven_day_fable"). Both are
+    weaker than the kind, which is why they only ever raise a question here and never pick
+    the rung.
+    """
+    return s.group == "weekly" or (s.bucket_key or "").startswith("seven_day")
+
+
+def _report_unknown_kind(s):
+    """Says out loud that a weekly window arrived under a word the panel does not know.
+
+    The failure this closes is a SILENT one: the filter in `pick_scoped` yields an empty
+    list, which is indistinguishable from "this account has no scoped window", and the band
+    draws a smaller, entirely plausible shape -- no exception, no log line, nothing on the
+    glass, and the panel's own tests keep passing because they carry their own copy of the
+    literal.
+
+    A line in the log is the WHOLE remedy, deliberately: raising would take the panel down
+    over a word, and AGENTS.md rule 5 says a new bucket at Anthropic has to work with no
+    change here. The panel keeps drawing what it understood; the log says what it did not.
+    """
+    if s.kind in _reported_kinds:
+        return
+    _reported_kinds.add(s.kind)
+    log.get().warning(
+        "unknown weekly series kind %r (%s) -- no scoped rung will be drawn for it; "
+        "map it onto a panel word in panel/panel/model.py::KINDS", s.kind, s.series_key)
+
+
+def pick_scoped(series, keep=None):
     """The weekly window of ONE model -- Fable today, whatever ships next tomorrow.
 
     Picked by its KIND, never by a name: a new model has to appear on the panel by
@@ -169,8 +209,32 @@ def pick_scoped(series):
     nothing when the packed frame is byte-identical to the last one (`surface.dirty_tiles`
     finds no dirty tile), so a coin-toss here would repaint the screen over USB for
     nothing. Not `Frame` -- that only memoises rotations and packing, and compares nothing.
+
+    `keep` filters the CANDIDATES, before the ranking rather than after it. WHY the caller
+    drops a series (freshness, today) is not this function's business; WHEN it is applied
+    is. A series the caller would discard must not be able to win the comparison first and
+    take the rung down with it -- rejecting the winner afterwards leaves an account whose
+    scoped window is live drawing no scoped rung at all, because a withdrawn series
+    outranked it. That is only reachable with two of them, which no account here has yet.
+
+    The kind is matched through the panel's OWN word (`model.SCOPED_WEEKLY`), and upstream's
+    string is mapped onto it in one place (`model.KINDS`). A kind that maps to nothing, on a
+    series that is plainly a weekly window, is REPORTED rather than dropped in silence --
+    that is the difference between a renamed kind and an account without a scoped window,
+    and the filter alone cannot tell them apart.
     """
-    scoped = [s for s in series if s.kind == "weekly_scoped"]
+    scoped = []
+    for s in series:
+        word = M.panel_kind(s.kind)
+        if word == M.SCOPED_WEEKLY:
+            scoped.append(s)
+        elif word is None and s.kind and _looks_weekly(s):
+            # A series with NO kind at all is not asked about: the bucket-sourced series
+            # carry none by design (backend/app/parsing.py), and an absent word is not a
+            # renamed one.
+            _report_unknown_kind(s)
+    if keep is not None:
+        scoped = [s for s in scoped if keep(s)]
     primary = [s for s in scoped if s.primary]
     for group in (primary, scoped):
         if group:
@@ -207,7 +271,7 @@ def pick_scoped(series):
 RESET_ALIGN_TOLERANCE_S = 5
 
 
-def resets_aligned(a, b):
+def resets_aligned(a, b, now=None):
     """Whether two windows close at the same moment, and so can share one countdown.
 
     A missing boundary counts as aligned, and this is where the panel's question parts
@@ -217,10 +281,63 @@ def resets_aligned(a, b):
     for a window at 0 % usage, which is 3288 of the 3290 readings with no scoped boundary
     here. The history says the same the other way -- all nine times the scoped window
     gained a boundary out of nothing, it was the account's own weekly one.
+
+    A SPENT boundary is a third case, and it is NOT the same as a missing one. Given `now`,
+    a boundary already behind us belongs to a window that has closed. The two windows do
+    not roll over in the same reading -- each series is confirmed from its own
+    (backend/app/services/ingest.py) -- so for the span of a probe interval one side can
+    hold next week's instant while the other still holds last week's.
+
+    Both spent: aligned. Neither window has a live deadline, so the shared row has no
+    countdown it could get wrong -- the null-vs-null case in another guise.
+
+    Exactly one spent: NOT aligned. Treating the spent side as merely absent would glue the
+    row, and a glued row carries ONE countdown, which is then a whole WEEK wrong for
+    whichever track it does not describe. No caption saves it: the live deadline lies about
+    the rolled-over track, and "reset has passed" lies about a track with a week still to
+    run. A pair that cannot be captioned honestly is not glued, so the two come apart and
+    each carries its own -- which is also what keeps `render._pair`'s caption picker
+    complete, since a spent week can then only reach it when the scoped side is spent too
+    and both captions say the same thing.
+
+    That does mean the band reshapes for the span of a probe interval at every rollover.
+    That transient is the truth about the data at that moment -- for those seconds the two
+    windows really do have different deadlines -- so the reshape is honest and suppressing
+    it was the error.
+
+    Spent-ness is decided by `_boundary_ahead`, on the same rounded second the captions
+    use, so one instant cannot answer here and in `reset_note` two different ways.
+
+    Without `now` the test is exactly what it was, which keeps every existing caller and
+    test honest.
     """
-    if a is None or b is None:
+    a_live = _boundary_ahead(a, now)
+    b_live = _boundary_ahead(b, now)
+    if a is not None and b is not None:
+        a_spent, b_spent = a_live is None, b_live is None
+        if a_spent and b_spent:
+            return True
+        if a_spent != b_spent:
+            return False
+    if a_live is None or b_live is None:
         return True
-    return abs((a - b).total_seconds()) <= RESET_ALIGN_TOLERANCE_S
+    return abs((a_live - b_live).total_seconds()) <= RESET_ALIGN_TOLERANCE_S
+
+
+def _boundary_ahead(t, now):
+    """`t`, or None when it has already been spent. No `now` means no opinion.
+
+    Spent on the WHOLE SECOND -- the threshold `reset_note` and `fmt.countdown`
+    already share -- because both answers reach the SAME frame (render.py builds
+    `reset_week`/`reset_scoped` and `reset_aligned` from one `now_ms`). On an
+    exact `t <= now` a boundary 400 ms away is still "ahead" here while the
+    caption beside it already reads "reset has passed": one instant, two
+    answers, for half a second at every rollover. That is the splice the comment
+    in `reset_note` went out of its way to close, closed the same way.
+    """
+    if t is None or now is None:
+        return t
+    return None if int(round((t - now).total_seconds())) <= 0 else t
 
 
 def scoped_label(s):
