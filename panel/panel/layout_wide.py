@@ -78,8 +78,10 @@ F_REASON = 20
 PLAN_GAP = 14
 
 # The header's groups: the account name with the plan glued to it on the left, and on the
-# right, right to left, the link mark, the clock, the reading age and the block reason.
-# The mockup spaces the groups 22 px apart.
+# right, right to left, the CLOCK, then the link mark, then the reading age and the block
+# reason. The link mark sits BETWEEN the two stamps rather than out at the edge -- it says
+# whether either of them can be believed, and in the corner it was a mark about nothing in
+# particular. The mockup spaces the groups 22 px apart.
 HEAD_GAP = 22
 CLOCK_MARK_W = 28
 CLOCK_DY = 3

@@ -156,16 +156,19 @@ def pick_scoped(series):
     """The weekly window of ONE model -- Fable today, whatever ships next tomorrow.
 
     Picked by its KIND, never by a name: a new model has to appear on the panel by
-    itself, the way `plan_label` lets a new tier appear (presentation rule 5 in
-    docs/API.md). Hard-coding "Fable" would mean shipping the panel again for each one.
+    itself, the way `plan_label` lets a new tier appear (docs/API.md section 5, "Three
+    hard rules of presentation", rule 1 -- the plan is visible next to every account, and
+    it is read off the data rather than off a list of tiers this build happens to know).
+    Hard-coding "Fable" would mean shipping the panel again for each one.
 
     An account can carry several. The highest wins, because this rung exists to answer
     "what stops me first"; the loser is a diagnostic and diagnostics stay in the web UI.
 
     The comparison is TOTAL -- ties broken on the series key -- because two series at
-    equal utilization must resolve to the same one on every call. `Frame` only pushes a
-    frame to the panel when it differs from the last, so a coin-toss here would repaint
-    the screen over USB for nothing.
+    equal utilization must resolve to the same one on every call. `Surface.plan` sends
+    nothing when the packed frame is byte-identical to the last one (`surface.dirty_tiles`
+    finds no dirty tile), so a coin-toss here would repaint the screen over USB for
+    nothing. Not `Frame` -- that only memoises rotations and packing, and compares nothing.
     """
     scoped = [s for s in series if s.kind == "weekly_scoped"]
     primary = [s for s in scoped if s.primary]
@@ -180,20 +183,28 @@ def pick_scoped(series):
 
 #: How far apart two weekly boundaries may stand and still count as ONE boundary.
 #:
-#: The SAME NUMBER the backend settles the same question with -- `RESET_WINDOW_EPS_SEC`,
-#: 300 s, read `backend/app/parsing.py::same_reset_window` for the reasoning. It is
-#: restated rather than imported because the panel is a separate deployable that knows the
-#: backend only over HTTP; it must not be a SECOND number. The backend's argument is the
-#: one to keep: a threshold of minutes is two orders of magnitude above the wobble and two
-#: below the shortest window, so nothing in between can be mistaken for either.
+#: MEASURED for this question, and deliberately NOT borrowed from the backend.
 #:
-#: Confirmed here on the weekly pair specifically. Across every reading this deployment
-#: holds -- 2026-07-26 to 2026-09-09, two accounts, 909 samples where both windows had a
-#: boundary -- the largest gap between the aggregate week and the scoped one is ONE
-#: SECOND, and 88 % agree exactly; the odd second is Anthropic reporting the same instant
-#: as "16:00:00" from one series and "15:59:59" from the other. Exact equality was tried
-#: first and was wrong: it split the pair on BOTH live accounts at once.
-RESET_ALIGN_TOLERANCE_S = 300
+#: Across every reading this deployment holds -- 2026-07-26 to 2026-09-09, two accounts,
+#: 909 samples where both windows had a boundary -- the largest gap between the aggregate
+#: week and the scoped one is ONE SECOND, and 88 % agree exactly. That second is Anthropic
+#: reporting the same instant as "16:00:00" from one series and "15:59:59" from the other.
+#: Five seconds clears it several times over while staying far below anything a reader
+#: could see.
+#:
+#: `backend/app/parsing.py::same_reset_window` answers a question that LOOKS like this one
+#: and is not: "has anything moved", where the unit of change is a whole window and its
+#: 300 s default is two orders of magnitude below the shortest of them. This asks whether
+#: ONE COUNTDOWN MAY SPEAK FOR BOTH, and the countdown is drawn in minutes and seconds
+#: near a boundary. Borrowing 300 s here was measured wrong: two windows 250 s apart --
+#: well inside a seven-day window, nowhere near a rollover -- glued into one row under a
+#: single caption that was four minutes wrong for one of its two tracks.
+#:
+#: The backend's number is also only its DEFAULT (`Field(300, alias="RESET_WINDOW_EPS_SEC")`
+#: in `backend/app/config.py`), overridable per deployment, which the panel cannot read. So
+#: "the same number as the backend" was never a property anything could hold, and a test
+#: pinning the two declared defaults measured agreement the runtime never promised.
+RESET_ALIGN_TOLERANCE_S = 5
 
 
 def resets_aligned(a, b):
@@ -216,9 +227,12 @@ def scoped_label(s):
     """"FABLE" -- the model's own name, taken from the data rather than a dictionary.
 
     Three places carry it, in falling order of directness: the field, then the label the
-    backend composes ("Week - Fable", built in backend/app/parsing.py), then the series
-    key ("limit:weekly_scoped|weekly|fable|-"). A backend that changes the label's shape
-    degrades to the key rather than to a wrong word.
+    backend composes ("Week — Fable", em dash, built in backend/app/parsing.py), then the
+    series key ("limit:weekly_scoped|weekly|fable|-"). A backend that changes the label's
+    shape degrades to the key rather than to a wrong word.
+
+    The label is taken apart the way it was put together -- first separator, trailing
+    surface -- because the model name is upstream text and may contain either character.
     """
     if s is not None:
         if getattr(s, "model_display_name", None):
@@ -226,9 +240,16 @@ def scoped_label(s):
         label = s.label or ""
         for dash in ("—", "–", " - "):
             if dash in label:
-                # "Week - Fable / API": the surface is a second axis and this rung is
-                # not the place to say it.
-                return label.rsplit(dash, 1)[-1].split("/")[0].strip().upper()
+                # Split on the FIRST separator and strip only a TRAILING surface, because
+                # that is the order the backend composed them in: the kind label, then
+                # " — " + model, then " / " + surface. Taking the last dash or the first
+                # slash instead reads a model name that contains one as though it were a
+                # separator -- "Week — Sonnet — preview" gave "PREVIEW", and
+                # "Week — Sonnet (Bedrock/Vertex)" gave "SONNET (BEDROCK".
+                name = label.split(dash, 1)[1]
+                # " / " with its spaces, as the backend writes it. A bare "/" inside a
+                # model name has none, so it survives.
+                return name.rsplit(" / ", 1)[0].strip().upper()
         parts = (s.series_key or "").split("|")
         if len(parts) > 2 and parts[2] not in ("", "-"):
             return parts[2].upper()

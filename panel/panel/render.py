@@ -202,6 +202,55 @@ def alert_state(blocked, now_ms, footer=None, flood=False, seconds=True, date=Tr
     )
 
 
+#: How far a model-scoped weekly window may lag the band's other windows before the panel
+#: reads it as WITHDRAWN rather than merely quiet.
+#:
+#: Every series NAMED by a reading is confirmed from that reading's own stamp
+#: (backend/app/services/ingest.py:349-386), so a window that is still being reported lags
+#: the freshest of the others by about nothing — production's largest gap between the two
+#: weekly windows is one second (view.RESET_ALIGN_TOLERANCE_S records the measurement). An
+#: hour is therefore orders of magnitude above the wobble of one late or partial batch, and
+#: an order of magnitude BELOW the backend's own `client_silent_sec` (6 h,
+#: backend/app/config.py:75), the horizon past which it stops believing a value at all. The
+#: panel drops a window nobody reports well before the backend gives up on a silent client.
+SCOPED_WITHDRAWN_LAG_S = 3600
+
+
+def _scoped_still_reported(scoped, session, weekly):
+    """The scoped pick, or None when nothing reports that window any more.
+
+    A scoped series the account stops naming is never pruned — its row survives forever
+    once it has ever carried a value (backend/app/services/status.py:241) — and its
+    confirmation never advances again (ingest.py:349-386), while `view.pick_scoped` chooses
+    on utilization alone. Drawn, such a rung shows a measurement from an unbounded time ago
+    and, because the reading age is the OLDEST of the windows the band draws, drags the
+    band's ONE freshness label back with it: an otherwise live account reads "30 d 0 h ago".
+    Withdrawing the rung is what keeps that label honest — the age then describes exactly
+    what is on the glass, and the band falls back to the two-rung shape it has on every
+    account with no scoped window at all.
+
+    Judged on the STAMPS, not on `freshness`: when the client itself goes quiet every window
+    turns stale together and nothing here may change — the old age is then the truth. Only a
+    window that falls behind the band's own live ones has been withdrawn.
+    """
+    from . import fmt
+
+    if scoped is None:
+        return None
+    mine = fmt.parse_utc(scoped.confirmed_at or scoped.captured_at)
+    if mine is None:
+        # Nothing to judge by — and with no stamp it pins no age either, so leave it.
+        return scoped
+    others = [m for m in (fmt.parse_utc(s.confirmed_at or s.captured_at)
+                          for s in (session, weekly) if s is not None)
+              if m is not None]
+    if not others:
+        return scoped
+    if (max(others) - mine).total_seconds() > SCOPED_WITHDRAWN_LAG_S:
+        return None
+    return scoped
+
+
 def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None,
                alert=False):
     """model.AccountStatus -> BandState. The ONLY place this transition happens, shared
@@ -219,7 +268,9 @@ def band_state(account, name=None, now_ms=0.0, show_clock=False, note=None,
 
     session = V.pick_session(account.series)
     weekly = V.pick_weekly(account.series)
-    scoped = V.pick_scoped(account.series)
+    # A scoped window that has stopped being reported is dropped here rather than drawn
+    # from its last measurement: see `_scoped_still_reported`.
+    scoped = _scoped_still_reported(V.pick_scoped(account.series), session, weekly)
     credits = V.credits(account.rung("credits"))
 
     # The age is taken from the CONFIRMATION, not from the sample's write: dedup
@@ -838,9 +889,13 @@ class Renderer:
         colour = theme.ACCENT_200 if session else theme.TEXT_60
         room = (label_box[2] - draw.text_width(text, f_reset)
                 - self.L.RESET_GAP - label_box[0])
+        # `ellipsize_tracked`, not `ellipsize`: this is painted with tracking=1, and the
+        # per-glyph spacing counts into the width. The scoped rung's label comes from the
+        # data and has no length bound, so measuring it without the tracking lets a long
+        # one through several pixels too wide and straight into the reset caption.
         draw.text_tracked(d, (label_box[0], label_box[1] + self.L.LABEL_DY),
-                          draw.ellipsize(label, f_label, room), f_label, colour,
-                          tracking=1)
+                          draw.ellipsize_tracked(label, f_label, room, 1), f_label,
+                          colour, tracking=1)
 
         # --- the bar ---
         draw.bar(d, bar_box, v,
@@ -862,10 +917,20 @@ class Renderer:
         the two being null is a way of sharing a boundary too (see `view.resets_aligned`),
         and the row should show the deadline that exists rather than the absence.
         """
+        from . import fmt
+
         f_reset = draw.font(self.L.F_RESET)
         gy = (pair.label[1] + pair.label[3]) // 2 + self.L.RESET_DY
+        # On the PARSED instant, the same test `view.resets_aligned` was given when it
+        # decided this row may exist at all. `resets_at` is a raw string off the wire, and
+        # one that is non-empty but unparseable is truthy here while `fmt.parse_utc` reads
+        # it as None -- so the truthiness test would pick the week's caption in precisely
+        # the case where the alignment decision had already written the week off as having
+        # no boundary, and the row would then show "reset time unknown" while the scoped
+        # track's real deadline sat unused beside it.
         lead, at = (band.reset_week
-                    if band.weekly is not None and band.weekly.resets_at
+                    if band.weekly is not None
+                    and fmt.parse_utc(band.weekly.resets_at) is not None
                     else band.reset_scoped)
         text = draw.ellipsize(lead if not at else "%s · %s" % (lead, at),
                               f_reset, pair.label[2] - pair.label[0])
@@ -877,7 +942,7 @@ class Renderer:
                 - self.L.RESET_GAP - pair.label[0])
         label = "%s / %s" % (LABEL_WEEK, band.scoped_label)
         draw.text_tracked(d, (pair.label[0], pair.label[1] + self.L.LABEL_DY),
-                          draw.ellipsize(label, f_label, room), f_label,
+                          draw.ellipsize_tracked(label, f_label, room, 1), f_label,
                           theme.TEXT_60, tracking=1)
 
         views = (band.weekly_view, band.scoped_view)

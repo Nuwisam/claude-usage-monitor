@@ -270,10 +270,14 @@ pair comes back apart by itself, whatever the switch says — the setting can
 withhold the gluing, never force it.
 
 The comparison carries a tolerance, and must keep it: Anthropic's boundary
-wobbles, and the two windows are reported a second apart as often as not
-("16:00:00" from one series, "15:59:59" from the other). Exact equality was tried
-and split every pair on the panel. The threshold is the backend's own
-`RESET_WINDOW_EPS_SEC`, for the reasoning in `parsing.same_reset_window`. A window
+wobbles, and about one reading in eight has the two windows a second apart
+("16:00:00" from one series, "15:59:59" from the other; 88 % agree exactly, and
+across 909 readings they were never further apart than that one second). Exact
+equality was tried and split every pair on the panel. The threshold is five
+seconds, measured for this question rather than borrowed — the backend's
+`parsing.same_reset_window` looks like the same test but asks whether anything
+**moved**, where the unit of change is a whole window, and its 300 s default is
+wide enough to glue two countdowns a reader could tell apart. A window
 with **no** boundary counts as aligned — Anthropic gives none at 0 % usage, so that
 is an absence and not a second deadline.
 
