@@ -580,8 +580,15 @@ class Band:
         pair = self._pair(cells[-1]) if glued else None
 
         lowest = pair.bottom if pair else rungs[-1].bottom
+        # Per CELL, not in aggregate. `_cells` shares the span out EQUALLY while the
+        # rungs are not equal -- the session bar is SES_BAR_H and the weekly ones
+        # WK_BAR_H -- so a sum that fits the span does not mean the tallest rung fits
+        # its own share; and `_rung`/`_pair` CENTRE their content, so a rung too tall
+        # for its cell overflows at both ends, which `lowest <= bottom` only catches
+        # for the last one. `heights` is one entry per cell in both shapes (the pair's
+        # content is its own entry), which is the docstring's promise exactly.
         fits = lowest <= bottom and \
-            bottom - self.rows_top >= sum(heights) + (n - 1) * m.ROW_GAP
+            all(h <= cell[1] - cell[0] for cell, h in zip(cells, heights))
         return BandShape(rungs, pair, box, centre, fits)
 
     @property
