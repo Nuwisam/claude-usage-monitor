@@ -32,18 +32,21 @@ def main():
     ap.add_argument("path")
     ap.add_argument("--outdir", default="replay")
     ap.add_argument("--zoom", type=int, default=1)
-    # The same two switches the client reads out of panel.json: without them this tool
+    # The same three switches the client reads out of panel.json: without them this tool
     # can only ever replay the default face, so a recording made with one of them off
     # would come back looking like something the panel never drew.
     ap.add_argument("--no-clock-seconds", action="store_true",
                     help="clock_seconds: false — the face without seconds")
     ap.add_argument("--no-clock-date", action="store_true",
                     help="clock_date: false — the bare time, no date")
+    ap.add_argument("--no-glue-pair", action="store_true",
+                    help="glue_aligned_weekly_pair: false — the two weekly windows get "
+                         "a rung each instead of sharing one row of two tracks")
     args = ap.parse_args()
     face = dict(seconds=not args.no_clock_seconds, date=not args.no_clock_date)
 
     os.makedirs(args.outdir, exist_ok=True)
-    renderer = render.Renderer()
+    renderer = render.Renderer(glue_pair=not args.no_glue_pair)
     clock = fmt.ServerClock(lambda: 0.0)
     accounts = {}
     order = []
