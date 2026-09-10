@@ -250,7 +250,10 @@ weekly window, and then whatever the account actually has:
   derived from the data (`view.scoped_label`), so the model that ships next
   appears on the glass without a new build. Where an account has several, the
   highest one wins: the rung answers "what stops me first", and the rest are
-  diagnostics, which stay in the web UI.
+  diagnostics, which stay in the web UI. A window nobody reports any more is
+  dropped **before** that comparison rather than after it — its row survives
+  forever once it has carried a value, so a withdrawn series left in the running
+  would outrank a live one and take the rung down with it.
 - **Credits**, once a weekly pool is exhausted.
 
 With both at once the band carries four things, and the two weekly windows then
@@ -280,6 +283,24 @@ seconds, measured for this question rather than borrowed — the backend's
 wide enough to glue two countdowns a reader could tell apart. A window
 with **no** boundary counts as aligned — Anthropic gives none at 0 % usage, so that
 is an absence and not a second deadline.
+
+A boundary already **spent** is a third case, and it does not behave like a
+missing one. The two windows do not roll over in a single reading, so for the
+span of a probe interval one side can still hold last week's instant while the
+other already holds next week's.
+
+- **Both spent** — aligned. Neither window has a live deadline, so the shared
+  row has no countdown it could get wrong.
+- **Exactly one spent** — **not** aligned, and the pair comes apart. A glued row
+  has one countdown, and here no caption is honest: the live deadline lies about
+  the rolled-over track, while "reset has passed" lies about a track with a week
+  still to run. A pair that cannot be captioned truthfully is not glued.
+
+So the band does reshape briefly at every rollover, and that is the intended
+behaviour rather than a wobble to damp: for those few seconds the two windows
+genuinely have different deadlines, and the two rungs say so. Suppressing it
+would mean drawing one countdown that is a whole week wrong for one of its
+tracks.
 
 ## A blocked Claude Code session
 

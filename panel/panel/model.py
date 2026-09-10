@@ -9,6 +9,33 @@ on a desk must not blow up because the backend grew a field.
 """
 CONTRACT_VERSION = 3
 
+#: The panel's OWN words for the two weekly windows, and the upstream `kind` strings
+#: that mean them. `CONTRACT_VERSION` guards the SHAPE of the frame and says nothing
+#: about this vocabulary -- the panel checks the version in the `hello` frame and then
+#: trusts every kind string it is handed -- so the vocabulary lives here, in ONE place
+#: next to the version, instead of as a bare literal at each reader.
+AGGREGATE_WEEKLY = "aggregate_weekly"   # the week across all models
+SCOPED_WEEKLY = "scoped_weekly"         # the week of ONE model
+
+#: Upstream's word -> ours. The ONLY place either upstream literal is written on this
+#: side, so a backend that renames a kind is one line here, and a kind that arrives
+#: unmapped is answerable (`view.pick_scoped`) rather than silently absent.
+KINDS = {
+    "weekly_all": AGGREGATE_WEEKLY,
+    "weekly_scoped": SCOPED_WEEKLY,
+}
+
+
+def panel_kind(kind):
+    """Upstream's `kind` in the panel's own words, or None when it is not one we know.
+
+    None is deliberately NOT an error here: most series carry a kind this panel has no
+    opinion about (`session`), or none at all (the bucket-sourced ones), and reading
+    defensively is this module's whole contract. Whether an unknown word MATTERS is the
+    reader's question, and it is asked where the answer is drawn -- `view.pick_scoped`.
+    """
+    return KINDS.get(kind)
+
 
 def _f(value):
     """A number or None. The contract delivers Decimals as JSON numbers."""

@@ -43,6 +43,48 @@ def test_credits_do_not_overlap_week():
         assert band.fits, "credits overlap week"
 
 
+@pytest.mark.parametrize("mod, size", ((L, (480, 320)), (LW, (1280, 720))))
+def test_fits_is_judged_per_cell_not_in_aggregate(mod, size, monkeypatch):
+    """`_cells` shares the span out EQUALLY while the rungs are not equal, and `_rung`
+    centres its content, so a rung too tall for its own cell spills at BOTH ends -- which
+    the last-row check alone cannot see. An aggregate `sum(heights) + gaps <= span`
+    swallows exactly that: one rung grows into its neighbour's slack and the total still
+    fits.
+
+    The test DISTINGUISHES the two predicates rather than merely exercising the strict
+    one. Grow the session bar until `fits` goes red, then check that at that very size the
+    aggregate sum still fits the span -- so the old check was green exactly where the new
+    one is red. Both canvases, because they have different slack and a nudge that
+    overflows one clears the other easily."""
+    def widest_shape_is_over(band):
+        """Whether the tallest rung of any shape has outgrown its cell's share."""
+        return not band.fits
+
+    def aggregate_still_fits(band):
+        """The predicate this replaced, recomputed from the shape's own boxes."""
+        for scoped, credits, glue in SHAPES:
+            shape = band.shape(scoped, credits, glue)
+            rows = [(r.label[1], r.bar[3]) for r in shape.rungs]
+            if shape.pair is not None:
+                rows.append((shape.pair.label[1], shape.pair.bars[-1][3]))
+            span = (shape.credits[1] if shape.credits else band.bottom) - band.rows_top
+            if sum(b - t for t, b in rows) + (len(rows) - 1) * mod.ROW_GAP > span:
+                return False
+        return True
+
+    assert all(band.fits for band in mod.Layout(*size).bands), "green before the nudge"
+
+    for extra in range(1, 60):
+        monkeypatch.setattr(mod, "SES_BAR_H", mod.SES_BAR_H + 1)
+        bands = mod.Layout(*size).bands
+        if any(widest_shape_is_over(b) for b in bands):
+            assert all(aggregate_still_fits(b) for b in bands), (
+                "at +%d the old aggregate check was ALREADY red, so this nudge proves "
+                "nothing about per-cell containment" % extra)
+            return
+    pytest.fail("`fits` never went red: growing a rung by 59 px must overflow its cell")
+
+
 def test_everything_fits_within_screen():
     """Every box of every shape, on both canvases -- a shape is only reached by the data
     that selects it, so a band that fits in one of them says nothing about the others."""
@@ -269,6 +311,100 @@ def test_age_takes_the_older_of_two_series():
                                 confirmedAt="2026-07-23T19:07:40Z",
                                 capturedAt="2026-07-23T19:07:40Z")])
     assert render.band_state(acc, now_ms=now_ms).ago == "3 d 0 h ago"
+
+
+# --- the scoped window that stops being reported ----------------------------
+
+def _scoped_scene(scoped_confirmed, scoped_util=50):
+    """A band whose session and week are live and whose scoped window is as given."""
+    live = "2026-07-26T19:06:40Z"
+    return fixtures.account(
+        "u", "who@example.org",
+        series=[fixtures.series("limit:session|session|-|-", "Session",
+                                kind="session", bucketKey="five_hour", utilization=31,
+                                confirmedAt=live, capturedAt=live),
+                fixtures.series("limit:weekly_all|weekly|-|-", "Week",
+                                kind="weekly_all", bucketKey="seven_day", utilization=30,
+                                confirmedAt=live, capturedAt=live),
+                fixtures.series("limit:weekly_scoped|weekly|fable|-", "Week — Fable",
+                                kind="weekly_scoped", utilization=scoped_util,
+                                confirmedAt=scoped_confirmed,
+                                capturedAt=scoped_confirmed)])
+
+
+def test_a_scoped_window_nobody_reports_any_more_is_withdrawn():
+    """Its row survives forever once it has carried a value and its confirmation never
+    advances again, so drawn it would show a measurement from an unbounded time ago AND
+    drag the band's one freshness label back with it."""
+    now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
+    fresh = render.band_state(_scoped_scene("2026-07-26T19:06:40Z"), now_ms=now_ms)
+    assert fresh.scoped is not None and fresh.ago == "1 min ago"
+
+    # An hour behind the live windows: past the threshold, so the rung goes and the age
+    # describes exactly what is left on the glass.
+    gone = render.band_state(_scoped_scene("2026-07-26T18:07:40Z"), now_ms=now_ms)
+    assert gone.scoped is None
+    assert gone.ago == "1 min ago", "a withdrawn rung must not pin the band's age"
+
+
+def test_the_threshold_sits_above_what_a_reported_window_ever_lagged():
+    """MEASURED on this deployment: 5817 readings where the scoped window appears beside
+    the band's other windows, worst lag 445 s, none over an hour. The threshold has to
+    clear that with room and still be well under the backend's own 6 h silence horizon."""
+    assert 445 * 2 < render.SCOPED_WITHDRAWN_LAG_S < 6 * 3600
+
+    now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
+    # The worst lag production has ever shown is still being reported.
+    worst = render.band_state(_scoped_scene("2026-07-26T18:59:15Z"), now_ms=now_ms)
+    assert worst.scoped is not None, "445 s behind is a late batch, not a withdrawal"
+
+
+def test_a_client_gone_quiet_does_not_withdraw_anything():
+    """Judged on the stamps, not on freshness: when the client itself stops reporting,
+    every window turns stale TOGETHER and the old age is the truth. Only a window that
+    falls behind the band's own live ones has been withdrawn."""
+    now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
+    old = "2026-07-20T19:07:40Z"
+    acc = fixtures.account(
+        "u", "who@example.org",
+        series=[fixtures.series("limit:session|session|-|-", "Session",
+                                kind="session", bucketKey="five_hour", utilization=31,
+                                confirmedAt=old, capturedAt=old),
+                fixtures.series("limit:weekly_all|weekly|-|-", "Week",
+                                kind="weekly_all", bucketKey="seven_day", utilization=30,
+                                confirmedAt=old, capturedAt=old),
+                fixtures.series("limit:weekly_scoped|weekly|fable|-", "Week — Fable",
+                                kind="weekly_scoped", utilization=50,
+                                confirmedAt=old, capturedAt=old)])
+    assert render.band_state(acc, now_ms=now_ms).scoped is not None
+
+
+def test_a_withdrawn_series_cannot_outrank_a_live_one():
+    """The ordering defect: the freshness test used to be applied to the WINNER. A stale
+    series carrying the higher number won the ranking and was then rejected, leaving an
+    account whose scoped window is live with no scoped rung at all."""
+    now_ms = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
+    live = "2026-07-26T19:06:40Z"
+    acc = fixtures.account(
+        "u", "who@example.org",
+        series=[fixtures.series("limit:session|session|-|-", "Session",
+                                kind="session", bucketKey="five_hour", utilization=31,
+                                confirmedAt=live, capturedAt=live),
+                fixtures.series("limit:weekly_all|weekly|-|-", "Week",
+                                kind="weekly_all", bucketKey="seven_day", utilization=30,
+                                confirmedAt=live, capturedAt=live),
+                # Withdrawn, and the higher of the two.
+                fixtures.series("limit:weekly_scoped|weekly|opus|-", "Week — Opus",
+                                kind="weekly_scoped", utilization=90,
+                                confirmedAt="2026-07-25T19:07:40Z",
+                                capturedAt="2026-07-25T19:07:40Z"),
+                # Live, and the lower.
+                fixtures.series("limit:weekly_scoped|weekly|fable|-", "Week — Fable",
+                                kind="weekly_scoped", utilization=12,
+                                confirmedAt=live, capturedAt=live)])
+    band = render.band_state(acc, now_ms=now_ms)
+    assert band.scoped is not None, "the live scoped window still has a rung"
+    assert band.scoped_label == "FABLE"
 
 
 # Pixel packing has a file of its own: tests/test_pixels.py.
