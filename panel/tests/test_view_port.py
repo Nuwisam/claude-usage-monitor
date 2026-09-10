@@ -4,9 +4,6 @@ The most important test in this file is `test_unknown_shows_last_measurement_not
 confident-looking zero is the worst failure mode of this tool: the user fires off a
 big job and hits a wall.
 """
-import pathlib
-import re
-
 import pytest
 
 from panel import fmt, model, view
@@ -232,15 +229,18 @@ def test_a_real_divergence_is_not_swallowed_by_the_tolerance():
     assert not view.resets_aligned(a, fmt.parse_utc("2026-09-16T11:00:00Z"))
 
 
-def test_the_panel_agrees_with_the_backend_on_what_one_window_is():
-    """One rule, one number. The panel cannot import the backend -- separate deployable,
-    HTTP between them -- so the constant is restated, and this is what stops the two
-    copies drifting apart."""
-    cfg = (pathlib.Path(__file__).resolve().parents[2]
-           / "backend" / "app" / "config.py").read_text(encoding="utf-8")
-    match = re.search(r"reset_window_eps_sec:\s*int\s*=\s*Field\((\d+)", cfg)
-    assert match, "the backend stopped declaring reset_window_eps_sec under that name"
-    assert view.RESET_ALIGN_TOLERANCE_S == int(match.group(1))
+def test_a_gap_the_countdown_would_render_differently_is_not_aligned():
+    """The gap this tolerance admits has to stay under what the caption can show.
+
+    250 s is well inside a seven-day window and nowhere near a rollover, yet a shared
+    caption there is four minutes wrong for one of the two tracks. An earlier version
+    borrowed the backend's 300 s dedup threshold and admitted exactly that -- the
+    backend asks whether anything MOVED, where the unit of change is a whole window,
+    and this asks whether one countdown may speak for both."""
+    a = fmt.parse_utc("2026-09-16T16:00:00Z")
+    assert not view.resets_aligned(a, fmt.parse_utc("2026-09-16T16:04:10Z"))
+    assert view.RESET_ALIGN_TOLERANCE_S < 60, \
+        "a tolerance of a minute or more can glue two visibly different countdowns"
 
 
 # --- credits ----------------------------------------------------------------

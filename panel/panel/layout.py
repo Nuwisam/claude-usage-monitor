@@ -46,7 +46,9 @@ CREDITS_H = 14
 # Not a way of saving room -- three separate rungs and the credits fit on both canvases
 # -- but a way of reading: the two are the same seven days seen at two scopes, and
 # "how much of it is the week and how much is the model" is one glance rather than a
-# jump down the band. `glue_weekly_pair` in panel.json turns it off.
+# jump down the band. `glue_aligned_weekly_pair` in panel.json turns it off -- and note the
+# `aligned`: the switch can withhold the gluing, never force it, because a row with one
+# countdown is only honest while both windows close at the same instant.
 PAIR_GAP = 4            # label to the first track, and track to track
 PAIR_BAR_H = 8
 PAIR_NUM_PITCH = 22     # between the CENTRES of the two stacked numbers
@@ -76,9 +78,15 @@ F_WORDS = 13            # "unknown" instead of a number
 
 DIVIDER_H = 1
 
-# The block reason in the band header, in the right-hand group. The measured slack in the
-# header with the longest real name is 202 px in the top band and 259 px in the bottom one,
-# so a few dozen pixels for one uppercase word bite only when the name is truncated anyway.
+# The block reason in the band header, in the right-hand group.
+#
+# RE-MEASURED after the reading age moved into that group, which is what the earlier figures
+# here (202 px / 259 px) predate: the room left for the account name is now 146 px in the top
+# band and 296 px in the bottom one, and one uppercase word plus its gap costs 64 px of it.
+# In the BOTTOM band that is still the old story — a fifth of the budget, biting only a name
+# that was being truncated anyway. In the TOP band, which also carries the clock, it is 44 %
+# of what the name has, so a blocked session there shortens the address visibly. That is the
+# trade this constant makes, and it is worth restating whenever the header's group list moves.
 F_REASON = 10
 #: The plan badge, glued to the account name: the plan qualifies the ACCOUNT, so it reads
 #: as part of the identifier. Tighter than HEAD_GAP, which separates the header's groups

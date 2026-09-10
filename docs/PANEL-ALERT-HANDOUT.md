@@ -30,7 +30,7 @@ python tools/render-png.py --alert many   --zoom 3 --rgb565 --out ../docs/handou
 python tools/render-png.py --alert solo --flood --zoom 3 --rgb565 --out ../docs/handout/card-flooded.png
 python tools/render-png.py --marker upper --zoom 3 --rgb565 --out ../docs/handout/bands-marker-upper.png
 python tools/render-png.py --marker lower --zoom 3 --rgb565 --out ../docs/handout/bands-marker-lower.png
-python tools/render-png.py                --zoom 3 --rgb565 --out ../docs/handout/bands-no-alert.png
+python tools/render-png.py --scene scoped --zoom 3 --rgb565 --out ../docs/handout/bands-no-alert.png
 ```
 
 `--rgb565` is **mandatory** for review: without it you are looking at how much nicer the
@@ -53,7 +53,9 @@ same thing happens to look on a desktop screen, not at what the panel draws.
   `tabular-nums` — digits have to be tabular **on their own**. Segoe UI Light **is not** (the
   one is narrower than the zero), so a large number would jitter on every change.
 - **Icons are drawn as vectors, never with an icon font.** At 11 px a font glyph turns into a
-  blob; `draw.clock_glyph` is the precedent for that.
+  blob; `draw.arrow_down_right` is the precedent for that. (`draw.clock_glyph` was the
+  original example. It is gone: the reset caption it prefixed moved onto the label line,
+  where the caption is the only thing on the right and needs no icon to announce itself.)
 - **Height is measured from the actual outline, not from the nominal size.** The probe string
   that does the measuring (`PROBE` in `panel/panel/draw.py`) is a run of accented capitals and
   descenders, `ĄĘŚŹŻgjpqy` — accents that reach up, tails that reach down. Measured against the
@@ -233,10 +235,12 @@ contents change. This state is visible longer than the card itself.
 
 **5. The marker fits in the band without moving the layout.** The 4 px bar sits inside the
 margin field (`PAD_X` 14) and has the band's **full height**, regardless of how many rows
-are inside — an account with credits has four rows instead of three, and the band is just as
-tall all the same. The reason takes up 10 px of caps on the line with the plan name, laid out
-inward from the right edge and out of the title's own budget, and the account name switches
-to `ACCENT_100`.
+are inside — and how many there are now varies with the account: two windows, or three once it
+has a model-scoped weekly limit, plus the credits row, with the two weekly windows sharing one
+row of two tracks when the band carries both. The band is just as tall in every one of those
+shapes. The reason takes up 10 px of caps in the header's right-hand group, where the plan
+badge stood before it moved left to join the account name, laid out inward from the right edge,
+and the account name switches to `ACCENT_100`.
 
 **6. The card beats everything, including the "Contract mismatch" card.** The latter then
 drops down into the `Mode` strip. The reverse order would demote the alert to a row at the
