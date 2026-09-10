@@ -3,13 +3,15 @@
 **Your Claude limit on a small screen next to the monitor.** Always lit, always current — no tab
 to open, no page to refresh, nothing to click. You just glance at it.
 
-![The desk panel: two accounts, the session, the week, a model's own weekly window, credits, time to reset](docs/handout/bands-no-alert.png)
+![The desk panel: two accounts, the session, the week, a model's own weekly window, credits, time to reset](docs/handout/bands-no-alert-wide.png)
 
 ## 🖥️ The panel is the whole point
 
 A browser can tell you how much you have used. It cannot tell you *while you are working* — you
-have to stop, switch, look, come back. A 480x320 USB display beside the keyboard removes that
-whole loop: the number is simply in your field of view, the way a clock is.
+have to stop, switch, look, come back. A small USB display beside the keyboard removes that
+whole loop: the number is simply in your field of view, the way a clock is. Two sizes of glass
+are supported — 480 × 320 and 1280 × 720, the latter shown here — and the layout is drawn for
+each, not scaled between them.
 
 What is on the glass, per account:
 
@@ -30,7 +32,7 @@ own reset clock. Hardware, wiring, `panel.json` and how to tell two identical un
 
 ## 🔔 It also tells you when Claude is waiting for you
 
-![The panel showing two sessions waiting for a person: a question and a plan](docs/handout/card-pair.png)
+![The panel showing two sessions waiting for a person: a question and a plan](docs/handout/card-pair-wide.png)
 
 A stalled session looks exactly like a working one from across the room. When Claude is waiting on
 a question, a permission or a plan to accept, the panel says so — which project, what kind of

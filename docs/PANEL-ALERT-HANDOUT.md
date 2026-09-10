@@ -6,7 +6,8 @@ the motion layer, and the state after folding away. An earlier draft — cobbled
 from the band vocabulary, to test the mechanics — was not kept.
 
 The reference is not a description, only images: `docs/handout/*.png`, rendered by the panel
-and pushed through its own quantization, that is, **exactly what the glass will show**.
+and — on the 480 × 320 set — pushed through its own quantization, that is, **exactly what the
+glass will show**.
 
 | File | What it shows |
 |---|---|
@@ -18,6 +19,14 @@ and pushed through its own quantization, that is, **exactly what the glass will 
 | [`bands-marker-upper.png`](handout/bands-marker-upper.png) | state after folding away — a 4 px bar next to the upper account |
 | [`bands-marker-lower.png`](handout/bands-marker-lower.png) | the same next to the lower account (with credits — the band is just as tall) |
 | [`bands-no-alert.png`](handout/bands-no-alert.png) | the same screen without an alert, for comparison |
+
+The two the front page leads with are the **1280 × 720** canvas instead — the TURZX takes a
+whole-frame PNG, so there is no 5/6/5 pass to show and the file is the frame itself, at 1:1:
+
+| File | What it shows |
+|---|---|
+| [`bands-no-alert-wide.png`](handout/bands-no-alert-wide.png) | the wide bands, no alert |
+| [`card-pair-wide.png`](handout/card-pair-wide.png) | two blocks on the wide canvas |
 
 Regenerate:
 
@@ -31,10 +40,15 @@ python tools/render-png.py --alert solo --flood --zoom 3 --rgb565 --out ../docs/
 python tools/render-png.py --marker upper --zoom 3 --rgb565 --out ../docs/handout/bands-marker-upper.png
 python tools/render-png.py --marker lower --zoom 3 --rgb565 --out ../docs/handout/bands-marker-lower.png
 python tools/render-png.py --scene scoped --zoom 3 --rgb565 --out ../docs/handout/bands-no-alert.png
+
+python tools/render-png.py --scene scoped --canvas 1280x720 --out ../docs/handout/bands-no-alert-wide.png
+python tools/render-png.py --alert pair   --canvas 1280x720 --out ../docs/handout/card-pair-wide.png
 ```
 
-`--rgb565` is **mandatory** for review: without it you are looking at how much nicer the
-same thing happens to look on a desktop screen, not at what the panel draws.
+`--rgb565` is **mandatory** for review of the 480 × 320 set: without it you are looking at how
+much nicer the same thing happens to look on a desktop screen, not at what the panel draws. The
+wide pair takes neither it nor `--zoom`: that glass is fed a PNG, not a packed 5/6/5 buffer, and
+1280 × 720 is already the frame at full size.
 
 ---
 

@@ -418,7 +418,13 @@ python tools/render-png.py --alert solo --flood --zoom 3 --rgb565 --out ../docs/
 python tools/render-png.py --marker upper --zoom 3 --rgb565 --out ../docs/handout/bands-marker-upper.png
 python tools/render-png.py --marker lower --zoom 3 --rgb565 --out ../docs/handout/bands-marker-lower.png
 python tools/render-png.py --scene scoped --zoom 3 --rgb565 --out ../docs/handout/bands-no-alert.png
+
+python tools/render-png.py --scene scoped --canvas 1280x720 --out ../docs/handout/bands-no-alert-wide.png
+python tools/render-png.py --alert pair   --canvas 1280x720 --out ../docs/handout/card-pair-wide.png
 ```
+
+The last two are the wide canvas and take neither `--rgb565` nor `--zoom`: the TURZX is fed
+a whole-frame PNG, so 1280 × 720 is the frame itself.
 
 If an alert got stuck, the escape hatch is on the machine running the session,
 not here: `del %LOCALAPPDATA%\claude-usage-monitor\session-status\*`.
