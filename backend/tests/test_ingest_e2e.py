@@ -31,11 +31,16 @@ ACCOUNT_MAX = {
     "org_type": "claude_max", "org_rate_limit_tier": "default_claude_max_5x",
     "seat_tier": None, "extra_usage_enabled": False,
 }
+# No `org_uuid` on purpose: the payload of a client that does not send one. Its identity is
+# (uuid, '') and its key ends with the separator — see `KEY_TEAM`.
 ACCOUNT_TEAM = {
     "uuid": "aaaabbbb-0000-1111-2222-333344445555",
     "email": "work@example.com", "org_type": "claude_team",
     "seat_tier": "premium", "org_rate_limit_tier": "team_premium",
 }
+# The public identifiers (contract v4): "<uuid>:<org_uuid>".
+KEY_MAX = "%s:%s" % (ACCOUNT_MAX["uuid"], ACCOUNT_MAX["org_uuid"])
+KEY_TEAM = "%s:" % ACCOUNT_TEAM["uuid"]
 
 
 _DEFAULT = object()
@@ -354,6 +359,63 @@ async def test_account_switch_is_detected(db):
     assert "new_account_for_token" in types
 
 
+async def test_one_uuid_in_two_organizations_is_two_accounts(db):
+    """Seen live: one user, a Team seat and a private Max plan, ONE accountUuid. Keyed by the
+    uuid alone, the Max measurements landed on the Team row, its plan fields were rewritten
+    (`plan_changed`), and both histories mixed. Keyed by the pair, a /login between the two
+    is an ordinary account switch — and `plan_changed` has nothing to say."""
+    team_org = dict(ACCOUNT_MAX, org_uuid="00000000-0000-4000-8000-0000000000ff",
+                    org_type="claude_team", seat_tier="premium")
+    await ingest_one(db, machine_name="desktop", payload=payload(account=ACCOUNT_MAX))
+    await db.commit()
+    r = await ingest_one(db, machine_name="desktop", payload=payload(account=team_org))
+    await db.commit()
+
+    rows = (await db.execute(select(Account).order_by(Account.id))).scalars().all()
+    assert [(a.org_uuid, a.org_type) for a in rows] == [
+        (ACCOUNT_MAX["org_uuid"], "claude_max"), (team_org["org_uuid"], "claude_team")]
+    assert r["account_key"] == "%s:%s" % (ACCOUNT_MAX["uuid"], team_org["org_uuid"])
+    types = [e.event_type for e in (await db.execute(select(IngestEvent))).scalars()]
+    assert "account_switched" in types
+    assert "plan_changed" not in types, "an organization switch is not a plan change"
+
+
+async def test_payload_without_org_uuid_is_an_identity_of_its_own(db):
+    """'' and not NULL: MariaDB lets NULLs repeat in a UNIQUE key, so NULL would let the
+    same identity in twice. Not a rejection either — rule 6, the data always lands."""
+    r = await ingest_one(db, machine_name="desktop", payload=payload(account=ACCOUNT_TEAM))
+    await ingest_one(db, machine_name="desktop", payload=payload(account=ACCOUNT_TEAM))
+    await db.commit()
+    a = (await db.execute(select(Account))).scalars().one()
+    assert a.org_uuid == "" and a.key == KEY_TEAM == r["account_key"]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("uuid", "has:colon"), ("org_uuid", "has:colon"),
+    ("org_uuid", 12345), ("uuid", ["not", "a", "string"]), ("org_uuid", "x" * 65),
+])
+async def test_an_identity_part_that_cannot_be_a_key_is_rejected(db, field, value):
+    """A ':' would make the key split wrong (an account nobody can subscribe to), a
+    non-string or an over-long value would fail the write of the whole batch."""
+    r = await ingest_one(db, machine_name="desktop",
+                         payload=payload(account=dict(ACCOUNT_MAX, **{field: value})))
+    await db.commit()
+    assert not r["ok"] and r["account_key"] is None
+    assert await count(db, Account) == 0
+    types = {e.event_type for e in (await db.execute(select(IngestEvent))).scalars()}
+    assert "bad_account_identity" in types
+
+
+async def test_the_schema_refuses_a_duplicate_identity(db):
+    """The unique key lives in the schema, not only in the lookup — two concurrent first
+    measurements must not both create the account."""
+    from sqlalchemy.exc import IntegrityError
+    db.add(Account(account_uuid="u", org_uuid="o"))
+    db.add(Account(account_uuid="u", org_uuid="o"))
+    with pytest.raises(IntegrityError):
+        await db.flush()
+
+
 async def test_team_keeps_seat_tier(db):
     await ingest_one(db, machine_name="desktop", payload=payload(account=ACCOUNT_TEAM))
     await db.commit()
@@ -419,7 +481,7 @@ async def test_status_shows_account_with_plan_and_active_limit(db):
     await db.commit()
     st = await build_status(db)
 
-    assert st.contract_version == 3
+    assert st.contract_version == 4
     assert len(st.accounts) == 1
     a = st.accounts[0]
     assert a.org_type == "claude_max"

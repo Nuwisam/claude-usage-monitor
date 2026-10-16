@@ -66,7 +66,7 @@ Deliberately a local file, not the repo — a machine token has no business in g
 """
 import sys, os, json, time, re
 
-SCRIPT_VERSION = 16
+SCRIPT_VERSION = 18
 
 # Marker inherited by the child process. `claude -p "/usage"` is a normal Claude Code
 # session — it will fire the Stop hook, which fires the probe, which would fire another
@@ -205,7 +205,7 @@ def _extract_block(text, key):
     whole file trips on them.
 
     Two callers: `read_claude_json` (account identity and measurement cache) and
-    `account_uuid` from the alert section (which panel band the marker lands on). Before
+    `account_identity` from the alert section (which panel band the marker lands on). Before
     the two scripts were merged, this function existed in TWO copies."""
     i = text.find('"%s"' % key)
     if i < 0:
@@ -904,21 +904,24 @@ TAIL_BYTES = 32768
 _ACCT_CACHE = {}
 
 
-def account_uuid():
-    """`oauthAccount.accountUuid` from ~/.claude.json, cached on mtime.
+def account_identity():
+    """(`oauthAccount.accountUuid`, `oauthAccount.organizationUuid`) from ~/.claude.json,
+    cached on mtime. Either part is None when it cannot be read.
 
     Read ONLY on the entry path (a rare one), so it does not replace `read_claude_json` —
-    that one reads the same file after the throttle and for much more than the uuid. The panel
-    puts the marker on one specific account band, so it has to know which band the alert
-    belongs to; AGENTS.md rule 7 says identity comes from here and from here only.
+    that one reads the same file after the throttle and for much more than the identity. The
+    panel puts the marker on one specific account band, so it has to know which band the
+    alert belongs to; AGENTS.md rule 7 says identity comes from here and from here only — and
+    it is the PAIR: one user with a Team seat and a private Max plan has one accountUuid for
+    both, so the uuid alone cannot pick the band.
     """
     path = _find(".claude.json")
     if not path:
-        return None
+        return None, None
     try:
         mtime = os.path.getmtime(path)
     except OSError:
-        return None
+        return None, None
     hit = _ACCT_CACHE.get(path)
     if hit and hit[0] == mtime:
         return hit[1]
@@ -926,12 +929,16 @@ def account_uuid():
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             text = f.read()
     except Exception:
-        return None
+        return None, None
     block = _safe(_extract_block, text, "oauthAccount") or {}
-    uuid = block.get("accountUuid")
-    uuid = uuid if isinstance(uuid, str) else None
-    _ACCT_CACHE[path] = (mtime, uuid)
-    return uuid
+    uuid, org = (v if isinstance(v, str) else None
+                 for v in (block.get("accountUuid"), block.get("organizationUuid")))
+    # An account with no organization is keyed (uuid, "") on the server, so say "" — not
+    # None, which the panel reads as "an older probe that did not say" and matches loosely.
+    # None stays only where there is no account to speak of at all.
+    ident = (uuid, (org or "") if uuid else None)
+    _ACCT_CACHE[path] = (mtime, ident)
+    return ident
 
 
 # --------------------------------------------------------------- project name
@@ -1687,6 +1694,7 @@ def enter(cfg, hook, reason, key):
         return
     name = _fname(session_id, hook.get("agent_id"), key)
     tool_name = hook.get("tool_name")
+    acct_uuid, org_uuid = account_identity()
     entry = {
         "session_id": session_id,
         "agent_id": hook.get("agent_id"),
@@ -1701,7 +1709,9 @@ def enter(cfg, hook, reason, key):
         # wall clock cannot date an entry once it has stepped back. Boot-relative, so it is
         # meaningless on any other machine; readable across processes on Windows and Linux.
         "mono": time.monotonic(),
-        "account_uuid": account_uuid(),
+        # The pair is the account's key on the server (contract v4) — see `account_identity`.
+        "account_uuid": acct_uuid,
+        "org_uuid": org_uuid,
         # For diagnostics: the whole measurement ran in `default` mode, while auto-approving
         # modes resolve a call BEFORE the prompt layer.
         "permission_mode": hook.get("permission_mode"),

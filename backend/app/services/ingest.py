@@ -35,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models import (
     Account, IngestBatch, IngestEvent, LimitSample, Machine, MachineAccount,
-    RawPayload, SeriesState, UsageSeries,
+    RawPayload, SeriesState, UsageSeries, KEY_SEP,
 )
 from app.parsing import (
     Observation, carry_reset_window, known_same_reset_window, meter_withdrawn, parse_ts,
@@ -47,8 +47,10 @@ from app.parsing import (
 # change.
 _NO_OFFSET = timedelta(0)
 
+# `org_uuid` is NOT here: it is half of the account's identity (see `Account`), and an
+# identity is looked up, never overwritten from a payload.
 _ACCOUNT_FIELDS = {
-    "email": "email", "display_name": "display_name", "org_uuid": "org_uuid",
+    "email": "email", "display_name": "display_name",
     "org_name": "org_name", "org_type": "org_type", "seat_tier": "seat_tier",
     "org_rate_limit_tier": "org_rate_limit_tier",
     "user_rate_limit_tier": "user_rate_limit_tier",
@@ -87,13 +89,28 @@ async def get_or_create_machine(db: AsyncSession, name: str, client: dict,
     return m
 
 
+def _identity_part_ok(v) -> bool:
+    """One half of an account key: a string that fits the column and holds no separator."""
+    return isinstance(v, str) and len(v) <= 64 and KEY_SEP not in v
+
+
 async def get_or_create_account(db: AsyncSession, acct: dict,
                                 token_meta: dict) -> tuple[Account, bool]:
+    """Looks the account up by the PAIR (account_uuid, org_uuid) — see `Account`.
+
+    With the uuid alone a /login between two organizations of one user (Team and a private
+    Max) rewrote one row back and forth, and every switch came out as `plan_changed`. Keyed
+    by the pair, the switch is a different row, so `plan_changed` means only what it says: the
+    plan of THIS organization changed.
+    """
     uuid = acct.get("uuid")
-    a = (await db.execute(select(Account).where(Account.account_uuid == uuid))).scalar_one_or_none()
+    org = acct.get("org_uuid") or ""
+    a = (await db.execute(
+        select(Account).where(Account.account_uuid == uuid, Account.org_uuid == org)
+    )).scalar_one_or_none()
     created = False
     if a is None:
-        a = Account(account_uuid=uuid, label=acct.get("email") or uuid[:8])
+        a = Account(account_uuid=uuid, org_uuid=org, label=acct.get("email") or uuid[:8])
         db.add(a)
         await db.flush()
         created = True
@@ -450,7 +467,22 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         await _event(db, level="warn", event_type="no_oauth_account", batch_id=batch.id,
                      message="Payload without account.uuid — measurement rejected")
         return {"samples_written": 0, "batch_id": batch.id, "ok": False,
-                "account_uuid": None}
+                "account_uuid": None, "account_key": None}
+
+    # Both halves of the identity become a key "<uuid>:<org>" and two VARCHAR(64) columns,
+    # so they are checked before either is used: a ':' inside one makes the key split wrong
+    # (the account exists but no subscriber can name it), a non-string fails the write of
+    # the whole batch, and an over-long one is a database error instead of a reason.
+    bad = [k for k in ("uuid", "org_uuid")
+           if acct.get(k) is not None and not _identity_part_ok(acct.get(k))]
+    if bad:
+        batch.ok = False
+        batch.error_kind = "bad_account"
+        await _event(db, level="warn", event_type="bad_account_identity", batch_id=batch.id,
+                     message="Account identity is not a usable key part — measurement rejected",
+                     detail={"fields": bad})
+        return {"samples_written": 0, "batch_id": batch.id, "ok": False,
+                "account_uuid": None, "account_key": None}
 
     account, created = await get_or_create_account(db, acct, token_meta)
     batch.account_id = account.id
@@ -459,7 +491,8 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
     if created:
         await _event(db, level="info", event_type="account_created", account_id=account.id,
                      batch_id=batch.id, message="New account detected",
-                     detail={"email": acct.get("email"), "org_type": acct.get("org_type")})
+                     detail={"email": acct.get("email"), "org_type": acct.get("org_type"),
+                             "org_uuid": account.org_uuid, "org_name": acct.get("org_name")})
 
     # the (machine, account) pair — detection instead of prohibition
     ma = (await db.execute(
@@ -476,7 +509,8 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         ma.last_seen_at = now
         ma.samples = (ma.samples or 0) + 1
 
-    # an account switch on this machine — that is, /login
+    # an account switch on this machine — that is, /login. Since accounts are keyed by
+    # (uuid, org), a switch between two organizations of one user counts too.
     prev = (await db.execute(
         select(IngestBatch).where(IngestBatch.machine_id == machine.id,
                                   IngestBatch.id != batch.id,
@@ -493,13 +527,13 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         batch.error_kind = "no_usage"
         await _event(db, level="warn", event_type="parse_error", account_id=account.id,
                      batch_id=batch.id, message="No usage object in the payload")
-        # account_uuid despite ok=False: the batch WAS assigned to an account, so
+        # account_key despite ok=False: the batch WAS assigned to an account, so
         # `last_batch_at` moved — and that is precisely what lets `freshness()` tell
         # "the client was silent" apart from "the client was alive and there is still no
         # sample" (unknown). This frame can flip a series into the failure state and must
         # reach subscribers.
         return {"samples_written": 0, "batch_id": batch.id, "ok": False,
-                "account_uuid": account.account_uuid}
+                "account_uuid": account.account_uuid, "account_key": account.key}
 
     # `usage_raw` — the cache block before the probe merged and sanitized it — from probe
     # version 15 on. THAT is what rule 6 means by "the raw response": `usage` is our own
@@ -555,7 +589,7 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
                              "fresh_at": meas.get("fresh_at"),
                              "sent_at": meas.get("sent_at")})
         return {"samples_written": 0, "batch_id": batch.id, "ok": False,
-                "account_uuid": account.account_uuid}
+                "account_uuid": account.account_uuid, "account_key": account.key}
 
     # DIAGNOSTICS, with no effect on the write. The timestamping rests on the difference
     # `sent_at - ts`, which is within a single clock — a divergence against the server no
@@ -626,5 +660,5 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
 
     batch.samples_written = written
     return {"samples_written": written, "batch_id": batch.id, "ok": True,
-            "account_uuid": account.account_uuid,
+            "account_uuid": account.account_uuid, "account_key": account.key,
             "series_registered": new_series, "stale_reads": stale}

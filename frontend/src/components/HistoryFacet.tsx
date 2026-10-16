@@ -20,14 +20,17 @@ interface Props {
 /** A facet per account, never a shared axis: the Team limit depends on the seat tier and is
  *  shared with Claude chat and Cowork, Max has its own — the same 40% is a different amount. */
 export function HistoryFacet({ account, series, from, to, nowMs }: Props) {
-  const q = useHistory(account.uuid, series?.seriesId ?? null, from, to);
+  const q = useHistory(account.key, series?.seriesId ?? null, from, to);
   const plan = [account.orgType, account.rateLimitTier].filter(Boolean).join(" · ");
   const view = series ? describeSeries(series, nowMs) : null;
 
   return (
     <section className="facet">
       <div className="facet-head">
-        <h5>{account.email ?? account.uuid}</h5>
+        <h5>
+          {account.email ?? account.uuid}
+          {account.orgName ? ` · ${account.orgName}` : ""}
+        </h5>
         <span className="facet-plan">{plan || "plan unknown"}</span>
         <span className="facet-stats">{statsLabel(q.data?.points, q.isLoading)}</span>
         {view?.number !== null && view?.number !== undefined ? (
@@ -53,7 +56,10 @@ export function HistoryFacet({ account, series, from, to, nowMs }: Props) {
             gaps={q.data?.gaps ?? []}
             from={from}
             to={to}
-            uid={`f-${account.uuid.slice(0, 8)}`}
+            // Both halves of the identity: two organizations of one user share the uuid, and
+            // the same `uid` twice would make one chart's gradients and clips the other's.
+            // No ':' — it ends up inside `url(#…)`.
+            uid={`f-${account.uuid.slice(0, 8)}-${account.orgUuid.slice(0, 8) || "noorg"}`}
           />
           <div className="facet-foot">
             {(q.data?.gaps ?? []).map((g) => (

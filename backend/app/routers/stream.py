@@ -1,9 +1,11 @@
 """GET /api/stream — SSE carrying account cards the client subscribed to.
 
-Subscription is BY `account_uuid` ONLY. The email does not appear in this contract at all,
-neither as a parameter nor as a matching key: one email address really does point at several
-accounts, and `Account.email` is overwritten on every ingest — addressing by it would mean
-the set of accounts under a subscription changes without the subscriber knowing (rule 7).
+Subscription is BY ACCOUNT KEY ONLY — "<account_uuid>:<org_uuid>" (`Account.key`). The email
+does not appear in this contract at all, neither as a parameter nor as a matching key: one
+email address really does point at several accounts, and `Account.email` is overwritten on
+every ingest. The bare account_uuid is not a key either: it names the user, and one user with
+a Team seat and a private Max plan has one uuid for both (rule 7). A bare uuid is reported in
+`unknown[]` like any other identifier that matches nothing.
 
 The endpoint does NOT hold a database session for the lifetime of the connection. A session
 is opened to resolve the accounts and emit the snapshot, then closed; the long loop never
@@ -22,7 +24,7 @@ from sqlalchemy import select
 from app.auth import require_stream_client
 from app.config import settings
 from app.db import SessionLocal
-from app.models import Account
+from app.models import Account, split_account_key
 from app.services.events import (
     account_frame, alert_frame, broker, bye_frame, hello_frame, ping_frame,
 )
@@ -34,7 +36,8 @@ router = APIRouter()
 @router.get("/stream")
 async def stream(
     request: Request,
-    account: list[str] = Query(default=[], description="account_uuid; repeatable"),
+    account: list[str] = Query(default=[],
+                               description="account key <account_uuid>:<org_uuid>; repeatable"),
     snapshot: bool = Query(True, description="0 = skip the initial cards"),
     client: str = Depends(require_stream_client),
 ) -> StreamingResponse:
@@ -48,7 +51,7 @@ async def stream(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                             detail={"reason": "too-many-streams"})
 
-    # Subscribe to ALL requested UUIDs, including unknown ones. An account with that UUID
+    # Subscribe to ALL requested keys, including unknown ones. An account with that key
     # may only appear later (the first `/login` onto it), and then the publisher will find
     # a listener without any extra machinery.
     sub = broker.subscribe(frozenset(wanted), client)
@@ -60,18 +63,23 @@ async def stream(
             yield "retry: 3000\n\n"
 
             async with SessionLocal() as db:
+                # One query on the uuid part, then exact matching on the full key: the rows
+                # of every organization of these users come back, and only the asked-for
+                # pairs survive `by_key`. A bare uuid or a malformed key has no parts and
+                # simply ends up in `unknown`.
+                uuids = {p[0] for p in map(split_account_key, wanted) if p}
                 rows = (await db.execute(
-                    select(Account).where(Account.account_uuid.in_(wanted))
-                )).scalars().all()
-                by_uuid = {a.account_uuid: a for a in rows}
+                    select(Account).where(Account.account_uuid.in_(uuids))
+                )).scalars().all() if uuids else []
+                by_key = {a.key: a for a in rows}
                 yield hello_frame(
-                    subscribed=[u for u in wanted if u in by_uuid],
-                    unknown=[u for u in wanted if u not in by_uuid],
+                    subscribed=[k for k in wanted if k in by_key],
+                    unknown=[k for k in wanted if k not in by_key],
                     now=utcnow(),
                 )
                 if snapshot:
-                    for u in wanted:
-                        acc = by_uuid.get(u)
+                    for k in wanted:
+                        acc = by_key.get(k)
                         if acc is not None:
                             yield await account_frame(db, acc, now=utcnow())
                     # Anything queued while we were building the snapshot is OLDER than

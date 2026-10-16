@@ -90,13 +90,17 @@ Anthropic's side has to work without a migration and without a deploy.
 `raw_payloads` (content-addressed). It's the only way to reconstruct history after Anthropic
 changes the schema. The reference repo lost user data because it had a strict decoder (PR #271).
 
-**7. Account identity comes solely from `oauthAccount.accountUuid`.**
+**7. Account identity is the pair (`oauthAccount.accountUuid`, `organizationUuid`).**
 Never from static configuration. On one machine, accounts are switched through `/login`, and
 `settings.json` is shared — a label would attribute half the samples to the wrong account and
-silently poison both accounts' history, with no visible symptom at all.
+silently poison both accounts' history, with no visible symptom at all. And never from the uuid
+alone: it names the USER, and one user with a Team seat and a private Max plan has one
+accountUuid for both — keyed by it, both organizations landed on one row and their plan fields
+flipped with every switch. The public form is `key = "<accountUuid>:<organizationUuid>"`
+(`Account.key`); a missing organization is `""`, never NULL (NULLs repeat in a UNIQUE key).
 
 **8. The API contract is frozen.**
-`/api/status` returns `contractVersion` (today **3**). A breaking change means bumping the
+`/api/status` returns `contractVersion` (today **4**). A breaking change means bumping the
 version **and** updating `docs/API.md` **and** the `CONTRACT_VERSION` constant in
 `frontend/src/api/types.ts` — the UI compares them and complains in the header on a mismatch.
 

@@ -224,7 +224,8 @@ an unmeasured TURZX is not seen rather than drawn wrongly.
 
 ## Where the data comes from
 
-`GET /api/stream?account=<uuid>&account=<uuid>` with `Authorization: Bearer`.
+`GET /api/stream?account=<key>&account=<key>` with `Authorization: Bearer`, where a key is
+`<account uuid>:<org uuid>` (contract v4).
 This is the **only read** endpoint that accepts a token — the other ten are SSO-only,
 `/api/status` among them (`backend/app/routers/read.py:37-39`), so the panel has
 nowhere to poll from and does
@@ -384,8 +385,11 @@ pull in entries from hours earlier too.
 An alert **with no match** to any configured account lands on the **top**
 band. The rule is deliberately simple: a static machine → band mapping would
 drift out of sync after the first `/login`, and switching accounts is routine
-here. The account comes from `oauthAccount.accountUuid` read on the machine
-running the session — rule 7 in `AGENTS.md`.
+here. The account comes from `oauthAccount` read on the machine running the
+session — `accountUuid` and `organizationUuid` together, rule 7 in `AGENTS.md`.
+When both bands belong to one user (a Team seat and a private plan share the
+uuid) only the organization tells them apart; a probe older than v17 does not
+send it, and the alert lands on the first band of that uuid.
 
 The waiting time on each row is **coarse-grained** ("a moment" / "4 min" /
 "1 h 05 min" / "2 d 3 h"), and that is not a matter of taste: the AX206 cannot do
@@ -518,8 +522,8 @@ overwritten when it is updated.
 {
   "stream_url": "https://usage.example.org/claude-usage/api/stream",
   "stream_token": "<the STREAM_TOKENS entry labeled panel>",
-  "account_1": {"uuid": "...", "name": "you@example.org"},
-  "account_2": {"uuid": "...", "name": "billing@example.org"},
+  "account_1": {"key": "<account uuid>:<org uuid>", "name": "you@example.org"},
+  "account_2": {"key": "<account uuid>:<org uuid>", "name": "billing@example.org"},
   "panels": [
     {"backend": "ax206",        "port_path": "3.4", "brightness": 5},
     {"backend": "turing-rev-a", "port_path": "8.4", "brightness": 40, "name": "right",
@@ -527,6 +531,13 @@ overwritten when it is updated.
   ]
 }
 ```
+
+**`key` is the account's identity** — `<account uuid>:<org uuid>`, both from
+`oauthAccount` in `~/.claude.json`, or straight from
+`curl $B/api/accounts | jq -r '.[] | .key'`. The uuid alone is refused: it names
+the user, and one user in two organizations has one. A `key` ending in `:` is
+legal (an account the server saw with no organization). Two bands sharing an
+email look alike, so give each its own `name`.
 
 **`rotate` says how the screen is mounted**, in degrees counter-clockwise,
 **added on top of the rotation the driver applies anyway** (`turing-rev-a` has
@@ -628,5 +639,5 @@ panel every week.
 | serial screen: colors swapped, image "shifted" | byte drift after a torn write. A full repaint does **not** fix this — unplug and replug the screen |
 | one screen draws, the other does not | each panel has its own backoff; look in the log for the line with its tag (`turing-rev-a 8.4: …`) |
 | numbers stand still, age keeps rising | the stream is alive, but the probe is silent — that is the correct picture |
-| "unknown" on both accounts | no frames; check the token and the UUIDs in `panel.json` |
+| "unknown" on both accounts | no frames; check the token and the keys in `panel.json` (a bare `uuid` from before contract v4 is refused by validation) |
 | a hard failure with no trace | `panel.log.fault` (faulthandler — there is no console under `pythonw`) |

@@ -154,7 +154,7 @@ Full contract in [`API.md` § 3.2](API.md). All of them are used:
 | `machine` | same row; a session can run remotely, this says where to go |
 | `detail` | `Detail` tile (2 lines), one line in layout 2, footer in layout 3 |
 | `since` | "waiting: N" (the bare value in the columns of 1b-1d), row order, and opening the window for the set — **not** the banner time, which reads now |
-| `accountUuid` | which band the marker sits at once folded away |
+| `accountUuid`, `orgUuid` | which band the marker sits at once folded away (the pair is the account's key; without `orgUuid` the first band of that uuid) |
 | `agentType`, `permissionMode` | `Mode` strip — the answer to "why is it even asking" |
 
 ---

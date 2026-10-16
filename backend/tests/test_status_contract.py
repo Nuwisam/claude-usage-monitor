@@ -1,4 +1,4 @@
-"""The /api/status v3 contract — what the UI is built on.
+"""The /api/status v4 contract — what the UI is built on.
 
 It guards three things whose breakage is invisible in the backend code and shows up only
 on the screen:
@@ -14,7 +14,7 @@ from datetime import timedelta
 
 from sqlalchemy import select
 from tests.test_ingest_e2e import (  # noqa: F401 — the `db` fixture comes along with these
-    ACCOUNT_MAX, ACCOUNT_TEAM, REAL, db, ingest_one, payload, utcnow, with_util,
+    ACCOUNT_MAX, ACCOUNT_TEAM, KEY_MAX, REAL, db, ingest_one, payload, utcnow, with_util,
 )
 
 from app.models import Account
@@ -58,7 +58,18 @@ async def test_every_timestamp_has_a_zone(db):
 async def test_contract_version_is_the_declared_version(db):
     await ingest_one(db, machine_name="desktop", payload=payload())
     await db.commit()
-    assert (await wire(db))["contractVersion"] == CONTRACT_VERSION == 3
+    assert (await wire(db))["contractVersion"] == CONTRACT_VERSION == 4
+
+
+async def test_card_carries_the_account_key(db):
+    """v4: the card names its identity — the key /stream and /history take."""
+    await ingest_one(db, machine_name="desktop", payload=payload())
+    await db.commit()
+    card = (await wire(db))["accounts"][0]
+    assert card["key"] == KEY_MAX
+    assert card["uuid"] == ACCOUNT_MAX["uuid"]
+    assert card["orgUuid"] == ACCOUNT_MAX["org_uuid"]
+    assert "orgName" in card
 
 
 async def test_series_carry_semantics_not_just_a_key(db):
@@ -109,7 +120,8 @@ async def test_exactly_one_function_builds_the_account_card(db, monkeypatch):
 
     for card in aggregate["accounts"]:
         acc = (await db.execute(
-            select(Account).where(Account.account_uuid == card["uuid"])
+            select(Account).where(Account.account_uuid == card["uuid"],
+                                  Account.org_uuid == card["orgUuid"])
         )).scalar_one()
         individual, warnings = await stat.build_account_status(
             db, acc, now=now, last_batch_at=await stat.last_batch_time(db, acc.id),
@@ -224,7 +236,7 @@ async def test_a_series_with_a_reason_has_no_current_number(db):
                 assert r["state"] != "on" or r["key"] == "hard_block"
 
 
-async def test_contract_version_stays_at_three_despite_new_fields(db):
+async def test_new_fields_alone_do_not_bump_the_contract_version(db):
     """Adding a field does not break compatibility — the `deltaFrom` precedent. A consumer
     that does not know `unavailableReason` gets exactly what it used to get."""
     from tests.team import USAGE_WITHDRAWN, team_payload
@@ -233,7 +245,7 @@ async def test_contract_version_stays_at_three_despite_new_fields(db):
     await db.commit()
     body = await wire(db)
 
-    assert body["contractVersion"] == CONTRACT_VERSION == 3
+    assert body["contractVersion"] == CONTRACT_VERSION == 4
     assert all("unavailableReason" in s
                for a in body["accounts"] for s in a["series"])
     assert all("reason" in r for a in body["accounts"] for r in a["cascade"])

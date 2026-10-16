@@ -125,7 +125,7 @@ token — does not apply here at all.
 | Probe + hooks (12 events, `async`) | working |
 | Backend + MariaDB in Compose | working |
 | Authorization gate: `none` / `header` / `verify` | working |
-| Read API, contract v3 | working |
+| Read API, contract v4 | working |
 | UI — **Live** and **History** | working |
 | Desk panels over SSE — AX206, Turing rev A and TURZX 5.2" | working |
 | "Claude is waiting for you" alert — toast plus card, and a marker on the panel | working; four card layouts depending on the number of blocks |
@@ -220,9 +220,11 @@ false, confident-looking 0% — because that's the basis on which you'd launch a
 hit a wall. `ingest_batches` distinguishes "the client is quiet" (a reset can be inferred) from
 "the client is running, but there are no samples" (a failure — we say "I don't know").
 
-**Account identity from `oauthAccount.accountUuid`, never from configuration.** On one machine
-you switch accounts through `/login`, and `settings.json` is shared — a static label would
-assign half the samples to the wrong account and silently poison both histories.
+**Account identity from `oauthAccount` — `accountUuid` and `organizationUuid` together — never
+from configuration.** On one machine you switch accounts through `/login`, and `settings.json`
+is shared — a static label would assign half the samples to the wrong account and silently
+poison both histories. The uuid alone is not enough either: one user with a Team seat and a
+private plan has one `accountUuid` for both.
 
 **A blocked session is a signal, not a datum.** When Claude is waiting on your approval, your
 reply, or acceptance of a plan, the turn simply stalls — and if you have stepped away from

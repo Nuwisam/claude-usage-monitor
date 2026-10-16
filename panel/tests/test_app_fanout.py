@@ -28,7 +28,7 @@ class FakeLink:
 
 
 def cfg(**over):
-    data = {"stream_token": "t", "account_1": {"uuid": "u"},
+    data = {"stream_token": "t", "account_1": {"key": "u:o"},
             "panels": [{"backend": "ax206", "port_path": "3.4"},
                        {"backend": "ax206", "index": 1}]}
     data.update(over)

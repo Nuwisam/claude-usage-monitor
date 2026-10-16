@@ -1,4 +1,4 @@
-"""SSE broker — pushes account cards to clients subscribed to specific `account_uuid`s.
+"""SSE broker — pushes account cards to clients subscribed to specific account keys.
 
 Three decisions that are not obvious:
 
@@ -8,12 +8,13 @@ Three decisions that are not obvious:
    that surface closed and is cheaper anyway: one frame instead of a full multi-account
    response plus, under AUTH_MODE=verify, a round-trip to the identity service.
 
-2. THE KEY IS `account_uuid`, NEVER THE EMAIL. One email address really does point at several
-   accounts (Pro and a Team seat under the same address), and `Account.email` is
-   overwritten on every ingest from the payload. Addressing by email would mean the set of
-   accounts under a subscription changes without the subscriber knowing — silently.
-   `account_uuid` is the account's natural key and the only identifier that does not do
-   this (rule 7).
+2. THE KEY IS `Account.key` ("<account_uuid>:<org_uuid>"), NEVER THE EMAIL AND NEVER THE
+   BARE UUID. One email address really does point at several accounts (Pro and a Team seat
+   under the same address), and `Account.email` is overwritten on every ingest from the
+   payload. One account_uuid does too: it names the user, and a user with a Team seat and a
+   private Max plan has one uuid for both. Addressing by either would mean a subscriber
+   receives another account's frames as if they were its own — silently. The pair is the
+   account's natural key and the only identifier that does not do this (rule 7).
 
 3. PUBLISHING NEVER WAITS. `put_nowait` only; on a full queue we drain it and insert a
    `lag` frame. Ingest sits on the critical path of your actual work — a slow consumer must not
@@ -35,7 +36,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import Account
+from app.models import Account, split_account_key
 from app.schemas import AccountFrame, AlertFrame, HelloFrame, PingFrame, SessionAlert
 from app.services.ingest import utcnow
 from app.services.status import (
@@ -137,7 +138,7 @@ def alert_frame(*, now: datetime) -> str:
 # --------------------------------------------------------------------------- broker
 @dataclass(eq=False)      # eq=False => hashable by identity, so it can live in a set
 class Subscriber:
-    uuids: frozenset[str]
+    keys: frozenset[str]
     label: str
     queue: asyncio.Queue[str] = field(default_factory=lambda: asyncio.Queue(
         maxsize=settings.stream_queue_max))
@@ -156,47 +157,47 @@ def _drain(q: asyncio.Queue[str]) -> int:
 class Broker:
     def __init__(self) -> None:
         self._subs: set[Subscriber] = set()
-        # Reverse index uuid -> subscribers. Without it every ingest would scan the
+        # Reverse index key -> subscribers. Without it every ingest would scan the
         # connection list; with it `has_subscribers` and `publish` are O(1) in the number
         # of clients.
-        self._by_uuid: dict[str, set[Subscriber]] = {}
+        self._by_key: dict[str, set[Subscriber]] = {}
 
     @property
     def count(self) -> int:
         return len(self._subs)
 
-    def subscribe(self, uuids: frozenset[str], label: str) -> Subscriber:
-        sub = Subscriber(uuids=uuids, label=label)
+    def subscribe(self, keys: frozenset[str], label: str) -> Subscriber:
+        sub = Subscriber(keys=keys, label=label)
         self._subs.add(sub)
-        for u in uuids:
-            self._by_uuid.setdefault(u, set()).add(sub)
+        for k in keys:
+            self._by_key.setdefault(k, set()).add(sub)
         logger.info("SSE: client {} subscribed to {} account(s); {} total",
-                    label, len(uuids), len(self._subs))
+                    label, len(keys), len(self._subs))
         return sub
 
     def unsubscribe(self, sub: Subscriber) -> None:
         self._subs.discard(sub)
-        for u in sub.uuids:
-            rest = self._by_uuid.get(u)
+        for k in sub.keys:
+            rest = self._by_key.get(k)
             if rest is None:
                 continue
             rest.discard(sub)
             if not rest:
-                del self._by_uuid[u]
+                del self._by_key[k]
         logger.info("SSE: client {} disconnected; {} total", sub.label, len(self._subs))
 
-    def has_subscribers(self, account_uuid: str) -> bool:
+    def has_subscribers(self, account_key: str) -> bool:
         """Lets the publisher skip building a frame entirely when nobody is listening —
         with the browser closed, ingest pays nothing for the stream."""
-        return bool(self._by_uuid.get(account_uuid))
+        return bool(self._by_key.get(account_key))
 
-    def publish(self, account_uuid: str, frame: str) -> int:
+    def publish(self, account_key: str, frame: str) -> int:
         """Returns how many receivers the frame reached.
 
         Deliberately synchronous: the absence of any `await` guarantees no other task can
         slip between iterations and mutate the set we are walking.
         """
-        subs = self._by_uuid.get(account_uuid)
+        subs = self._by_key.get(account_key)
         if not subs:
             return 0
         sent = 0
@@ -257,7 +258,7 @@ async def account_frame(db: AsyncSession, account: Account, *, now: datetime) ->
     ).model_dump_json(by_alias=True))
 
 
-async def publish_accounts(db: AsyncSession, account_uuids: list[str]) -> int:
+async def publish_accounts(db: AsyncSession, account_keys: list[str]) -> int:
     """Sends one frame per account. Called AFTER `db.commit()` — never before.
 
     Publishing before the commit is a real race: the receiver processes a frame within
@@ -268,13 +269,17 @@ async def publish_accounts(db: AsyncSession, account_uuids: list[str]) -> int:
     """
     now = utcnow()
     sent = 0
-    for uuid in dict.fromkeys(account_uuids):
-        if not uuid or not broker.has_subscribers(uuid):
+    for key in dict.fromkeys(account_keys):
+        if not key or not broker.has_subscribers(key):
+            continue
+        parts = split_account_key(key)
+        if parts is None:
             continue
         account = (await db.execute(
-            select(Account).where(Account.account_uuid == uuid)
+            select(Account).where(Account.account_uuid == parts[0],
+                                  Account.org_uuid == parts[1])
         )).scalar_one_or_none()
         if account is None:
             continue
-        sent += broker.publish(uuid, await account_frame(db, account, now=now))
+        sent += broker.publish(key, await account_frame(db, account, now=now))
     return sent

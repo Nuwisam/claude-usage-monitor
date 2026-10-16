@@ -1,7 +1,7 @@
 """Ingest authorization — one Bearer token per machine.
 
-The token identifies the MACHINE, not the account. The account comes from `account.uuid` in
-the payload, derived from oauthAccount on the client side.
+The token identifies the MACHINE, not the account. The account comes from `account.uuid` and
+`account.org_uuid` in the payload, derived from oauthAccount on the client side.
 
 The token is deliberately NOT bound to a list of permitted accounts: when a single machine is
 used with two accounts in rotation, a static list would drift out of date again. Instead of a

@@ -66,6 +66,7 @@ export async function fetchStatus(): Promise<StatusResponse> {
 }
 
 export interface HistoryQuery {
+  /** The account's `key` ("<uuid>:<orgUuid>"); a bare uuid is a 404 since contract v4. */
   account: string;
   seriesId: number;
   from: Date;

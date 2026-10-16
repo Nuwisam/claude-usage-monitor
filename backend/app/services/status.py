@@ -25,10 +25,14 @@ from app.services.ingest import utcnow
 # cascade[] on the account, gaps[] in two flavors.
 # v3: confirmedAt + valueSince in series — freshness counts from CONFIRMATION, not from the
 #     sample write. Without it dedup makes an unchanged value look like lost connectivity.
+# v4: account identity is the pair (uuid, orgUuid). `key` = "<uuid>:<orgUuid>" is what
+#     /stream and /history take; `uuid` stays, informational and no longer unique; `orgUuid`
+#     and `orgName` added. A breaking change: matching cards by `uuid` lets one organization's
+#     frame replace another's card.
 # A bump = an update to docs/API.md.
 # deltaFrom arrived AFTER v3 and does NOT bump the version — adding a field does not break
 # compatibility.
-CONTRACT_VERSION = 3
+CONTRACT_VERSION = 4
 
 
 async def _last_batch_times(db: AsyncSession) -> dict[int, datetime]:
@@ -299,7 +303,8 @@ async def build_account_status(
     # it today, and that is the correct state, not a missing implementation.
 
     card = AccountStatus(
-        uuid=a.account_uuid, label=a.label, email=a.email,
+        key=a.key, uuid=a.account_uuid, org_uuid=a.org_uuid, org_name=a.org_name,
+        label=a.label, email=a.email,
         display_name=a.display_name, color=a.color,
         org_type=a.org_type, seat_tier=a.seat_tier,
         rate_limit_tier=a.org_rate_limit_tier or a.user_rate_limit_tier,

@@ -12,7 +12,7 @@ from panel import config as C
 
 def base(**over):
     data = {"stream_token": "t", "stream_url": "https://x/api/stream",
-            "account_1": {"uuid": "u"}}
+            "account_1": {"key": "u:o"}}
     data.update(over)
     return C.Config(data)
 

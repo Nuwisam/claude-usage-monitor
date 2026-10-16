@@ -41,7 +41,9 @@ export function AccountCard({ a, nowMs }: Props) {
         {/* `tag-seat` separately, because the narrow layout hides it (mockup 2b). Through
             @media, not a condition in JS — else the layout would depend on a width known after mount. */}
         <div className="account-tags">
-          {[a.orgType, a.rateLimitTier].filter((t): t is string => Boolean(t)).map((t) => (
+          {/* `orgName` first: two cards under one email (a Team seat and a private Max plan of
+              one user) differ by the organization and nothing else in the header. */}
+          {[a.orgName, a.orgType, a.rateLimitTier].filter((t): t is string => Boolean(t)).map((t) => (
             <span className="tag tag-neutral tag-mono" key={t}>
               {t}
             </span>

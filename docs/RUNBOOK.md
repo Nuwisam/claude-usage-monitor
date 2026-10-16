@@ -164,8 +164,9 @@ container is created, so after a `restart` a revoked token still works. The reve
 ## SSE stream client (AX206 panel, scripts)
 
 The browser needs nothing — `EventSource` rides on the session cookie. A client without a
-session needs its own token and **account UUIDs**, because the subscription is by UUID, not
-by email address (one address can point at several accounts, and email gets overwritten).
+session needs its own token and **account keys** (`<uuid>:<orgUuid>`), because the
+subscription is by key, not by email address (one address can point at several accounts, and
+email gets overwritten) and not by the bare uuid (one user in two organizations has one).
 
 Note: the panel **always** sends an `Authorization` header, so with `STREAM_TOKENS` empty it
 gets a 401 regardless of `AUTH_MODE` — even under `none`.
@@ -175,20 +176,24 @@ gets a 401 regardless of `AUTH_MODE` — even under `none`.
 openssl rand -hex 32
 # add to .env:  STREAM_TOKENS=<hex>:panel      (then: docker compose up -d)
 
-# 2) UUIDs of the accounts the panel should be pinned to (from a browser with a valid session)
-curl -s $B/api/accounts | jq -r '.[] | "\(.uuid)  \(.email)"'
+# 2) keys of the accounts the panel should be pinned to (from a browser with a valid session)
+curl -s $B/api/accounts | jq -r '.[] | "\(.key)  \(.email)  \(.orgName)"'
 
 # 3) a live try — hello + snapshot at once, then a ping every 15 s
 curl -N -H "Authorization: Bearer $STREAM_TOKEN" \
-     "$B/api/stream?account=<uuid>&account=<uuid>"
+     "$B/api/stream?account=<key>&account=<key>"
 ```
 
-If `hello` returns a UUID in the `unknown[]` field, it is either a typo or the account has not
-reported yet — the connection stays open and frames will start arriving once the account shows up.
+If `hello` returns a key in the `unknown[]` field, it is either a typo, a bare uuid from a
+config written before contract v4, or the account has not reported yet — the connection stays
+open and frames will start arriving once the account shows up.
 
-**After `/login` on a new account the panel needs its UUID added.** The browser finds out on
+**After `/login` on a new account the panel needs its key added.** The browser finds out on
 its own (polling `/status` every 3 min switches the stream), the panel does not — because
-nobody asked for that UUID.
+nobody asked for that key.
+
+**Migration 0004 is one-way once two rows share a uuid.** Its downgrade refuses to merge two
+organizations back into one row; the way back is the database dump taken before the upgrade.
 
 **Frames arrive in clumps every few dozen seconds instead of at once?** That is Apache
 buffering: check whether the `/claude-usage/api/stream` rule comes **before** the generic
@@ -224,7 +229,8 @@ reinstall needed.
 Configuration: `%LOCALAPPDATA%\claude-usage-monitor\panel.json` — a **separate file** from the
 probe's `config.json`, because the stream token has a different scope than the ingest token.
 Accounts are two named fields (`account_1`, `account_2`), not a list — the screen layout has
-exactly two bands.
+exactly two bands. Each is `{"key": "<uuid>:<orgUuid>", "name": "…"}`; give both a `name` when
+they share an email, or the two band titles read the same.
 
 **The handle to the module is exclusive: either the panel or the other program.** As long as
 there is one display, the other program has to give it up. Once a second one is added, both

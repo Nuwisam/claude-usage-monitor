@@ -29,8 +29,8 @@ class Clock:
 def cfg(**kw):
     # The flash is off by default: the card tests check the card, not what comes
     # before it. The flash tests switch it on explicitly.
-    d = {"stream_token": "t", "account_1": {"uuid": "account-a"},
-         "account_2": {"uuid": "account-b"}, "alert_flash_sec": 0}
+    d = {"stream_token": "t", "account_1": {"key": "account-a:org-a"},
+         "account_2": {"key": "account-b:org-b"}, "alert_flash_sec": 0}
     d.update(kw)
     return C.Config(d)
 
@@ -53,7 +53,7 @@ def app(clock, **kw):
 
 
 def stream_frame(*entries):
-    return {"contractVersion": 3, "serverNow": NOW, "alerts": list(entries)}
+    return {"contractVersion": 4, "serverNow": NOW, "alerts": list(entries)}
 
 
 def entry(**kw):
@@ -378,6 +378,45 @@ def test_unmatched_alert_lands_on_top_band():
     a.on_event("alert", stream_frame(entry(accountUuid="account-we-dont-know")))
     bands = a.screen().bands
     assert bands[0].alert and not bands[1].alert
+
+
+def same_user_two_orgs():
+    """Both bands belong to ONE user — a Team seat on top, a private Max plan below. The
+    uuid cannot pick the band here; only the organization can."""
+    return dict(account_1={"key": "user:org-team"}, account_2={"key": "user:org-max"})
+
+
+def test_organization_picks_the_band_when_one_user_owns_both():
+    z = Clock()
+    a = app(z, **same_user_two_orgs())
+    a.first_data_at = z.t
+    a.on_event("alert", stream_frame(entry(accountUuid="user", orgUuid="org-max")))
+    bands = a.screen().bands
+    assert not bands[0].alert and bands[1].alert
+
+
+def test_alert_of_an_unconfigured_organization_does_not_borrow_a_sibling_band():
+    """The user's Team organization is not on the panel, its Max one is on band 2. A Team
+    alert must not land on the Max band just because the uuid matches — that band is a
+    different account. No match means the top band, as for any stranger."""
+    z = Clock()
+    a = app(z, account_1={"key": "someone-else:o"}, account_2={"key": "user:org-max"})
+    a.first_data_at = z.t
+    a.on_event("alert", stream_frame(entry(accountUuid="user", orgUuid="org-team")))
+    bands = a.screen().bands
+    assert bands[0].alert and not bands[1].alert
+
+
+def test_alert_without_organization_takes_that_users_first_band():
+    """A probe older than v17 sends the uuid alone. The first band of that user is the
+    best guess left — and it must not fall through to "no match" as if the user were
+    a stranger."""
+    z = Clock()
+    a = app(z, account_1={"key": "someone-else:o"}, account_2={"key": "user:org-max"})
+    a.first_data_at = z.t
+    a.on_event("alert", stream_frame(entry(accountUuid="user")))
+    bands = a.screen().bands
+    assert not bands[0].alert and bands[1].alert
 
 
 def test_reason_does_not_push_title_past_band():

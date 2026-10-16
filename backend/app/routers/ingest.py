@@ -139,7 +139,7 @@ async def ingest(
     async with _ingest_tx(db):
         result = await ingest_one(db, machine_name=machine, payload=payload,
                                   arrived_at=arrived_at, offset=offset)
-    touched: list[str] = [result.get("account_uuid")]
+    touched: list[str] = [result.get("account_key")]
 
     # Backlog: in batches, with a hard cap. The client trims its spool ONLY after being
     # told how many entries were accepted — so a failure halfway loses no data.
@@ -184,7 +184,7 @@ async def ingest(
                 break
             # Only AFTER leaving `_ingest_tx`, that is after a successful commit —
             # otherwise entries a rollback had just undone would be counted.
-            touched.append(r.get("account_uuid"))
+            touched.append(r.get("account_key"))
             accepted += 1
 
     # SSE stream. Three things here are deliberate:

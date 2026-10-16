@@ -33,13 +33,13 @@ class Blocked:
     """A single blocked session."""
 
     __slots__ = ("key", "machine", "reason", "project", "tool", "detail",
-                 "since", "account_uuid", "session_id", "agent_id", "agent_type",
-                 "permission_mode")
+                 "since", "account_uuid", "org_uuid", "session_id", "agent_id",
+                 "agent_type", "permission_mode")
 
     def __init__(self, key, machine=None, reason="permission", project=None,
                  tool=None, detail=None, since=None, account_uuid=None,
                  session_id=None, agent_id=None, agent_type=None,
-                 permission_mode=None):
+                 permission_mode=None, org_uuid=None):
         self.key = key
         self.machine = machine
         self.reason = reason
@@ -48,6 +48,9 @@ class Blocked:
         self.detail = detail
         self.since = since                  # datetime with tzinfo, or None
         self.account_uuid = account_uuid
+        # None = the probe did not say (older than v17), NOT "no organization" — that
+        # one arrives as "" and is matched exactly. See `App.alert_slots`.
+        self.org_uuid = org_uuid
         self.session_id = session_id
         self.agent_id = agent_id
         self.agent_type = agent_type
@@ -96,6 +99,7 @@ def parse_entry(raw):
         detail=_text(raw.get("detail")),
         since=fmt.parse_utc(raw.get("since")),
         account_uuid=_text(raw.get("accountUuid")),
+        org_uuid=raw.get("orgUuid") if isinstance(raw.get("orgUuid"), str) else None,
         session_id=_text(raw.get("sessionId")),
         agent_id=_text(raw.get("agentId")),
         agent_type=_text(raw.get("agentType")),

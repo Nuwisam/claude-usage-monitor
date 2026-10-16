@@ -105,10 +105,10 @@ class StreamClient(threading.Thread):
     plus its own ("up", None) / ("down", reason) / ("contract", version).
     """
 
-    def __init__(self, cfg, uuids, out_queue, stop_event=None):
+    def __init__(self, cfg, keys, out_queue, stop_event=None):
         super().__init__(name="sse", daemon=True)
         self.cfg = cfg
-        self.uuids = list(uuids)
+        self.keys = list(keys)
         self.q = out_queue
         self.stop = stop_event or threading.Event()
         self.recorder = None
@@ -117,7 +117,7 @@ class StreamClient(threading.Thread):
 
     def _request(self):
         url = urllib.parse.urlsplit(self.cfg.stream_url)
-        query = urllib.parse.urlencode([("account", u) for u in self.uuids])
+        query = urllib.parse.urlencode([("account", k) for k in self.keys])
         path = (url.path or "/") + "?" + query
         # A socket timeout over TWO ping intervals (the server beats every 15 s).
         # Without it a half-open TCP through Apache would hang forever, and the

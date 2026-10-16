@@ -23,7 +23,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from tests.test_ingest_e2e import (  # noqa: F401 — the `db` fixture comes along with these
-    ACCOUNT_MAX, db, ingest_one, payload, utcnow,
+    ACCOUNT_MAX, KEY_MAX, db, ingest_one, payload, utcnow,
 )
 
 from app.models import UsageSeries
@@ -59,7 +59,7 @@ async def data(db):
     sid = (await db.execute(
         select(UsageSeries.id).where(UsageSeries.series_key == "bucket:five_hour")
     )).scalar_one()
-    return {"account": ACCOUNT_MAX["uuid"], "seriesId": sid, "now": now}
+    return {"account": KEY_MAX, "seriesId": sid, "now": now}
 
 
 def _iso(dt, suffix="Z"):
@@ -123,3 +123,13 @@ async def test_missing_range_still_works(api, data):
     })
     assert r.status_code == 200, r.text
     assert r.json()["points"]
+
+
+async def test_a_bare_uuid_is_not_an_account(api, data):
+    """The pre-v4 identifier must answer like any unknown account — never by guessing the
+    organization, because the guess is exactly the merge the key exists to prevent."""
+    r = await api.get("/api/history", params={
+        "account": ACCOUNT_MAX["uuid"], "seriesId": data["seriesId"], "bucket": "raw",
+    })
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"]["reason"] == "account-not-found"

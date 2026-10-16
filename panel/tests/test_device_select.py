@@ -142,7 +142,7 @@ def test_release_without_a_handle_does_not_blow_up():
 def test_old_location_is_an_error_with_instructions():
     """A silent migration is out: it would require guessing which screen the author had
     in mind. One readable sentence in the log, not a traceback under pythonw."""
-    cfg = C.Config({"stream_token": "t", "account_1": {"uuid": "u"},
+    cfg = C.Config({"stream_token": "t", "account_1": {"key": "u:o"},
                     "device": {"location": "Port_#0004.Hub_#0005"}})
     problems = cfg.validate()
     hits = [p for p in problems if "location" in p]
@@ -151,12 +151,12 @@ def test_old_location_is_an_error_with_instructions():
 
 
 def test_port_path_passes_validation():
-    cfg = C.Config({"stream_token": "t", "account_1": {"uuid": "u"},
+    cfg = C.Config({"stream_token": "t", "account_1": {"key": "u:o"},
                     "device": {"port_path": "3.4"}})
     assert [p for p in cfg.validate() if "device" in p or "location" in p] == []
 
 
 def test_device_that_is_not_an_object():
-    cfg = C.Config({"stream_token": "t", "account_1": {"uuid": "u"},
+    cfg = C.Config({"stream_token": "t", "account_1": {"key": "u:o"},
                     "device": "3.4"})
     assert any("port_path" in p for p in cfg.validate())

@@ -125,15 +125,28 @@ class ConfigError(Exception):
 
 
 class Account:
-    __slots__ = ("uuid", "name", "slot")
+    """One band's account. `key` is "<account uuid>:<org uuid>" — the server's identity
+    since contract v4. The uuid alone names the USER: one user with a Team seat and a
+    private Max plan has one uuid for both, so it cannot pick an account."""
 
-    def __init__(self, uuid, name, slot):
-        self.uuid = uuid
+    __slots__ = ("key", "name", "slot")
+
+    def __init__(self, key, name, slot):
+        self.key = key
         self.name = name
         self.slot = slot
 
+    @property
+    def account_uuid(self):
+        return (self.key or "").split(":", 1)[0]
+
+    @property
+    def org_uuid(self):
+        parts = (self.key or "").split(":", 1)
+        return parts[1] if len(parts) == 2 else ""
+
     def __repr__(self):
-        return "<Account %s %s>" % (self.slot, self.name or self.uuid)
+        return "<Account %s %s>" % (self.slot, self.name or self.key)
 
 
 # Keys of a `panels` entry that describe the panel rather than pointing at a
@@ -231,7 +244,10 @@ class Config:
             raw = self._d.get(slot)
             if not raw:
                 continue
-            out.append(Account(raw.get("uuid"), raw.get("name"), slot))
+            # Stripped exactly as `validate()` strips it, and as the server strips every
+            # `?account=` value: a padded key validated clean but subscribed, matched and
+            # looked up raw, so the band stayed blank with no note pointing at the space.
+            out.append(Account((raw.get("key") or "").strip() or None, raw.get("name"), slot))
         return out
 
     @property
@@ -262,15 +278,25 @@ class Config:
             if raw is None:
                 continue
             if not isinstance(raw, dict):
-                problems.append("%s must be an object {\"uuid\": ...}" % slot)
+                problems.append("%s must be an object {\"key\": ...}" % slot)
                 continue
-            uuid = (raw.get("uuid") or "").strip()
-            if not uuid:
-                problems.append("%s has no uuid" % slot)
-            elif uuid in seen:
-                problems.append("%s repeats the uuid from the previous slot" % slot)
+            key = (raw.get("key") or "").strip()
+            if not key and raw.get("uuid"):
+                # A config from before contract v4. Said out loud, because otherwise the
+                # band would sit on "unknown account" with nothing pointing at the cause.
+                problems.append(
+                    "%s: 'uuid' is no longer an identity - the server keys accounts by "
+                    "'key' (<account uuid>:<org uuid>); read it with "
+                    "curl $B/api/accounts | jq '.[] | .key' and replace 'uuid' with 'key'"
+                    % slot)
+            elif not key:
+                problems.append("%s has no key" % slot)
+            elif ":" not in key or not key.split(":", 1)[0]:
+                problems.append("%s.key must look like <account uuid>:<org uuid>" % slot)
+            elif key in seen:
+                problems.append("%s repeats the key from the previous slot" % slot)
             else:
-                seen.add(uuid)
+                seen.add(key)
         if not seen:
             problems.append("no account specified (account_1 / account_2)")
 
@@ -552,7 +578,7 @@ def example():
     return json.dumps({
         "stream_url": DEFAULTS["stream_url"],
         "stream_token": "<the STREAM_TOKENS entry labeled panel>",
-        "account_1": {"uuid": "<account uuid>", "name": "you@example.org"},
-        "account_2": {"uuid": "<account uuid>", "name": "billing@example.org"},
+        "account_1": {"key": "<account uuid>:<org uuid>", "name": "you@example.org"},
+        "account_2": {"key": "<account uuid>:<org uuid>", "name": "billing@example.org"},
         "panels": [{"backend": "ax206", "port_path": "3.4", "brightness": 5}],
     }, indent=2, ensure_ascii=False)

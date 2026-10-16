@@ -84,8 +84,8 @@ class App:
         self.q = queue.Queue()
         self.stop = threading.Event()
 
-        self.accounts = {}          # uuid -> model.AccountStatus
-        self.unknown_uuids = set()
+        self.accounts = {}          # account key -> model.AccountStatus
+        self.unknown_keys = set()
         self.link_state = "down"
         self.contract_mismatch = None
         self.first_data_at = None
@@ -124,10 +124,10 @@ class App:
                             model.CONTRACT_VERSION)
             else:
                 self.contract_mismatch = None
-            self.unknown_uuids = set(payload.get("unknown") or [])
-            if self.unknown_uuids:
+            self.unknown_keys = set(payload.get("unknown") or [])
+            if self.unknown_keys:
                 log().warning("server does not know these accounts: %s",
-                              ", ".join(sorted(self.unknown_uuids)))
+                              ", ".join(sorted(self.unknown_keys)))
             self.link_state = "live"
             log().info("hello: subscription %s, ping %ss, lifetime %ss",
                        payload.get("subscribed"), payload.get("pingSec"),
@@ -135,9 +135,9 @@ class App:
         elif event == "account":
             raw = payload.get("account") or {}
             account = model.AccountStatus(raw)
-            if account.uuid:
-                self.accounts[account.uuid] = account
-                self.unknown_uuids.discard(account.uuid)
+            if account.key:
+                self.accounts[account.key] = account
+                self.unknown_keys.discard(account.key)
                 self.first_data_at = self.first_data_at or self.monotonic()
             self.link_state = "live"
         elif event == "alert":
@@ -173,17 +173,26 @@ class App:
         it is waiting for. With several blocks on one account the first one stays — the
         order is set by `status.parse_frame`, so the first is also the newest.
 
+        Matching goes by the account KEY when the alert carries the organization (probe
+        v17 on) — one user in two organizations has one uuid, and both bands may be that
+        user's. Such an alert matches the pair or NOTHING: falling back to the uuid would
+        put it on the band of the user's OTHER organization, which is the wrong account.
+        An older probe sends the uuid alone; only then does the first band of that user win.
+
         An alert matching no configured account lands on the TOP band. The rule is
         simple and deliberately stays that way: a static machine -> band mapping would
         drift apart after the first /login, and account switching is routine here.
         """
-        slots = [a.uuid for a in self.cfg.accounts]
+        slots = self.cfg.accounts
         out = {}
         for b in self.alerts:
-            try:
-                index = slots.index(b.account_uuid)
-            except ValueError:
-                index = 0
+            if b.org_uuid is not None:
+                index = next((i for i, a in enumerate(slots)
+                              if (a.account_uuid, a.org_uuid) == (b.account_uuid, b.org_uuid)),
+                             0)
+            else:
+                index = next((i for i, a in enumerate(slots)
+                              if a.account_uuid == b.account_uuid), 0)
             out.setdefault(index, b.short)
         return out
 
@@ -284,8 +293,8 @@ class App:
         flagged = self.alert_slots()
         bands = []
         for index, slot in enumerate(self.cfg.accounts):
-            account = self.accounts.get(slot.uuid)
-            note = "unknown account" if slot.uuid in self.unknown_uuids else None
+            account = self.accounts.get(slot.key)
+            note = "unknown account" if slot.key in self.unknown_keys else None
             bands.append(render.band_state(account, name=slot.name, now_ms=now_ms,
                                            show_clock=(index == 0), note=note,
                                            alert=flagged.get(index)))
@@ -381,10 +390,10 @@ class App:
         return frames[self._canvases()[0]]
 
     def run(self):
-        uuids = [a.uuid for a in self.cfg.accounts]
-        client = stream.StreamClient(self.cfg, uuids, self.q, self.stop)
+        keys = [a.key for a in self.cfg.accounts]
+        client = stream.StreamClient(self.cfg, keys, self.q, self.stop)
         client.start()
-        log().info("start: %d account(s), panels: %s", len(uuids),
+        log().info("start: %d account(s), panels: %s", len(keys),
                    ", ".join(link.tag for link in self.panels) or "(none)")
         deadline = self.monotonic()
         try:
@@ -405,8 +414,8 @@ class App:
 
     def run_once(self, wait_sec=30.0):
         """Connect, wait for the first frame, draw once, exit."""
-        uuids = [a.uuid for a in self.cfg.accounts]
-        client = stream.StreamClient(self.cfg, uuids, self.q, self.stop)
+        keys = [a.key for a in self.cfg.accounts]
+        client = stream.StreamClient(self.cfg, keys, self.q, self.stop)
         client.start()
         deadline = self.monotonic() + wait_sec
         while self.monotonic() < deadline and self.first_data_at is None:

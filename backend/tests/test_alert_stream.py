@@ -19,14 +19,16 @@ import pytest
 import pytest_asyncio
 
 from tests.test_stream import (  # noqa: F401 — the `api`/`db` fixtures come along too
-    ACCOUNT_MAX, api, cards, clean_broker, db, ingest_one, listen, parse_sse,
+    ACCOUNT_MAX, KEY_MAX, api, cards, clean_broker, db, ingest_one, listen, parse_sse,
     payload, utcnow, with_util,
 )
 
 from app.config import settings
 from app.services.events import ALERTS, broker
 
-UUID_MAX = ACCOUNT_MAX["uuid"]
+# Alerts reach every subscriber regardless of account; the subscription still uses a real
+# key so these streams look like the panel's.
+UUID_MAX = KEY_MAX
 
 pytestmark = pytest.mark.asyncio
 

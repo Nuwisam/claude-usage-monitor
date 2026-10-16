@@ -9,7 +9,7 @@ from panel import status
 
 
 def frame(*entries):
-    return {"contractVersion": 3, "serverNow": "2026-08-05T21:07:00Z",
+    return {"contractVersion": 4, "serverNow": "2026-08-05T21:07:00Z",
             "alerts": list(entries)}
 
 

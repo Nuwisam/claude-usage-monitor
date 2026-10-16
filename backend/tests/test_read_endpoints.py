@@ -79,3 +79,13 @@ async def test_machines_does_not_pretend_to_know_claude_code_version(api, data):
     m = (await api.get("/api/machines")).json()
     assert m and m[0]["scriptVersion"] == 5
     assert "ccVersion" not in m[0]
+
+
+async def test_account_lists_carry_the_key(api, data):
+    """The key is what a panel's config needs (RUNBOOK reads it from /api/accounts), so
+    both lists that name accounts must carry it — the bare uuid no longer identifies one."""
+    a = (await api.get("/api/accounts")).json()
+    assert a and {"key", "uuid", "orgUuid", "orgName"} <= set(a[0])
+    assert a[0]["key"] == "%s:%s" % (a[0]["uuid"], a[0]["orgUuid"])
+    nested = (await api.get("/api/machines")).json()[0]["accounts"][0]
+    assert nested["key"] == a[0]["key"] and "orgName" in nested

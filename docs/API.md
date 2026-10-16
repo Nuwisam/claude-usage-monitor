@@ -12,7 +12,20 @@ passes through the whole container root, and the authorization gate sits on the 
 dependencies, not on those routes — an exposed schema would hand the full set of paths and
 field names to anyone with no session. This file is the only description of the contract.
 
-**`contractVersion` = 3.** What v3 added:
+**`contractVersion` = 4.** What v4 changed — the account's identity:
+
+- **`key`** = `"<uuid>:<orgUuid>"` is the account's identifier: the only value
+  `/stream?account=` and `/history?account=` take, and the only one to match cards by. One user
+  can sit in several organizations — a Team seat and a private Max plan — under ONE
+  `oauthAccount.accountUuid`, so the uuid alone names the user, not the account. Keyed by it,
+  both organizations' measurements landed on one card.
+- **`uuid`** stays, informational and **no longer unique**. **`orgUuid`** and **`orgName`**
+  are new. `orgUuid` is `""` when the client sent none — the key then ends with `:`.
+- A **breaking** change, hence the bump: a v3 client matching frames by `uuid` would let one
+  organization's frame replace the other's card, and a bare uuid in `?account=` is now
+  unknown (`hello.unknown[]`, `/history` → 404).
+
+What v3 added:
 
 - **`confirmedAt`** — when this value was last CONFIRMED. **Freshness is computed from this
   field, not from `capturedAt`.** Dedup deliberately writes no sample when the value has not
@@ -115,9 +128,9 @@ response.
 |---|---|
 | `GET /me` | The current logged-in user: `{email, verifiedAt}` — from the SSO session |
 | `GET /status` | **The main endpoint.** Current state of all accounts and series. Poll every **15 s**, and every **3 min** once the stream (§ 3.1) is connected |
-| `GET /stream?account=<uuid>` | **SSE.** An account card pushed immediately after a measurement. See § 3.1 |
-| `GET /history?account=&seriesId=&from=&to=&bucket=auto` | Progression over time + gaps + reset boundaries |
-| `GET /accounts` | List of accounts. **`PATCH /accounts/{uuid}` DOES NOT EXIST** — the `label`, `color`, `isEnabled` columns are in the database, but there is no write path. Do not build editing on top of it |
+| `GET /stream?account=<key>` | **SSE.** An account card pushed immediately after a measurement. See § 3.1 |
+| `GET /history?account=<key>&seriesId=&from=&to=&bucket=auto` | Progression over time + gaps + reset boundaries. A bare uuid is `404 account-not-found` |
+| `GET /accounts` | List of accounts, each with `key`, `uuid`, `orgUuid`, `orgName`. **`PATCH /accounts/{key}` DOES NOT EXIST** — the `label`, `color`, `isEnabled` columns are in the database, but there is no write path. Do not build editing on top of it |
 | `GET /machines` | Which machines reported which accounts, with the **probe** version (`scriptVersion`) |
 | `GET /series` | Series registry (see § 6 — the list is open) |
 | `GET /events` | Operational log: account switches, schema drift, client errors |
@@ -147,18 +160,20 @@ zone to outgoing time, the browser started sending it back — and the History v
 ## 3.1 Event stream (SSE)
 
 ```
-GET /api/stream?account=<uuid>&account=<uuid>[&snapshot=0]
+GET /api/stream?account=<key>&account=<key>[&snapshot=0]
 Accept: text/event-stream
 ```
 
 The server pushes a frame when a measurement for a **registered** account arrives through
 `/api/ingest`.
 
-**The subscription is exclusively by `account_uuid`.** There is no email address anywhere in
-this contract — not as a parameter, not as a match key. One address really can point at
-several accounts (a Pro account and a seat in a Team under the same address), and `email` gets
-overwritten on every measurement; addressing by it would mean the set of accounts under a
-subscription changes without the subscriber knowing — silently. At least one `account` is
+**The subscription is exclusively by the account `key`** (`"<uuid>:<orgUuid>"`, see the v4
+note at the top). There is no email address anywhere in this contract — not as a parameter,
+not as a match key. One address really can point at several accounts (a Pro account and a seat
+in a Team under the same address), and `email` gets overwritten on every measurement;
+addressing by it would mean the set of accounts under a subscription changes without the
+subscriber knowing — silently. The bare `uuid` is not a key either, for the same reason one
+level down: one user in two organizations has one uuid. A bare uuid lands in `unknown[]`. At least one `account` is
 **required**: a missing parameter is `400 {"reason": "no-subscription"}`, never an implicit
 "everything".
 
@@ -187,8 +202,8 @@ maintain.
 
 Four things worth knowing before you hook this up:
 
-1. **`unknown[]` is not an error.** These are UUIDs that are not in the database — a typo, or
-   an account that has not been created yet. The connection stays open and the subscription
+1. **`unknown[]` is not an error.** These are keys that are not in the database — a typo, a
+   bare uuid from a pre-v4 config, or an account that has not been created yet. The connection stays open and the subscription
    still covers it, so an account created while the stream is running arrives on its own.
    We report it because a configuration mistake has to look different from idleness.
 2. **There is no replay** and no `Last-Event-ID`. On reconnecting you get a fresh snapshot,
@@ -198,7 +213,7 @@ Four things worth knowing before you hook this up:
 3. **`bye` after 900 s is normal.** It is the only moment a long connection re-verifies the
    SSO session. `EventSource` resumes on its own; a headless client must resume itself.
 4. **Polling stays.** The stream does not recompute freshness while the client is silent
-   (because silence generates no events), and it will not show an account whose UUID nobody
+   (because silence generates no events), and it will not show an account whose key nobody
    asked for. `/status` every **3 min** closes both gaps.
 
    Why 3 min and not one: the probe has a 60 s throttle, so a one-minute poll could not show
@@ -251,9 +266,9 @@ X-Ingest-Key: <INGEST_EDGE_KEY>
 {"entries": [
   {"key": "<session>__<agent|main>__<key>", "reason": "permission",
    "project": "claude-usage-monitor", "tool": "Bash", "detail": "git status",
-   "since": "2026-08-05T21:00:00Z", "account_uuid": "…", "session_id": "…",
+   "since": "2026-08-05T21:00:00Z", "account_uuid": "…", "org_uuid": "…", "session_id": "…",
    "agent_id": null, "agent_type": null, "permission_mode": "default"}],
- "sent_at": "2026-08-05T21:00:01Z", "script_version": 11}
+ "sent_at": "2026-08-05T21:00:01Z", "script_version": 17}
 
 200 {"ok": true, "machine": "desktop", "accepted": 1, "subscribers": 1}
 ```
@@ -267,6 +282,11 @@ for ageing out an entry whose file date the wall clock cannot judge. `transcript
 incidentally carries the human's home directory name. The models accept both forms
 (`populate_by_name`), so camelCase goes through too. On the way out, in the `alert` frame,
 the fields are already camelCase like the rest of the contract.
+
+`account_uuid` + `org_uuid` together are the account's key, and they decide which panel band
+the marker lands on. `org_uuid` arrives from probe v17 on; an older probe omits it (`orgUuid`
+is then `null` in the frame — "not said", unlike `""`, which is "no organization"), and the
+panel falls back to the first band of that uuid.
 
 Four things worth knowing:
 
@@ -550,15 +570,20 @@ compute anything from `resetsAt` in the browser — keep this in mind.
 
 Generated from the running system, a Max account, 2026-07-26 21:57 UTC. Trimmed to two series
 (the full one has six) — both `primary`, since bucket duplicates are omitted here for
-readability.
+readability. **Edited by hand for v4:** `contractVersion`, `key`, `orgUuid` and `orgName` were
+added afterwards in the shape v4 emits; the values are from that same capture, the org name is
+substituted like every other identity here.
 
 ```json
 {
-  "contractVersion": 3,
+  "contractVersion": 4,
   "serverNow": "2026-07-26T21:57:27.446632Z",
   "warnings": [],
   "accounts": [{
+    "key": "00000000-0000-4000-8000-000000000003:00000000-0000-4000-8000-000000000004",
     "uuid": "00000000-0000-4000-8000-000000000003",
+    "orgUuid": "00000000-0000-4000-8000-000000000004",
+    "orgName": "you@example.org's Organization",
     "label": "you@example.org",
     "email": "you@example.org",
     "displayName": "Tomasz",
@@ -749,10 +774,10 @@ Locally, with no gate and no server: `python client/analyze-samples.py`
 
 ## 11. Contract versioning
 
-`/status` returns `contractVersion` (currently **`3`**). On a breaking change the number goes
+`/status` returns `contractVersion` (currently **`4`**). On a breaking change the number goes
 up — the UI checks this and **protests loudly** in the header, instead of silently rendering
 garbage (`frontend/src/components/Nav.tsx`, the `CONTRACT_VERSION` constant in
-`api/types.ts`).
+`api/types.ts`). The panel keeps its own copy (`panel/panel/model.py`) and checks it in `hello`.
 
 **The same number rides in the envelope of every SSE frame** and means exactly the same thing,
 because the `account` frame carries the same model. There are therefore two consumers:
@@ -760,7 +785,9 @@ because the `account` frame carries the same model. There are therefore two cons
 change by so much as a field.
 
 Adding a field is a **non**-breaking change and needs no bump. The version went from 1 to 2
-solely because of the change to time serialization — the rest of v2 is additions. `deltaFrom`
+solely because of the change to time serialization — the rest of v2 is additions. From 3 to 4
+because the account's identifier changed (`key` instead of `uuid`): the new fields alone would
+not have needed a bump, but every consumer that subscribed or matched by `uuid` had to change. `deltaFrom`
 arrived the same way: the version stayed at 3, and a UI without this field gets `undefined`
 and falls back to the hourly wording. The same goes for `label`: it is display text,
 `seriesKey` is identity — changing a label does not bump `contractVersion` either.

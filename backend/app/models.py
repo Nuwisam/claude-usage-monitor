@@ -16,7 +16,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON, BigInteger, Boolean, DateTime, Enum, ForeignKey, Index, Integer,
-    Numeric, String, Text, func,
+    Numeric, String, Text, UniqueConstraint, func,
 )
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -41,24 +41,58 @@ def _dt(**kw) -> Mapped[datetime]:
 
 
 # --------------------------------------------------------------------------- accounts
-class Account(Base):
-    """The natural key is account_uuid from oauthAccount, NOT the label.
+# The public identifier of an account: "<account_uuid>:<org_uuid>". One separator, split once —
+# neither part ever contains a colon (both are UUIDs, or the org part is empty).
+KEY_SEP = ":"
 
-    Reason: on a single machine accounts are switched through /login, and settings.json is
-    shared. A static label in the configuration would assign half the samples to the wrong
-    account and quietly poison the history of both — with no visible symptom at all.
+
+def split_account_key(key: str) -> tuple[str, str] | None:
+    """`key` -> (account_uuid, org_uuid), or None when it is not a key.
+
+    A bare account_uuid (the identifier before contract v4) is NOT a key and gets None —
+    never a guess at the organization, because guessing is exactly the merge this key
+    exists to prevent. Callers answer None with "unknown" / 404, not with an exception.
+    """
+    if not isinstance(key, str) or KEY_SEP not in key:
+        return None
+    uuid, org = key.split(KEY_SEP, 1)
+    if not uuid:
+        return None
+    return uuid, org
+
+
+class Account(Base):
+    """The natural key is the PAIR (account_uuid, org_uuid) from oauthAccount, NOT the label.
+
+    Why not a label: on a single machine accounts are switched through /login, and
+    settings.json is shared. A static label in the configuration would assign half the
+    samples to the wrong account and quietly poison the history of both — with no visible
+    symptom at all.
+
+    Why not account_uuid alone: it identifies the USER, not the account. One user can sit in
+    several organizations — a Team seat and a private Max plan — under one accountUuid, and
+    40% of a Team seat is a different amount than 40% of Max. Keyed by the uuid alone, both
+    organizations' measurements landed on one row and its plan fields flipped with every
+    switch.
+
+    `org_uuid` is '' (not NULL) when a payload carries none: MariaDB treats NULLs in a UNIQUE
+    key as distinct, so NULL would let the same identity in twice.
     """
     __tablename__ = "accounts"
+    __table_args__ = (
+        UniqueConstraint("account_uuid", "org_uuid", name="uq_accounts_identity"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    account_uuid: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    account_uuid: Mapped[str] = mapped_column(String(64), nullable=False)
+    org_uuid: Mapped[str] = mapped_column(String(64), nullable=False, default="",
+                                          server_default="")
 
     label: Mapped[str | None] = mapped_column(String(100))          # editable custom name
     email: Mapped[str | None] = mapped_column(String(255))
     display_name: Mapped[str | None] = mapped_column(String(255))
     color: Mapped[str | None] = mapped_column(String(16))
 
-    org_uuid: Mapped[str | None] = mapped_column(String(64))
     org_name: Mapped[str | None] = mapped_column(String(255))
     org_type: Mapped[str | None] = mapped_column(String(64))        # claude_max | claude_team | ...
     seat_tier: Mapped[str | None] = mapped_column(String(32))       # standard | premium (Team)
@@ -76,6 +110,11 @@ class Account(Base):
     updated_at: Mapped[datetime] = _dt(nullable=False, server_default=func.now(6),
                                        onupdate=func.now(6))
     archived_at: Mapped[datetime | None] = _dt()
+
+    @property
+    def key(self) -> str:
+        """The public identifier: /api/stream, /api/history, the panel's config (contract v4)."""
+        return "%s%s%s" % (self.account_uuid, KEY_SEP, self.org_uuid or "")
 
 
 class Machine(Base):

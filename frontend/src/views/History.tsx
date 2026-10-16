@@ -109,7 +109,7 @@ export function History() {
       ) : (
         q.data.accounts.map((a) => (
           <HistoryFacet
-            key={a.uuid}
+            key={a.key}
             account={a}
             series={a.series.find((s) => s.seriesKey === active) ?? null}
             from={from}

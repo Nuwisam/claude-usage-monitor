@@ -16,7 +16,7 @@ export function Live() {
 
       <div className="accounts">
         {q.data.accounts.map((a) => (
-          <AccountCard key={a.uuid} a={a} nowMs={nowMs} />
+          <AccountCard key={a.key} a={a} nowMs={nowMs} />
         ))}
       </div>
 

@@ -14,13 +14,13 @@ export function App() {
   const nowMs = useServerClock(q.data?.serverNow);
 
   // The first /status brings the account list; the stream then subscribes to exactly those
-  // UUIDs. An account created later (a `/login` onto a fresh one) shows up in the next
-  // poll, the key changes, and the stream reconnects with it included.
-  const uuids = useMemo(
-    () => (q.data?.accounts ?? []).map((a) => a.uuid),
+  // keys. An account created later (a `/login` onto a fresh one) shows up in the next
+  // poll, the set changes, and the stream reconnects with it included.
+  const keys = useMemo(
+    () => (q.data?.accounts ?? []).map((a) => a.key),
     [q.data?.accounts],
   );
-  const stream = useLiveStream(uuids);
+  const stream = useLiveStream(keys);
 
   return (
     <div className="app">

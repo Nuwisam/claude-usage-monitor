@@ -68,11 +68,13 @@ def main():
             continue
         if event == "account":
             account = model.AccountStatus(payload.get("account") or {})
-            if not account.uuid:
+            # A recording from before contract v4 has no `key`; its uuid was the identity.
+            ident = account.key or account.uuid
+            if not ident:
                 continue
-            if account.uuid not in accounts:
-                order.append(account.uuid)
-            accounts[account.uuid] = account
+            if ident not in accounts:
+                order.append(ident)
+            accounts[ident] = account
 
         now_ms = clock.now_ms()
         flagged = {0} if alerts else set()

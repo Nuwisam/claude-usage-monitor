@@ -19,13 +19,13 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
  *  live — frames are flowing · down — no stream, the poll carries everything. */
 export type StreamState = "connecting" | "live" | "down";
 
-export function useLiveStream(uuids: string[]): StreamState {
+export function useLiveStream(keys: string[]): StreamState {
   const qc = useQueryClient();
   const [state, setState] = useState<StreamState>("down");
-  // Sorted + joined: `uuids` is a fresh array on every /status refetch, so depending on the
+  // Sorted + joined: `keys` is a fresh array on every /status refetch, so depending on the
   // array itself would tear the connection down four times a minute. The key only changes
   // when the SET of accounts changes — which is exactly when we do want to reconnect.
-  const key = [...uuids].sort().join(",");
+  const key = [...keys].sort().join(",");
   // `bye` is the server closing on its own lifetime cap, and EventSource reconnects by
   // itself. Without this flag the expected reconnect would flash "down" in the header
   // every 15 minutes and look like a fault.
@@ -59,7 +59,9 @@ export function useLiveStream(uuids: string[]): StreamState {
         // account anyway. Inventing a response here would mean shipping a StatusResponse
         // with no `warnings` and a guessed `contractVersion`.
         if (!prev) return prev;
-        const known = prev.accounts.some((a) => a.uuid === frame.account.uuid);
+        // By `key`, never `uuid`: two organizations of one user share the uuid, and matching
+        // on it would let one account's frame overwrite the other's card.
+        const known = prev.accounts.some((a) => a.key === frame.account.key);
         return {
           ...prev,
           // `serverNow` moves with the frame so every countdown stays anchored to the
@@ -67,7 +69,7 @@ export function useLiveStream(uuids: string[]): StreamState {
           serverNow: frame.serverNow,
           accounts: known
             ? prev.accounts.map((a) =>
-                a.uuid === frame.account.uuid ? frame.account : a,
+                a.key === frame.account.key ? frame.account : a,
               )
             : [...prev.accounts, frame.account],
         };

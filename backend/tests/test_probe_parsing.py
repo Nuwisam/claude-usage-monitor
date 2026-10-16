@@ -431,12 +431,29 @@ def test_read_claude_json_returns_account_measurement_and_reason_for_each_state(
         assert acct["emailAddress"] == "usage-monitor@example.test"
         assert acct["organizationType"] == "claude_team"
         assert isinstance(cached["utilization"]["spend"], dict)
-        # Rule 7: ingest keys by accountUuid and both sides must agree.
+        # Rule 7: the cache guard compares accountUuid, and both sides must agree.
         assert cached["accountUuid"] == acct["accountUuid"]
         assert reason == expected
 
     monkeypatch.setattr(probe, "_find", lambda name, in_claude_dir=False: None)
     assert probe.read_claude_json() == (None, None, None, None)
+
+
+def test_alert_identity_is_the_pair_the_server_keys_by(probe, monkeypatch):
+    """The panel picks an alert's band by the account KEY (uuid + organization). One user in
+    two organizations has one accountUuid, so a uuid alone would put the marker on the
+    wrong band — the alert must carry the organization too, read from the same block."""
+    from tests.team import CLAUDE_JSON_STATES
+
+    path = CLAUDE_JSON_STATES[0][0]
+    monkeypatch.setattr(probe, "_find", lambda name, in_claude_dir=False: str(path))
+    monkeypatch.setattr(probe, "_ACCT_CACHE", {})
+    acct = probe.read_claude_json()[0]
+    assert probe.account_identity() == (acct["accountUuid"], acct["organizationUuid"])
+    assert all(probe.account_identity())
+
+    monkeypatch.setattr(probe, "_find", lambda name, in_claude_dir=False: None)
+    assert probe.account_identity() == (None, None)
 
 
 # --------------------------------------------------------------------------- spool

@@ -38,8 +38,12 @@ def series(key, label, **kw):
 
 
 def account(uuid, email, **kw):
+    org = kw.pop("org_uuid", "")
     d = {
+        "key": "%s:%s" % (uuid, org),
         "uuid": uuid,
+        "orgUuid": org,
+        "orgName": kw.pop("org_name", None),
         "email": email,
         "orgType": kw.pop("org_type", "claude_max"),
         "rateLimitTier": kw.pop("tier", "default_claude_max_5x"),

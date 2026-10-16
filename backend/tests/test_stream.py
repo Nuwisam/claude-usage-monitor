@@ -22,14 +22,13 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from tests.test_ingest_e2e import (  # noqa: F401 — the `db` fixture comes along with these
-    ACCOUNT_MAX, ACCOUNT_TEAM, db, ingest_one, payload, utcnow, with_util,
+    ACCOUNT_MAX, ACCOUNT_TEAM, KEY_MAX, KEY_TEAM, db, ingest_one, payload, utcnow, with_util,
 )
 
 from app.config import settings
 from app.services.events import broker
 
 UUID_MAX = ACCOUNT_MAX["uuid"]
-UUID_TEAM = ACCOUNT_TEAM["uuid"]
 
 
 # --------------------------------------------------------------------------- helpers
@@ -175,7 +174,7 @@ async def test_subscription_receives_only_its_own_accounts(api, db, monkeypatch)
         await write(api, ACCOUNT_TEAM, usage=with_util(five_hour=71.0))
 
     events = await listen(api, monkeypatch,
-                          query="account=%s&snapshot=0" % UUID_MAX, work=foreign)
+                          query="account=%s&snapshot=0" % KEY_MAX, work=foreign)
     assert cards(events) == [], "a foreign account's measurement leaked into the stream"
     assert [e for e, _ in events if e == "hello"], "missing hello frame"
 
@@ -193,18 +192,18 @@ async def test_own_measurement_arrives(api, db, monkeypatch):
                     captured_at=t0 + timedelta(seconds=60))
 
     events = await listen(api, monkeypatch,
-                          query="account=%s&snapshot=0" % UUID_MAX, work=own)
+                          query="account=%s&snapshot=0" % KEY_MAX, work=own)
     c = cards(events)
-    assert len(c) == 1 and c[0]["uuid"] == UUID_MAX
+    assert len(c) == 1 and c[0]["key"] == KEY_MAX and c[0]["uuid"] == UUID_MAX
     series = {s["seriesKey"]: s for s in c[0]["series"]}["bucket:five_hour"]
     assert series["rawUtilization"] == pytest.approx(71.0)
 
 
 async def test_two_accounts_sharing_one_email_stay_separate(api, db, monkeypatch):
-    """Regression on the very reason the key is a UUID and not an email: one address
-    really does point at several accounts (Pro and a Team seat). Matching on the string
-    would deliver both accounts' frames here and nobody would notice, because the email on
-    screen would line up perfectly."""
+    """Regression on the very reason the key is not an email: one address really does point
+    at several accounts (Pro and a Team seat). Matching on the string would deliver both
+    accounts' frames here and nobody would notice, because the email on screen would line
+    up perfectly."""
     second = dict(ACCOUNT_TEAM, email=ACCOUNT_MAX["email"])
     await write(api, ACCOUNT_MAX)
     await write(api, second)
@@ -213,8 +212,40 @@ async def test_two_accounts_sharing_one_email_stay_separate(api, db, monkeypatch
         await write(api, second, usage=with_util(five_hour=64.0))
 
     events = await listen(api, monkeypatch,
-                          query="account=%s&snapshot=0" % UUID_MAX, work=foreign)
+                          query="account=%s&snapshot=0" % KEY_MAX, work=foreign)
     assert cards(events) == [], "a shared email must not join two accounts"
+
+
+async def test_two_organizations_sharing_one_uuid_stay_separate(api, db, monkeypatch):
+    """The same regression one level down, and the reason for contract v4: one USER with a
+    Team seat and a private Max plan has ONE accountUuid for both. Keyed by the uuid, the
+    other organization's measurement would arrive here as this account's card."""
+    other_org = dict(ACCOUNT_MAX, org_uuid="00000000-0000-4000-8000-0000000000ff",
+                     org_type="claude_team")
+    await write(api, ACCOUNT_MAX)
+    await write(api, other_org)
+
+    async def foreign():
+        await write(api, other_org, usage=with_util(five_hour=64.0))
+
+    events = await listen(api, monkeypatch,
+                          query="account=%s&snapshot=0" % KEY_MAX, work=foreign)
+    assert cards(events) == [], "a shared uuid must not join two organizations"
+
+
+async def test_bare_uuid_is_unknown_and_receives_nothing(api, db, monkeypatch):
+    """The pre-v4 identifier must not quietly keep working: it would have to guess the
+    organization, and guessing IS the merge. It lands in `unknown[]` like a typo."""
+    await write(api, ACCOUNT_MAX)
+
+    async def own():
+        await write(api, ACCOUNT_MAX, usage=with_util(five_hour=71.0))
+
+    events = await listen(api, monkeypatch,
+                          query="account=%s&snapshot=0" % UUID_MAX, work=own)
+    hello = [d for e, d in events if e == "hello"][0]
+    assert hello["unknown"] == [UUID_MAX] and hello["subscribed"] == []
+    assert cards(events) == []
 
 
 async def test_many_accounts_in_one_subscription(api, db, monkeypatch):
@@ -227,8 +258,9 @@ async def test_many_accounts_in_one_subscription(api, db, monkeypatch):
 
     events = await listen(
         api, monkeypatch,
-        query="account=%s&account=%s&snapshot=0" % (UUID_MAX, UUID_TEAM), work=both)
-    assert {c["uuid"] for c in cards(events)} == {UUID_MAX, UUID_TEAM}
+        query="account=%s&account=%s&snapshot=0" % (KEY_MAX, KEY_TEAM), work=both)
+    # KEY_TEAM ends with the separator (no org_uuid in the payload) — and still subscribes.
+    assert {c["key"] for c in cards(events)} == {KEY_MAX, KEY_TEAM}
 
 
 # --------------------------------------------------------------------------- traps
@@ -247,7 +279,7 @@ async def test_event_fires_even_when_dedup_skips_the_sample(api, db, monkeypatch
         assert r["samplesWritten"] == 0, "the scenario was supposed to hit dedup"
 
     events = await listen(api, monkeypatch,
-                          query="account=%s&snapshot=0" % UUID_MAX, work=same_value)
+                          query="account=%s&snapshot=0" % KEY_MAX, work=same_value)
     c = cards(events)
     assert len(c) == 1, "a skipped sample write must not mute the event"
     series = {s["seriesKey"]: s for s in c[0]["series"]}["bucket:five_hour"]
@@ -267,7 +299,7 @@ async def test_frame_carries_post_commit_state(api, db, monkeypatch):
                     captured_at=t0 + timedelta(seconds=60))
 
     events = await listen(api, monkeypatch,
-                          query="account=%s&snapshot=0" % UUID_MAX, work=change)
+                          query="account=%s&snapshot=0" % KEY_MAX, work=change)
     series = {s["seriesKey"]: s for s in cards(events)[0]["series"]}["bucket:five_hour"]
     assert series["rawUtilization"] == pytest.approx(88.0)
 
@@ -294,16 +326,16 @@ async def test_snapshot_on_connect(api, db, monkeypatch):
     """Without this the panel sits blank after a restart until the first work session —
     potentially hours."""
     await write(api, ACCOUNT_MAX)
-    events = await listen(api, monkeypatch, query="account=%s" % UUID_MAX)
+    events = await listen(api, monkeypatch, query="account=%s" % KEY_MAX)
     c = cards(events)
-    assert len(c) == 1 and c[0]["uuid"] == UUID_MAX
+    assert len(c) == 1 and c[0]["key"] == KEY_MAX
     assert c[0]["series"], "a snapshot without series is useless"
 
 
 async def test_snapshot_can_be_disabled(api, db, monkeypatch):
     """The browser has just fetched /api/status, so a snapshot would be a duplicate."""
     await write(api, ACCOUNT_MAX)
-    events = await listen(api, monkeypatch, query="account=%s&snapshot=0" % UUID_MAX)
+    events = await listen(api, monkeypatch, query="account=%s&snapshot=0" % KEY_MAX)
     assert cards(events) == []
 
 
@@ -312,31 +344,31 @@ async def test_hello_reports_unknown_uuids(api, db, monkeypatch):
     idleness — and must not drop the connection, because the account may appear later."""
     await write(api, ACCOUNT_MAX)
     events = await listen(
-        api, monkeypatch, query="account=%s&account=no-such-uuid&snapshot=0" % UUID_MAX)
+        api, monkeypatch, query="account=%s&account=no-such-uuid:x&snapshot=0" % KEY_MAX)
     hello = [d for e, d in events if e == "hello"][0]
-    assert hello["subscribed"] == [UUID_MAX]
-    assert hello["unknown"] == ["no-such-uuid"]
-    assert hello["contractVersion"] == 3
+    assert hello["subscribed"] == [KEY_MAX]
+    assert hello["unknown"] == ["no-such-uuid:x"]
+    assert hello["contractVersion"] == 4
     assert hello["serverNow"].endswith("Z")
 
 
 async def test_account_created_after_connect_still_arrives(api, db, monkeypatch):
-    """We subscribe to UUIDs unknown at connect time too. Switching accounts via `/login`
+    """We subscribe to keys unknown at connect time too. Switching accounts via `/login`
     is routine here, so an account can come into existence mid-stream — and the publisher
     must then find a listener without any extra machinery."""
     async def new_account():
         await write(api, ACCOUNT_TEAM)
 
     events = await listen(api, monkeypatch,
-                          query="account=%s" % UUID_TEAM, work=new_account)
+                          query="account=%s" % KEY_TEAM, work=new_account)
     hello = [d for e, d in events if e == "hello"][0]
-    assert hello["unknown"] == [UUID_TEAM], "the account did not exist at connect time"
-    assert [c["uuid"] for c in cards(events)] == [UUID_TEAM]
+    assert hello["unknown"] == [KEY_TEAM], "the account did not exist at connect time"
+    assert [c["key"] for c in cards(events)] == [KEY_TEAM]
 
 
 async def test_ping_and_bye_close_the_stream(api, db, monkeypatch):
     await write(api, ACCOUNT_MAX)
-    events = await listen(api, monkeypatch, query="account=%s&snapshot=0" % UUID_MAX,
+    events = await listen(api, monkeypatch, query="account=%s&snapshot=0" % KEY_MAX,
                           lifetime=0.3, ping=0.05)
     names = [e for e, _ in events]
     assert "ping" in names, "without a ping a dead subscription would sit in the broker"
@@ -353,7 +385,7 @@ async def test_missing_account_param_is_400(api, db):
 
 async def test_client_limit(api, db, monkeypatch):
     monkeypatch.setattr(settings, "stream_max_clients", 0)
-    r = await api.get("/api/stream?account=%s" % UUID_MAX)
+    r = await api.get("/api/stream?account=%s" % KEY_MAX)
     assert r.status_code == 503
     assert r.json()["detail"]["reason"] == "too-many-streams"
 
@@ -378,7 +410,7 @@ async def test_bearer_opens_the_stream_without_sso(api, db, monkeypatch):
     monkeypatch.setattr(settings, "stream_max_lifetime_sec", 0.2)
     monkeypatch.setattr(settings, "stream_ping_sec", 0.05)
 
-    r = await api.get("/api/stream?account=%s&snapshot=0" % UUID_MAX,
+    r = await api.get("/api/stream?account=%s&snapshot=0" % KEY_MAX,
                       headers={"Authorization": "Bearer secret"})
     assert r.status_code == 200
     assert [e for e, _ in parse_sse(r.text) if e == "hello"]
@@ -386,7 +418,7 @@ async def test_bearer_opens_the_stream_without_sso(api, db, monkeypatch):
 
 async def test_bad_token_is_401(api, db, monkeypatch):
     monkeypatch.setattr(settings, "stream_tokens_raw", "secret:panel")
-    r = await api.get("/api/stream?account=%s" % UUID_MAX,
+    r = await api.get("/api/stream?account=%s" % KEY_MAX,
                       headers={"Authorization": "Bearer wrong"})
     assert r.status_code == 401
     assert r.json()["detail"]["reason"] == "invalid-token"
@@ -398,7 +430,7 @@ async def test_ingest_token_does_not_open_the_stream(api, db, monkeypatch):
     trace."""
     monkeypatch.setattr(settings, "ingest_tokens_raw", "t:desktop")
     monkeypatch.setattr(settings, "stream_tokens_raw", "secret:panel")
-    r = await api.get("/api/stream?account=%s" % UUID_MAX,
+    r = await api.get("/api/stream?account=%s" % KEY_MAX,
                       headers={"Authorization": "Bearer t"})
     assert r.status_code == 401
 
@@ -408,10 +440,10 @@ async def test_queue_overflow_yields_lag(db):
     """A slow receiver must not slow ingest down. Intermediate frames are disposable
     because each carries the account's FULL state — only the signal that there was a gap
     needs to survive."""
-    sub = broker.subscribe(frozenset({UUID_MAX}), "test")
+    sub = broker.subscribe(frozenset({KEY_MAX}), "test")
     try:
         for i in range(settings.stream_queue_max + 5):
-            broker.publish(UUID_MAX, "frame-%d" % i)
+            broker.publish(KEY_MAX, "frame-%d" % i)
         collected = []
         while not sub.queue.empty():
             collected.append(sub.queue.get_nowait())
@@ -431,4 +463,6 @@ async def test_no_listeners_means_no_frame_is_built(api, db, monkeypatch):
 
     monkeypatch.setattr(ev, "account_frame", must_not_be_called)
     await write(api, ACCOUNT_MAX)
-    assert await ev.publish_accounts(db, [UUID_MAX]) == 0
+    # The key, not the bare uuid: with the uuid `has_subscribers` would be False for the
+    # wrong reason (nothing subscribes to a non-key) and the test would pass vacuously.
+    assert await ev.publish_accounts(db, [KEY_MAX]) == 0

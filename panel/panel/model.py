@@ -7,7 +7,7 @@ We read DEFENSIVELY: unknown fields are ignored, missing ones yield None. A new
 bucket at Anthropic has to work with no change here (rule 5) — and a panel sitting
 on a desk must not blow up because the backend grew a field.
 """
-CONTRACT_VERSION = 3
+CONTRACT_VERSION = 4
 
 #: The panel's OWN words for the two weekly windows, and the upstream `kind` strings
 #: that mean them. `CONTRACT_VERSION` guards the SHAPE of the frame and says nothing
@@ -119,14 +119,19 @@ class SeriesStatus:
 class AccountStatus:
     """One account's card — exactly what the `account` frame carries."""
 
-    __slots__ = ("uuid", "label", "email", "display_name", "org_type", "seat_tier",
-                 "rate_limit_tier", "subscription_type", "is_enabled",
+    __slots__ = ("key", "uuid", "org_uuid", "org_name", "label", "email", "display_name",
+                 "org_type", "seat_tier", "rate_limit_tier", "subscription_type", "is_enabled",
                  "last_sample_at", "last_batch_at", "last_client_host",
                  "cascade", "series")
 
     def __init__(self, d):
         d = d or {}
+        # `key` is the identity (v4); `uuid` names the user and is shared by every
+        # organization that user belongs to.
+        self.key = d.get("key")
         self.uuid = d.get("uuid")
+        self.org_uuid = d.get("orgUuid")
+        self.org_name = d.get("orgName")
         self.label = d.get("label")
         self.email = d.get("email")
         self.display_name = d.get("displayName")

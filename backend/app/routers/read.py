@@ -16,7 +16,7 @@ from app.config import settings
 from app.db import get_session
 from app.models import (
     Account, IngestBatch, IngestEvent, LimitSample, Machine, MachineAccount,
-    RawPayload, UsageSeries,
+    RawPayload, UsageSeries, split_account_key,
 )
 from app.parsing import same_reset_window
 from app.schemas import (
@@ -49,8 +49,8 @@ async def accounts(
 ) -> list[dict]:
     rows = (await db.execute(select(Account).order_by(Account.id))).scalars().all()
     return [{
-        "uuid": a.account_uuid, "label": a.label, "email": a.email,
-        "displayName": a.display_name, "color": a.color, "isEnabled": a.is_enabled,
+        "key": a.key, "uuid": a.account_uuid, "orgUuid": a.org_uuid,
+        "label": a.label, "email": a.email, "displayName": a.display_name, "color": a.color, "isEnabled": a.is_enabled,
         "orgType": a.org_type, "orgName": a.org_name, "seatTier": a.seat_tier,
         "orgRateLimitTier": a.org_rate_limit_tier,
         "userRateLimitTier": a.user_rate_limit_tier,
@@ -81,7 +81,8 @@ async def machines(
         })
         if a is not None:
             e["accounts"].append({
-                "uuid": a.account_uuid, "label": a.label, "email": a.email,
+                "key": a.key, "uuid": a.account_uuid, "orgUuid": a.org_uuid,
+                "orgName": a.org_name, "label": a.label, "email": a.email,
                 "firstSeenAt": ma.first_seen_at, "lastSeenAt": ma.last_seen_at,
                 "samples": ma.samples,
             })
@@ -206,7 +207,7 @@ def _find_gaps(from_: datetime, to: datetime, batch_times: list[datetime],
 
 @router.get("/history", response_model=HistoryResponse)
 async def history(
-    account: str = Query(..., description="account_uuid"),
+    account: str = Query(..., description="account key <account_uuid>:<org_uuid>"),
     series_id: int = Query(..., alias="seriesId"),
     # NaiveUtcDt, not datetime: the browser sends `toISOString()`, i.e. a time WITH A TIMEZONE,
     # while the database and `utcnow()` are naive. A plain `datetime` lets that through and
@@ -221,8 +222,11 @@ async def history(
     to = to or now
     from_ = from_ or (to - timedelta(hours=24))
 
-    acc = (await db.execute(
-        select(Account).where(Account.account_uuid == account)
+    # A bare uuid is not a key — it would have to guess the organization, which is exactly
+    # the merge this key exists to prevent. Same answer as any other unknown account.
+    parts = split_account_key(account)
+    acc = None if parts is None else (await db.execute(
+        select(Account).where(Account.account_uuid == parts[0], Account.org_uuid == parts[1])
     )).scalar_one_or_none()
     if acc is None:
         raise HTTPException(status_code=404, detail={"reason": "account-not-found"})

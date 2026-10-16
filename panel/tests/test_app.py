@@ -9,7 +9,7 @@ from panel import app as app_mod, config as C
 
 
 def cfg(**kw):
-    d = {"stream_token": "t", "account_1": {"uuid": "a"}}
+    d = {"stream_token": "t", "account_1": {"key": "a:o"}}
     d.update(kw)
     return C.Config(d)
 
@@ -46,7 +46,7 @@ def test_unknown_event_is_a_no_op():
     implementation, not an agreement."""
     a = app_mod.App(cfg())
     a.on_event("something-we-dont-know", {"serverNow": "2026-08-05T21:07:00Z",
-                                          "account": {"uuid": "a"}})
+                                          "account": {"key": "a:o"}})
     assert a.accounts == {}
     assert a.link_state == "down"
     assert a.first_data_at is None

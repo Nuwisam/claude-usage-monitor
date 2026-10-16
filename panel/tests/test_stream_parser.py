@@ -75,7 +75,7 @@ def test_data_field_without_a_value_does_not_break_the_frame():
 # --- configuration ----------------------------------------------------------
 
 def cfg(**kw):
-    d = {"stream_token": "t", "account_1": {"uuid": "a"}}
+    d = {"stream_token": "t", "account_1": {"key": "a:o"}}
     d.update(kw)
     return C.Config(d)
 
@@ -83,22 +83,48 @@ def cfg(**kw):
 def test_accounts_are_two_fields_in_band_order():
     """The shape of the configuration is the shape of the screen: a third account
     cannot be added by accident."""
-    c = cfg(account_1={"uuid": "a", "name": "top"},
-            account_2={"uuid": "b", "name": "bottom"})
+    c = cfg(account_1={"key": "a:o", "name": "top"},
+            account_2={"key": "b:o", "name": "bottom"})
     assert [a.name for a in c.accounts] == ["top", "bottom"]
     assert not c.validate()
 
 
 def test_first_account_alone_is_enough():
-    assert cfg(account_2=None).accounts[0].uuid == "a"
+    assert cfg(account_2=None).accounts[0].key == "a:o"
     assert not cfg(account_2=None).validate()
+
+
+def test_one_user_in_two_organizations_fills_both_bands():
+    """The same uuid twice is legal once the organizations differ — that is the whole
+    point of the key."""
+    c = cfg(account_1={"key": "user:team"}, account_2={"key": "user:max"})
+    assert not c.validate()
+    assert [(a.account_uuid, a.org_uuid) for a in c.accounts] == [("user", "team"),
+                                                                    ("user", "max")]
+
+
+def test_a_padded_key_is_used_as_validated():
+    """validate() strips the key and the server strips every `?account=` value; the panel
+    must subscribe and match with that same stripped key, or the band stays blank."""
+    c = cfg(account_1={"key": "  a:o \n"})
+    assert not c.validate() and c.accounts[0].key == "a:o"
+
+
+def test_a_key_with_no_organization_is_still_a_key():
+    """A payload without org_uuid gives the server key "<uuid>:" — it must be configurable."""
+    c = cfg(account_1={"key": "a:"})
+    assert not c.validate() and c.accounts[0].org_uuid == ""
 
 
 @pytest.mark.parametrize("change,fragment", [
     ({"stream_token": None}, "stream_token"),
     ({"account_1": None, "account_2": None}, "no account specified"),
-    ({"account_2": {"uuid": "a"}}, "repeats the uuid"),
-    ({"account_2": {"name": "no uuid"}}, "has no uuid"),
+    ({"account_2": {"key": "a:o"}}, "repeats the key"),
+    ({"account_2": {"name": "no key"}}, "has no key"),
+    # A config from before contract v4 must say what to do, not just "unknown account".
+    ({"account_2": {"uuid": "b"}}, "replace 'uuid' with 'key'"),
+    ({"account_2": {"key": "b"}}, "must look like <account uuid>:<org uuid>"),
+    ({"account_2": {"key": ":o"}}, "must look like <account uuid>:<org uuid>"),
     ({"account_2": "not an object"}, "must be an object"),
     ({"brightness": 9}, "brightness"),
     ({"device": "not an object"}, "device must be an object"),
@@ -179,7 +205,7 @@ def test_a_panel_json_that_predates_clock_seconds_does_not_get_the_ticking_clock
     FullFrameSurface and a header that ticks in seconds is a 307 200-byte write every
     `tick_sec` — 0.35 s of the 1.0 s tick, for as long as the panel is plugged in.
     Nothing in validate() can catch it: such a file is entirely correct."""
-    legacy = C.Config({"stream_token": "t", "account_1": {"uuid": "a"},
+    legacy = C.Config({"stream_token": "t", "account_1": {"key": "a:o"},
                        "device": {"port_path": "3.4"}})
     assert not legacy.validate()
     assert [p.backend for p in legacy.panels] == ["ax206"]

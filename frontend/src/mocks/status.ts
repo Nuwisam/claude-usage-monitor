@@ -112,7 +112,10 @@ function rung(r: Partial<CascadeRung> & { key: CascadeRung["key"]; state: Cascad
 // ─── Max account: session 31%, week 30% and limiting, credits disabled ───────
 function accountMax(): AccountStatus {
   return {
+    key: "00000000-0000-4000-8000-000000000003:00000000-0000-4000-8000-000000000004",
     uuid: "00000000-0000-4000-8000-000000000003",
+    orgUuid: "00000000-0000-4000-8000-000000000004",
+    orgName: null,
     label: null,
     email: "you@example.org",
     displayName: "Tomasz",
@@ -168,7 +171,10 @@ function accountMax(): AccountStatus {
 // ─── Team account: week exhausted, work runs on credits, Fable in unknown ────
 function accountTeam(): AccountStatus {
   return {
+    key: "aaaabbbb-0000-1111-2222-333344445555:aaaabbbb-0000-1111-2222-000000000002",
     uuid: "aaaabbbb-0000-1111-2222-333344445555",
+    orgUuid: "aaaabbbb-0000-1111-2222-000000000002",
+    orgName: null,
     label: null,
     email: "second@example.org",
     displayName: "Second",
@@ -231,7 +237,10 @@ function accountTeam(): AccountStatus {
 // A long email (text-overflow in the header), the cascade cut off at credits.
 function accountPro(): AccountStatus {
   return {
+    key: "dddd1111-2222-3333-4444-555566667777:",
     uuid: "dddd1111-2222-3333-4444-555566667777",
+    orgUuid: "",
+    orgName: null,
     label: null,
     email: "extremely.long.account.name@example.org",
     displayName: "Pro",
@@ -313,7 +322,10 @@ function withEdgeCases(accounts: AccountStatus[]): AccountStatus[] {
   return [
     ...accounts,
     {
+      key: "cccc0000-1111-2222-3333-444455556666:",
       uuid: "cccc0000-1111-2222-3333-444455556666",
+      orgUuid: "",
+      orgName: null,
       label: "fresh account",
       email: "new@example.org",
       displayName: null,
@@ -343,7 +355,8 @@ function withEdgeCases(accounts: AccountStatus[]): AccountStatus[] {
 function creditsStates(): AccountStatus[] {
   const account = (uuid: string, name: string, spend: Spec, eu: Spec,
                    cascade: CascadeRung[]): AccountStatus => ({
-    uuid, label: null, email: `${uuid.slice(0, 4)}@example.org`, displayName: name,
+    key: `${uuid}:`, uuid, orgUuid: "", orgName: null,
+    label: null, email: `${uuid.slice(0, 4)}@example.org`, displayName: name,
     color: null, orgType: "claude_team", seatTier: "standard",
     rateLimitTier: "default_claude_team_standard", subscriptionType: "team",
     isEnabled: true, lastSampleAt: at(-0.4), lastBatchAt: at(-0.3),
@@ -433,7 +446,8 @@ function creditsStates(): AccountStatus[] {
 // ─── window states right after a session reset ───────────────────────────────
 function afterReset(): AccountStatus[] {
   const acc = (uuid: string, name: string, session: Spec): AccountStatus => ({
-    uuid, label: null, email: `${uuid.slice(0, 4)}@example.org`, displayName: name, color: null,
+    key: `${uuid}:`, uuid, orgUuid: "", orgName: null,
+    label: null, email: `${uuid.slice(0, 4)}@example.org`, displayName: name, color: null,
     orgType: "claude_max", seatTier: null, rateLimitTier: "default_claude_max_5x",
     subscriptionType: "max", isEnabled: true,
     lastSampleAt: at(-0.3), lastBatchAt: at(-0.2), lastClientHost: "desktop",
@@ -476,7 +490,7 @@ export function mockStatus(): StatusResponse {
   if (variant === "credits") accounts = creditsStates();
 
   return {
-    contractVersion: 3,
+    contractVersion: 4,
     serverNow: new Date(now()).toISOString(),
     accounts,
     // The backend generates no warning today — it used to be derived here from `unknown` series

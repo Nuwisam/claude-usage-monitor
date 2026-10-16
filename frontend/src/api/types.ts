@@ -2,7 +2,7 @@
 
 /** Must ship in the SAME COMMIT as the contract-version constant in services/status.py —
  *  Nav compares the two and on a mismatch lights a warning in the header. */
-export const CONTRACT_VERSION = 3;
+export const CONTRACT_VERSION = 4;
 
 /** live — a measurement fresher than FRESH_WINDOW_SEC · stale — no confirmation for 5 min ·
  *  inferred_reset — inference, not measurement · unknown — no samples for the series, a failure.
@@ -84,7 +84,13 @@ export interface CascadeRung {
 }
 
 export interface AccountStatus {
+  /** The identity (v4): "<uuid>:<orgUuid>". The only thing to match cards or subscribe by. */
+  key: string;
+  /** The USER's uuid — informational. One user in two organizations (a Team seat and a
+   *  private Max plan) has one uuid for both, so it does not identify an account. */
   uuid: string;
+  orgUuid: string;
+  orgName: string | null;
   label: string | null;
   email: string | null;
   displayName: string | null;
@@ -112,14 +118,15 @@ export interface StatusResponse {
 /* --------------------------------------------------------------- SSE (/api/stream) */
 
 /** Frames carry `AccountStatus` VERBATIM — the same model /api/status returns, so there is
- *  no second shape to keep in sync. Subscription is by `account.uuid` only; the email is
- *  not part of this contract, because one address can point at several accounts. */
+ *  no second shape to keep in sync. Subscription is by `account.key` only; neither the
+ *  email nor the bare uuid is part of this contract, because one address — and one uuid —
+ *  can point at several accounts. */
 export interface HelloFrame {
   contractVersion: number;
   serverNow: string;
-  /** UUIDs found in the database. */
+  /** Keys found in the database. */
   subscribed: string[];
-  /** UUIDs that do not exist (yet). Not an error — the account may appear later — but
+  /** Keys that do not exist (yet). Not an error — the account may appear later — but
    *  reported, so a typo never looks like idleness. */
   unknown: string[];
   pingSec: number;

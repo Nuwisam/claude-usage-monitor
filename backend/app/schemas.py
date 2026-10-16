@@ -141,7 +141,12 @@ class CascadeRung(CamelModel):
 
 
 class AccountStatus(CamelModel):
+    # The identity (v4): "<uuid>:<orgUuid>" — what /stream and /history take. `uuid` stays
+    # as information only: it names the USER and is not unique across accounts.
+    key: str
     uuid: str
+    org_uuid: str
+    org_name: str | None
     label: str | None
     email: str | None
     display_name: str | None
@@ -173,8 +178,8 @@ class StatusResponse(CamelModel):
 class HelloFrame(CamelModel):
     contract_version: int
     server_now: UtcDt
-    # `subscribed` are the UUIDs found in the database, `unknown` the ones that are not.
-    # An unknown UUID is NOT an error (the account may only appear later), but it must be
+    # `subscribed` are the account keys found in the database, `unknown` the ones that are
+    # not (a bare uuid included — it is not a key). An unknown key is NOT an error (the account may only appear later), but it must be
     # visible: otherwise a typo in a panel's config shows up as silence indistinguishable
     # from idleness — the failure mode this whole project is built to avoid.
     subscribed: list[str]
@@ -213,6 +218,9 @@ class SessionAlert(CamelModel):
     detail: str | None = None
     since: UtcDt | None = None
     account_uuid: str | None = None
+    # From probe v17 on; with `account_uuid` it is the account's key, so the panel can tell
+    # two organizations of one user apart. Older probes do not send it.
+    org_uuid: str | None = None
     session_id: str | None = None
     agent_id: str | None = None
     agent_type: str | None = None

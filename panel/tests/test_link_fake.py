@@ -73,7 +73,7 @@ def clock(monkeypatch):
 
 
 def cfg(**over):
-    data = {"stream_token": "t", "account_1": {"uuid": "u"}, "brightness": 5}
+    data = {"stream_token": "t", "account_1": {"key": "u:o"}, "brightness": 5}
     data.update(over)
     return C.Config(data)
 
