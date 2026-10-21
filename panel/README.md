@@ -511,7 +511,10 @@ out of the card's title. Both switches govern both faces.
 ```powershell
 .\deploy\install-task.ps1          # venv outside the repo + logon scheduled task
 .\deploy\install-task.ps1 -Uninstall
+.\deploy\restart-panel.ps1         # stop, kill a hung client, start, wait for the first display frame
 ```
+
+`deploy\restart-panel.cmd` is the same restart for a double-click.
 
 Configuration: `%LOCALAPPDATA%\claude-usage-monitor\panel.json` — the same
 directory as the probe's `config.json`, but a **separate file**: the stream

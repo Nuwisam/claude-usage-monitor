@@ -52,6 +52,8 @@ $VenvDir  = Join-Path $AppDir "panel-venv"
 $Pythonw  = Join-Path $VenvDir "Scripts\pythonw.exe"
 $Launcher = Join-Path $AppDir "panel-run.pyw"
 
+. (Join-Path $PSScriptRoot "panel-common.ps1")
+
 function Get-PanelProcess {
     # By command line, not by name: pythonw.exe also runs
     # other things, and killing an unrelated process would be worse than the problem
@@ -167,32 +169,13 @@ Write-Host -NoNewline "waiting for confirmation from the log "
 # How many screens must report in. The script does NOT read panel.json -- during
 # installation that file often does not exist yet (there is a separate branch for it
 # below), so the number is given by hand: .\install-task.ps1 -Panels 2
-$deadline = (Get-Date).AddSeconds(30)
-$opened = @(); $unacked = @(); $busy = $null; $dup = $null; $bad = $null
-while ((Get-Date) -lt $deadline) {
-    Start-Sleep -Seconds 2
-    Write-Host -NoNewline "."
-    $new = @()
-    if (Test-Path $LogPath) { $new = @(Get-Content $LogPath | Select-Object -Skip $before) }
-    # Wait for the FIRST FRAME, not for "opened". A handle to the device
-    # does not draw anything yet, and it was the missing frame that was the symptom
-    # which had everything installed a second time.
-    #
-    # Collect ALL the lines, not the last one: with two screens one may be
-    # drawing while the other is busy -- and an "OK" after the first matching line
-    # would sweep that under the rug.
-    $opened  = @($new | Where-Object { $_ -match "first frame after opening" })
-    $unacked = @($new | Where-Object { $_ -match "not acknowledged" })
-    $busy    = $new | Where-Object { $_ -match "held by another process" } | Select-Object -Last 1
-    $dup     = $new | Where-Object { $_ -match "panel already running" }   | Select-Object -Last 1
-    $bad     = $new | Where-Object { $_ -match "config error:" }           | Select-Object -Last 1
-    if (($opened.Count + $unacked.Count) -ge $Panels -or $busy -or $dup -or $bad) { break }
-}
+$w = Wait-PanelLog -LogPath $LogPath -Before $before -Panels $Panels -TimeoutSec 30
+$opened = $w.Opened; $unacked = $w.Unacked; $busy = $w.Busy; $dup = $w.Dup; $bad = $w.Bad
 Write-Host ""
 Write-Host ""
 
 if ($opened.Count + $unacked.Count -gt 0) {
-    $reported = $opened.Count + $unacked.Count
+    $reported = $w.Screens
     if ($reported -lt $Panels) {
         Write-Host "WARNING - $reported of $Panels screens reported in:"
     } else {
