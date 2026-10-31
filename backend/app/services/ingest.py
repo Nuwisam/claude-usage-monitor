@@ -14,6 +14,13 @@ Three mechanisms that are not obvious and without which the system gives bad dat
    boundaries known and matching within tolerance) we write a drop > MONOTONIC_EPS with the
    stale_read flag, but we do NOT touch series_state. The mere absence of a boundary on both
    sides is NOT proof and must not hold the write back — see parsing.known_same_reset_window.
+   A FRESH reading is exempt: one the probe took from a `/usage` dump of its own
+   (`measurement.fresh_covered`) is Anthropic's answer at that moment, not somebody's old
+   cache, so the newest one is accepted when it is lower by a whole point or more
+   (`guard_released`); by less, it only confirms the state (the dump prints whole percents,
+   the cache fractions). Values do
+   fall inside a window — a plan change resets the pools in place, and Anthropic lowers the
+   weekly figures with `resets_at` unchanged.
 
 3. STATE IS UPDATED ONLY BY THE NEWEST SAMPLE. This also protects against a backlog which
    after a break of many hours pours in old samples — those must not overwrite the current
@@ -94,14 +101,24 @@ def _identity_part_ok(v) -> bool:
     return isinstance(v, str) and len(v) <= 64 and KEY_SEP not in v
 
 
-async def get_or_create_account(db: AsyncSession, acct: dict,
-                                token_meta: dict) -> tuple[Account, bool]:
+async def get_or_create_account(db: AsyncSession, acct: dict, token_meta: dict, *,
+                                is_backlog: bool = False) -> tuple[Account, bool, dict]:
     """Looks the account up by the PAIR (account_uuid, org_uuid) — see `Account`.
+    Returns (account, created, changed), where `changed` maps each plan field that moved to
+    [before, after] — empty for a new account.
 
     With the uuid alone a /login between two organizations of one user (Team and a private
     Max) rewrote one row back and forth, and every switch came out as `plan_changed`. Keyed
     by the pair, the switch is a different row, so `plan_changed` means only what it says: the
     plan of THIS organization changed.
+
+    A backlog entry does NOT rewrite the description — same reason as `script_version` in
+    `get_or_create_machine`: the spool holds hours-old entries, which arrive after the current
+    record of the same request, so an old tier would flip the field back and the next live
+    record would flip it forward, each time as a `plan_changed`. Only an account the entry
+    CREATES takes its fields: there is no other description to go by.
+
+    The event itself is the caller's: only `ingest_one` has the batch to attach it to.
     """
     uuid = acct.get("uuid")
     org = acct.get("org_uuid") or ""
@@ -116,19 +133,18 @@ async def get_or_create_account(db: AsyncSession, acct: dict,
         created = True
 
     before = {f: getattr(a, f) for f in _PLAN_FIELDS}
-    for src, dst in _ACCOUNT_FIELDS.items():
-        v = acct.get(src)
-        if v is not None:
-            setattr(a, dst, v)
-    if token_meta.get("subscription_type"):
-        a.subscription_type = token_meta["subscription_type"]
+    if created or not is_backlog:
+        for src, dst in _ACCOUNT_FIELDS.items():
+            v = acct.get(src)
+            if v is not None:
+                setattr(a, dst, v)
+        if token_meta.get("subscription_type"):
+            a.subscription_type = token_meta["subscription_type"]
     after = {f: getattr(a, f) for f in _PLAN_FIELDS}
 
-    if not created and before != after:
-        changed = {k: [before[k], after[k]] for k in before if before[k] != after[k]}
-        await _event(db, level="info", event_type="plan_changed", account_id=a.id,
-                     message="Account plan fields changed", detail=changed)
-    return a, created
+    changed = {} if created else {k: [before[k], after[k]]
+                                  for k in before if before[k] != after[k]}
+    return a, created, changed
 
 
 async def get_or_create_series(db: AsyncSession, o: Observation,
@@ -181,8 +197,8 @@ async def store_raw(db: AsyncSession, usage: Any) -> tuple[RawPayload, str]:
     return rp, digest
 
 
-# BELOW its caller on purpose: `store_raw` is referenced by line number from
-# routers/ingest.py, and inserting above it would move it.
+# BELOW its caller on purpose: inserting above `store_raw` moves it, and it used to be
+# referenced by line number from routers/ingest.py (now by name).
 def _canonical(obj: Any) -> tuple[str, str]:
     """The canonical body and its sha256 — ONE recipe, because these bytes ADDRESS ROWS
     ALREADY IN THE DATABASE. Change the formula and `raw_payloads` opens a second row for a
@@ -238,8 +254,11 @@ async def _write_observation(
     captured_at: datetime, client_captured_at: datetime | None,
     batch: IngestBatch, session_id: str | None, source: str,
     is_backlog: bool = False, client_reason: str | None = None,
-) -> tuple[bool, bool]:
-    """Returns (written, stale_read)."""
+    fresh: bool = False,
+) -> tuple[bool, bool, bool]:
+    """Returns (written, stale_read, released) — `released`: a drop the monotonicity guard
+    would have held back was accepted, because the reading is fresh (`fresh`: dated by the
+    probe's own `/usage` dump, see `ingest_one`)."""
     if is_backlog:
         # IDEMPOTENCE OF A SPOOL REPLAY. The probe truncates the spool only after the
         # response, so when the response is lost (timeout, broken connection) the same
@@ -282,9 +301,9 @@ async def _write_observation(
             .limit(1)
         )).scalar_one_or_none()
         if already is not None:
-            # (False, False), not an exception: this is a CORRECT result — we have this
+            # (False, False, False), not an exception: this is a CORRECT result — we have this
             # measurement. The entry must be counted in `accepted` so the probe truncates it.
-            return False, False
+            return False, False, False
 
     st = (await db.execute(
         select(SeriesState).where(SeriesState.account_id == account.id,
@@ -320,6 +339,7 @@ async def _write_observation(
                                  "utilization": o.utilization})
 
     stale_read = False
+    released = False
     should_write = True
     changed = True
     newest = st is None or st.last_captured_at is None or captured_at > st.last_captured_at
@@ -358,10 +378,39 @@ async def _write_observation(
         # `next_r`. The carried-over boundary is our INFERENCE and used here it would
         # reproduce the same freeze: every measurement without a boundary would get "the same
         # window" back.
+        #
+        # A provably identical window proves the window did not roll over — NOT that the value
+        # cannot fall. It does fall: a plan change resets the pools in place (2026-10-27, a
+        # max_5x -> max_20x upgrade zeroed all three weekly series with `resets_at`
+        # unchanged, and the guard held 67/67/84% until the state was promoted by hand), and
+        # Anthropic lowers the weekly figures inside a window on its own (2026-09-16, 29 ->
+        # 22%; 2026-10-15, an early weekly reset 42 -> 0%). What the guard exists to stop is a
+        # STALE reading — another machine's old cache — and a fresh one is not that: the probe
+        # took it from its own `/usage` dump, Anthropic's answer at that moment. So a fresh
+        # drop of a whole point or more is accepted (`released`) — only the newest, which is
+        # the one that writes the state; a smaller one only confirms it (below); an older one
+        # stays flagged, or it would enter history as a drop. After a release a HIGHER
+        # reading is never held — the guard stops falls, not rises — so a machine whose cache
+        # was fetched after the reset yet still shows the old figure (the other organization
+        # of the same uuid, say) can lift the state back until the next fresh reading. With an
+        # honest `fetchedAtMs` a cache older than the release is not newest and changes
+        # nothing. Known limitation, docs/RUNBOOK.md (`guard_released`). A drop from
+        # the cache alone is still held, plan change or not: tier and cache come from the same
+        # machine, and a machine that missed the change carries both stale.
         if (known_same_reset_window(prev_r, o.resets_at, settings.reset_window_eps_sec)
                 and prev_u is not None and o.utilization is not None
                 and o.utilization < prev_u - settings.monotonic_eps):
-            stale_read = True
+            if fresh and newest and o.utilization <= prev_u - 1.0:
+                released = True
+            elif fresh and newest:
+                # The dump prints whole percents and the cache carries fractions: a fresh 67
+                # after a cached 67.6 is the same figure at the dump's resolution, not a drop.
+                # Written, it would enter history as one and `window_start_index` would cut
+                # the window; held, a fresh reading would be flagged stale. It confirms the
+                # state instead, like a dedup skip.
+                should_write = False
+            else:
+                stale_read = True
 
         if not changed:
             # (1) dedup: we write only the heartbeat
@@ -373,7 +422,7 @@ async def _write_observation(
         # write is indistinguishable from client silence and the UI reports a false data age.
         if newest and not stale_read and st is not None:
             st.last_confirmed_at = captured_at
-        return False, False
+        return False, False, False
 
     # `o.resets_at`, not `next_r`: the SAMPLE is a record of the measurement and holds what the
     # measurement gave. Carrying the boundary over belongs to the state (`series_state` is a
@@ -411,7 +460,7 @@ async def _write_observation(
         st.last_is_active = o.is_active
         st.last_severity = o.severity
         st.last_extra = o.extra or None
-    return True, stale_read
+    return True, stale_read, released
 
 
 async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
@@ -484,7 +533,8 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         return {"samples_written": 0, "batch_id": batch.id, "ok": False,
                 "account_uuid": None, "account_key": None}
 
-    account, created = await get_or_create_account(db, acct, token_meta)
+    account, created, changed = await get_or_create_account(db, acct, token_meta,
+                                                            is_backlog=is_backlog)
     batch.account_id = account.id
     account.last_client_host = client.get("host") or account.last_client_host
 
@@ -493,6 +543,9 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
                      batch_id=batch.id, message="New account detected",
                      detail={"email": acct.get("email"), "org_type": acct.get("org_type"),
                              "org_uuid": account.org_uuid, "org_name": acct.get("org_name")})
+    if changed:
+        await _event(db, level="info", event_type="plan_changed", account_id=account.id,
+                     batch_id=batch.id, message="Account plan fields changed", detail=changed)
 
     # the (machine, account) pair — detection instead of prohibition
     ma = (await db.execute(
@@ -608,11 +661,13 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
                      detail={"problems": parsed.problems})
 
     cache: dict[str, UsageSeries] = {}
-    written = stale = undated = 0
+    written = stale = released = undated = 0
     newest_at: datetime | None = None
     new_series: list[str] = []
+    released_series: list[str] = []
     for o in parsed.observations:
-        client_ts = fresh_ts if (o.covered_by_fresh and fresh_ts is not None) else cache_ts
+        fresh = o.covered_by_fresh and fresh_ts is not None
+        client_ts = fresh_ts if fresh else cache_ts
         captured_at = measured_at(client_ts, offset, arrived_at)
         if captured_at is None:
             # `limit_samples.captured_at` is NOT NULL, so without this path it would be an
@@ -624,7 +679,7 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         series, s_created = await get_or_create_series(db, o, cache)
         if s_created:
             new_series.append(o.series_key)
-        w, sr = await _write_observation(
+        w, sr, rel = await _write_observation(
             db, account=account, series=series, o=o, captured_at=captured_at,
             client_captured_at=client_ts,
             batch=batch, session_id=hook.get("session_id"), source=source,
@@ -632,9 +687,13 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
             # A plain `get`: a probe below version 4 does not send this field and that is a
             # correct state, not missing data.
             client_reason=meas.get("extra_usage_disabled_reason"),
+            fresh=fresh,
         )
         written += int(w)
         stale += int(sr)
+        if rel:
+            released += 1
+            released_series.append(o.series_key)
 
     if undated:
         await _event(db, level="warn", event_type="no_captured_at", account_id=account.id,
@@ -657,8 +716,14 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         await _event(db, level="info", event_type="stale_read", account_id=account.id,
                      batch_id=batch.id,
                      message="%d stale readings — current state untouched" % stale)
+    if released:
+        await _event(db, level="info", event_type="guard_released", account_id=account.id,
+                     batch_id=batch.id,
+                     message="%d fresh readings accepted below the current state" % released,
+                     detail={"series": released_series, "plan_changed": changed or None})
 
     batch.samples_written = written
     return {"samples_written": written, "batch_id": batch.id, "ok": True,
             "account_uuid": account.account_uuid, "account_key": account.key,
-            "series_registered": new_series, "stale_reads": stale}
+            "series_registered": new_series, "stale_reads": stale,
+            "guard_released": released}

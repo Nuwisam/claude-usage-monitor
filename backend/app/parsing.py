@@ -181,7 +181,12 @@ def known_same_reset_window(a: datetime | None, b: datetime | None, eps_sec: flo
         `same_reset_window(None, None) is True` is CORRECT there — and the dedup of the
         `spend:org` and `extra:usage` series, which NEVER have a boundary, rests on it.
       * THE MONOTONICITY GUARD asks "do I have PROOF that the window has not rolled over".
-        Twice no boundary is no proof, not proof of the opposite.
+        Twice no boundary is no proof, not proof of the opposite. And the proof is about the
+        WINDOW, not the value: a plan change resets the pools in place, and Anthropic lowers
+        the weekly figures, both with the boundary unchanged — `_write_observation` therefore
+        accepts the NEWEST fresh drop of a whole point or more, treats a smaller newest fresh
+        step as a confirmation of the state (the dump's whole-percent resolution), and holds
+        the rest: a drop from the cache, and a fresh one older than the state.
 
     Ignorance taken for proof froze the current state. Right after a reset Anthropic reports
     `resets_at: null` for the fresh window at 0% usage, so a drop of 92% -> 0% with two
@@ -306,9 +311,9 @@ def window_start_index(rows: Sequence[Sample], eps_sec: float, monotonic_eps: fl
                `reset-in-progress`, where sanitize() zeroes `resets_at` while usage may be
                rising — and equally for `window-from-future`, which zeroes it for a different
                reason but leaves the same hole here,
-      drop   - utilization fell; impossible within a window (the monotonicity guard). The
-               rescue for a series with no known boundary — at 0% Anthropic reports no
-               `resets_at`.
+      drop   - utilization fell; inside a window when the plan changed or Anthropic lowered
+               the figure — a new baseline either way. The rescue for a series with no known
+               boundary — at 0% Anthropic reports no `resets_at`.
 
     A false signal SHORTENS the window, it never pulls in a sample from the previous one.
     """
