@@ -206,9 +206,9 @@ def alert_state(blocked, now_ms, footer=None, flood=False, seconds=True, date=Tr
 #: reads it as WITHDRAWN rather than merely quiet.
 #:
 #: Every series NAMED by a reading is confirmed from that reading's own stamp
-#: (backend/app/services/ingest.py:349-386), so a window still being reported lags the
-#: freshest of the others by a batch rather than by a window — and measurably never by
-#: more than the figure below.
+#: (`_write_observation` in backend/app/services/ingest.py), so a window still being
+#: reported lags the freshest of the others by a batch rather than by a window — and
+#: measurably never by more than the figure below.
 #:
 #: MEASURED, rather than reasoned from the neighbouring constants:
 #:
@@ -239,10 +239,10 @@ def _scoped_still_reported(scoped, session, weekly):
     """Whether anything still reports this scoped window.
 
     A scoped series the account stops naming is never pruned — its row survives forever
-    once it has ever carried a value (backend/app/services/status.py:241) — and its
-    confirmation never advances again (ingest.py:349-386), while `view.pick_scoped` ranks
-    on utilization alone. Drawn, such a rung shows a measurement from an unbounded time ago
-    and, because the reading age is the OLDEST of the windows the band draws, drags the
+    once it has ever carried a value (`build_account_status` in backend/app/services/status.py) — and its
+    confirmation never advances again (`_write_observation` in ingest.py), while
+    `view.pick_scoped` ranks on utilization alone. Drawn, such a rung shows a measurement
+    from an unbounded time ago and, because the reading age is the OLDEST of the windows the band draws, drags the
     band's ONE freshness label back with it: an otherwise live account reads "30 d 0 h ago".
     Withdrawing the rung is what keeps that label honest — the age then describes exactly
     what is on the glass, and the band falls back to the two-rung shape it has on every
