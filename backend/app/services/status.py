@@ -217,6 +217,14 @@ async def build_account_status(
     series: list[SeriesStatus] = []
     facts: list[SeriesFacts] = []
     for st, s in rows:
+        if st.not_offered_at is not None:
+            # The raw response says this account has no such window (Ultra has no 5-hour
+            # limit since 2026-10-31). Not a failure, so not `unknown`: information. It
+            # leaves `series[]` (and with it `_mark_duplicates`), and reaches the cascade
+            # with nothing frozen in it — the rung goes `off` (cascade._window).
+            facts.append(SeriesFacts(series_key=s.series_key, source=s.source, kind=s.kind,
+                                     bucket_key=s.bucket_key, offered=False))
+            continue
         raw_all = float(st.last_utilization) if st.last_utilization is not None else None
         # The reason is rebuilt from `last_extra` rather than from a separate column:
         # `enabled` and `disabled_reason` are already there, so state written before this

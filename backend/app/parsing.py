@@ -376,6 +376,48 @@ def probe_key(o: Observation) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class OfferReport:
+    """Which windows a raw response says this account does NOT HAVE.
+
+    Observed 2026-10-31, when Anthropic removed the 5-hour limit from Ultra: `five_hour`
+    went `null` and `limits[]` lost its `kind=session` entry. In ~16,000 earlier samples
+    across Pro, Max 5x, Max 20x and Team `five_hour` was never null — an idle window is a
+    dict `{utilization: 0, resets_at: null}`. So a key PRESENT with value null is Anthropic
+    saying "no such window", which is information, not a failed measurement (rule 4).
+
+    Only ever built from `usage_raw`: the probe's `sanitize` nulls expired windows in
+    `usage`, and that null means "my cache is old", not "there is no window".
+    """
+    null_buckets: frozenset[str]        # "bucket:<k>" for keys PRESENT with value None
+    offered: frozenset[str]             # every series key the raw response DOES carry
+    limit_keys: frozenset[str] | None   # every limit series key limits[] yields; None = no info
+
+    def not_offered(self, series_key: str, source: str) -> bool:
+        if source == "bucket":
+            return series_key in self.null_buckets
+        if source == "limit":
+            return self.limit_keys is not None and series_key not in self.limit_keys
+        return False                    # spend / extra_usage: credit pools, never judged here
+
+
+def offer_report(raw: Any) -> OfferReport | None:
+    """None when `raw` is not an object. An ABSENT key is no information; so is a `limits`
+    that is missing, not a list, empty, or holding a non-object — hiding a window that
+    exists would be worse than showing a frozen one with its age."""
+    if not isinstance(raw, dict):
+        return None
+    parsed = parse_usage(raw)
+    nulls = frozenset("bucket:%s" % k for k in parsed.null_keys if k not in _SPECIAL_KEYS)
+    lim = raw.get("limits")
+    keys = None
+    if isinstance(lim, list) and lim and all(isinstance(x, dict) for x in lim):
+        # The same parser builds the keys, so they cannot drift from the series' own.
+        keys = frozenset(o.series_key for o in parse_usage({"limits": lim}).observations)
+    return OfferReport(null_buckets=nulls, limit_keys=keys,
+                       offered=frozenset(o.series_key for o in parsed.observations))
+
+
 # --------------------------------------------------------------------------- main
 def parse_usage(payload: Any, fresh_covered: frozenset[str] = frozenset()) -> ParseResult:
     """Turns the /api/oauth/usage response into a list of observations.

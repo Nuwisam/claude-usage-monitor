@@ -131,6 +131,31 @@ async def test_exactly_one_function_builds_the_account_card(db, monkeypatch):
         assert set(warnings) <= set(aggregate["warnings"])
 
 
+async def test_both_paths_agree_on_an_account_without_a_session_window(db, monkeypatch):
+    """Ultra since 2026-10-31: the not-offered series leave `series[]` and the session rung
+    goes `off` — identically on `/api/status` and in the stream's card."""
+    import app.services.status as stat
+    from tests.test_ingest_not_offered import ULTRA
+
+    t = utcnow().replace(microsecond=0) - timedelta(seconds=600)
+    await ingest_one(db, machine_name="desktop", payload=payload(captured_at=t))
+    p = payload(usage=ULTRA, captured_at=t + timedelta(seconds=60))
+    p["usage_raw"] = ULTRA
+    await ingest_one(db, machine_name="desktop", payload=p)
+    await db.commit()
+
+    now = utcnow()
+    monkeypatch.setattr(stat, "utcnow", lambda: now)
+    aggregate = json.loads((await build_status(db)).model_dump_json(by_alias=True))
+    assert aggregate["contractVersion"] == 4
+    (card,) = aggregate["accounts"]
+    assert {r["key"]: r["state"] for r in card["cascade"]}["session"] == "off"
+    acc = (await db.execute(select(Account))).scalar_one()
+    individual, _ = await stat.build_account_status(
+        db, acc, now=now, last_batch_at=await stat.last_batch_time(db, acc.id))
+    assert json.loads(individual.model_dump_json(by_alias=True)) == card
+
+
 async def test_last_batch_time_agrees_with_the_grouped_variant(db):
     """The publisher computes `last_batch_at` with a different query than `/api/status`
     (one account instead of GROUP BY). The only fact with two sources — so it gets a test."""

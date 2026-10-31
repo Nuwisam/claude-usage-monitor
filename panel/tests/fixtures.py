@@ -223,5 +223,33 @@ def diverged():
     return [a, b]
 
 
+def ultra():
+    """An account with no 5-hour window (Ultra since 2026-10-31) above a Max one.
+
+    The values are the real batch's (backend/tests/fixtures/usage_ultra_no_session.json):
+    the week at 79%, Fable exhausted and binding, credits off. The backend has removed the
+    session series and turned the session rung `off`, so the band drops that rung and the
+    week takes its slot at the session's size. The bottom account is the control.
+    """
+    a = account(
+        "00000000-0000-4000-8000-000000000007", "ultra@example.org",
+        tier="default_claude_max_20x",
+        cascade=[rung("session", "off"),
+                 rung("weekly", "on", isCurrent=True, utilization=79),
+                 rung("credits", "off"),
+                 rung("hard_block", "on")],
+        series=[
+            series("limit:weekly_all|weekly|-|-", "Week (all models)",
+                   kind="weekly_all", bucketKey=None, sort_order=25,
+                   utilization=79, rawUtilization=79, resetsAt=_at(200),
+                   severity="warning", confirmedAt=_at(-0.4)),
+            series("limit:weekly_scoped|weekly|fable|-", "Week — Fable",
+                   kind="weekly_scoped", group="weekly", sort_order=200,
+                   utilization=100, rawUtilization=100, resetsAt=_at(200),
+                   isActive=True, severity="critical", confirmedAt=_at(-0.4)),
+        ])
+    return [a, base()[0]]
+
+
 SCENES = {"base": base, "states": states, "edges": edges, "scoped": scoped,
-          "diverged": diverged}
+          "diverged": diverged, "ultra": ultra}

@@ -38,16 +38,20 @@ class BandState:
     __slots__ = ("title", "plan", "session", "weekly", "scoped", "credits",
                  "session_view", "weekly_view", "scoped_view", "scoped_label",
                  "reset_session", "reset_week", "reset_scoped", "reset_aligned",
-                 "ago", "note", "show_clock", "alert")
+                 "ago", "note", "show_clock", "alert", "session_off")
 
     def __init__(self, title="", plan="", session=None, weekly=None, scoped=None,
                  credits=None, session_view=None, weekly_view=None, scoped_view=None,
                  scoped_label="", reset_session=("", None), reset_week=("", None),
                  reset_scoped=("", None), reset_aligned=True, ago="", note=None,
-                 show_clock=False, alert=False):
+                 show_clock=False, alert=False, session_off=False):
         self.title = title
         self.plan = plan
         self.session = session
+        #: The backend's session rung is `off`: the account HAS no 5-hour window (Ultra
+        #: since 2026-10-31). Not the same as `session is None`, which on its own is a
+        #: window never measured and keeps its hatched rung (rule 4).
+        self.session_off = session_off
         self.weekly = weekly
         #: The weekly window of ONE model. None on an account that has none, and that is
         #: what decides whether the band carries a third rung.
@@ -238,9 +242,13 @@ SCOPED_WITHDRAWN_LAG_S = 1800
 def _scoped_still_reported(scoped, session, weekly):
     """Whether anything still reports this scoped window.
 
-    A scoped series the account stops naming is never pruned — its row survives forever
-    once it has ever carried a value (`build_account_status` in backend/app/services/status.py) — and its
-    confirmation never advances again (`_write_observation` in ingest.py), while
+    The backend now hides a scoped series whose raw response leaves it out of a non-empty
+    `limits[]` (`not_offered_at`, see `_mark_not_offered` in backend/app/services/ingest.py),
+    but only from a probe that sends `usage_raw` and only once such a reading arrives. Until
+    then — and always for an older probe — a scoped series the account stops naming is not
+    pruned: its row survives once it has ever carried a value (`build_account_status` in
+    backend/app/services/status.py) and its confirmation never advances again
+    (`_write_observation` in ingest.py), while
     `view.pick_scoped` ranks on utilization alone. Drawn, such a rung shows a measurement
     from an unbounded time ago and, because the reading age is the OLDEST of the windows the band draws, drags the
     band's ONE freshness label back with it: an otherwise live account reads "30 d 0 h ago".
@@ -293,7 +301,9 @@ def band_state(account, now_ms, name=None, show_clock=False, note=None,
                          reset_session=(why, None), reset_week=(why, None),
                          ago="—", alert=alert)
 
-    session = V.pick_session(account.series)
+    r = account.rung("session")
+    session_off = r is not None and r.state == "off"
+    session = None if session_off else V.pick_session(account.series)
     weekly = V.pick_weekly(account.series)
     # A scoped window that has stopped being reported is dropped BEFORE the ranking rather
     # than after it, so a withdrawn series cannot outrank a live one: see
@@ -352,6 +362,7 @@ def band_state(account, now_ms, name=None, show_clock=False, note=None,
         note=note,
         show_clock=show_clock,
         alert=alert,
+        session_off=session_off,
     )
 
 
@@ -789,7 +800,8 @@ class Renderer:
         # would have it say the wrong thing about one of its two tracks; the pair comes
         # apart into two rungs instead, which is what the mockup's own caption asks for.
         shape = b.shape(band.scoped is not None, _credits_shown(band.credits),
-                        self.glue_pair and band.reset_aligned)
+                        self.glue_pair and band.reset_aligned,
+                        session=not band.session_off)
         for rung in shape.rungs:
             self._window(d, b, band, rung)
         if shape.pair is not None:
@@ -883,7 +895,10 @@ class Renderer:
             draw.cross(d, centre, self.L.LINK_CROSS, theme.NEUTRAL_600, width=w)
 
     def _window(self, d, b, band, rung):
-        session = rung.key == "session"
+        # The top slot's accent, not the session's: on an account with no 5-hour window
+        # the week holds that slot. Only the colours follow it -- the label text below
+        # still comes from the rung's key, so the promoted week keeps saying WEEK.
+        session = rung.hero
         # The scoped rung's label is the MODEL's name and comes from the data, so there
         # is no LABEL_SCOPED beside the other two. That absence is the genericity made
         # visible: a model this build has never heard of draws its own name.

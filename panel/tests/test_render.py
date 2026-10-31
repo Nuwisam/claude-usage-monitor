@@ -21,6 +21,61 @@ CLOCK = fmt.panel_clock(fmt.parse_utc("2026-08-30T19:07:33Z"))
 SHAPES = [(s, c, g) for s in (False, True)
           for c in (False, True) for g in (False, True)]
 
+#: The same, on an account with no 5-hour window (Ultra since 2026-10-31).
+NO_SESSION = [(s, c, g, False) for s, c, g in SHAPES]
+
+
+@pytest.mark.parametrize("lay", [L.Layout(480, 320), LW.Layout()],
+                         ids=["480x320", "wide"])
+@pytest.mark.parametrize("scoped,credits,glue,session", NO_SESSION)
+def test_with_no_session_the_week_takes_the_top_slot_at_session_size(lay, scoped, credits,
+                                                                     glue, session):
+    m = lay.m
+    for b in lay.bands:
+        shape = b.shape(scoped, credits, glue, session)
+        assert [r.key for r in shape.rungs] == (["week", "scoped"] if scoped else ["week"])
+        assert shape.pair is None, "nothing to pair the week with once it is on top"
+        top = shape.rungs[0]
+        assert top.hero
+        assert top.bar[3] - top.bar[1] == m.SES_BAR_H
+        assert (top.f_num, top.f_num_tight, top.f_pct) == \
+            (m.F_SES_NUM, m.F_SES_NUM_TIGHT, m.F_SES_PCT)
+        assert all(not r.hero for r in shape.rungs[1:])
+        assert shape.fits
+
+
+@pytest.mark.parametrize("scoped,credits,glue", SHAPES)
+def test_hero_is_the_session_wherever_there_is_one(scoped, credits, glue):
+    for b in L.Layout(480, 320).bands:
+        for r in b.shape(scoped, credits, glue).rungs:
+            assert r.hero == (r.key == "session")
+
+
+def test_ultra_band_drops_the_session_and_dates_from_the_week():
+    ultra, _ = fixtures.ultra()
+    now = fmt.ms(fmt.parse_utc(fixtures.NOW_ISO))
+    band = render.band_state(ultra, now)
+    assert band.session_off and band.session is None
+    assert band.weekly is not None and band.scoped is not None
+    # The age label comes from the week and Fable, both confirmed 0.4 min ago.
+    week = fmt.parse_utc(band.weekly.confirmed_at)
+    assert band.ago == fmt.ago(fmt.ms(week), now)
+    frame = render.Renderer().frame(render.ScreenState(
+        clock=CLOCK, link="live", bands=[band, render.band_state(fixtures.base()[0], now)]))
+    assert frame.image.size == (480, 320)
+
+
+def test_a_session_never_measured_keeps_its_hatched_rung():
+    """`unknown`, not `off`: no session series and no statement that there is none — the rung
+    stays, drawn as a window never measured (rule 4)."""
+    acc = fixtures.account(
+        "00000000-0000-4000-8000-000000000009", "new@example.org",
+        cascade=[fixtures.rung("session", "unknown"), fixtures.rung("weekly", "on")],
+        series=[fixtures.series("bucket:seven_day", "Week (all models)", kind="weekly_all",
+                                bucketKey="seven_day", utilization=10, rawUtilization=10)])
+    band = render.band_state(acc, fmt.ms(fmt.parse_utc(fixtures.NOW_ISO)))
+    assert not band.session_off
+
 
 # --- geometry ---------------------------------------------------------------
 

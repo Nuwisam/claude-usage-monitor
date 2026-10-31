@@ -256,6 +256,12 @@ weekly window, and then whatever the account actually has:
   forever once it has carried a value, so a withdrawn series left in the running
   would outrank a live one and take the rung down with it.
 - **Credits**, once a weekly pool is exhausted.
+- **No 5-hour window at all.** Ultra has had none since 2026-10-31. The backend then
+  turns the session rung of the cascade `off`, and the band drops the session rung.
+  The week moves into the top slot at the session's size and in its accent, because
+  it is now the limit that binds. The label still says `WEEK`. There is nothing to
+  pair the week with, so glue does not apply. A session that was simply never measured
+  is not this case: its rung is `unknown`, not `off`, and it keeps its hatched rung.
 
 With both at once the band carries four things, and the two weekly windows then
 share ONE row of two tracks under one label and one countdown — `WEEK / FABLE`.

@@ -538,6 +538,34 @@ information, "I don't know whether you have credits" is the absence of it. Mergi
 show a way out of the limit that may not exist. When the slide-down ends on the `unknown`
 rung, that one gets `isCurrent` — and the UI shows "unknown" there, it does not guess.
 
+**A window the account does not have.** On 2026-10-31 Anthropic removed the 5-hour limit from
+Ultra (formerly Max 20x). The raw response since then reads:
+
+```json
+"five_hour": null,
+"limits": [
+  {"kind": "weekly_all", "group": "weekly", "percent": 79, "is_active": false, …},
+  {"kind": "weekly_scoped", "scope": {"model": {"display_name": "Fable"}}, "percent": 100,
+   "is_active": true, …}
+]
+```
+
+In ~16,000 earlier samples across Pro, Max 5x, Max 20x and Team, `five_hour` was never null.
+An idle window is the dict `{"utilization": 0, "resets_at": null}`. So a key that is
+**present with value null**, or a limit missing from a non-empty `limits[]`, is information
+from Anthropic, not a failed measurement. What follows from that:
+
+- **Source.** The statement is read ONLY from `usage_raw`, which probes ≥ v15 send. It is
+  never read from `usage`, where the probe's `sanitize` nulls windows whose cache expired.
+- **Series.** A series the account does not have is **not listed in `series[]`**.
+- **Cascade.** Its rung is `state: "off"`, with `utilization` and `seriesKey` null. An off
+  session makes `isCurrent` start at the weekly.
+- **Not the same as `unknown`.** A session never measured and never reported absent stays
+  `unknown`.
+- **Both directions.** The newest reading decides, every time. A newer accepted reading of
+  the window (a downgrade from Ultra) brings the series and the rung back by itself.
+- **Events.** `series_not_offered` and `series_offered` are written to the event log.
+
 **Amounts in the cascade are in minor units with an exponent** — `usedMinor: 3820`,
 `exponent: 2`, `currency: "USD"` means `38.20 USD`. The backend **does not format**; the UI
 does. The same rule applies in `spend.extra`: `{"amount_minor": 0, "currency": "USD",
@@ -744,6 +772,11 @@ same screen would mean something different depending on the time of the week. A 
 plus a moving marker gives both: "how much is left in the window I'm working in" **and**
 "what's really limiting me".
 
+**The one exception: an account with no 5-hour window.** When the cascade's `session` rung
+is `off` (§ 6 — Ultra since 2026-10-31), the week takes the hero, and on the panel it takes
+the top slot at the session's size. The trigger is the account HAVING no such window, not
+`isActive` — so the rule above still holds: nothing moves while the window exists.
+
 ---
 
 ## 10. Without the UI, via `curl`
@@ -791,6 +824,12 @@ not have needed a bump, but every consumer that subscribed or matched by `uuid` 
 arrived the same way: the version stayed at 3, and a UI without this field gets `undefined`
 and falls back to the hourly wording. The same goes for `label`: it is display text,
 `seriesKey` is identity — changing a label does not bump `contractVersion` either.
+
+**A window the account does not have (§ 6) did not bump it either.** `state: "off"` was already
+one of the rung's three values, and `series[]` was already an open set. It never listed a
+series that has never had a value. An older UI therefore sees a session rung that is off, and
+no session series. On the web that leaves an empty hero. On an old panel build it leaves a
+hatched `unknown` rung. Both are honest degradations. Neither is a misreading.
 
 The Team account has already been verified live, in three credit states at once: working
 (93%, 277.95 of 300.00 EUR), an exhausted own pool (100%, 300.04 of 300.00 — `enabled` still

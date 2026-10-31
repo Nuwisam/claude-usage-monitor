@@ -290,7 +290,10 @@ class LimitSample(Base):
 
 class SeriesState(Base):
     """The hot row per (account, series), which lets /api/status read a dozen or so rows
-    instead of a groupwise-max over the whole fact table. A cache — rebuildable from limit_samples."""
+    instead of a groupwise-max over the whole fact table. A cache — rebuildable from
+    limit_samples, with ONE exception: `not_offered_at` records a statement no sample carries
+    (a window the raw response says the account does not have) and is rebuildable only by
+    re-reading raw_payloads."""
     __tablename__ = "series_state"
 
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), primary_key=True)
@@ -317,6 +320,12 @@ class SeriesState(Base):
 
     prev_utilization: Mapped[float | None] = mapped_column(Numeric(7, 4))
     prev_captured_at: Mapped[datetime | None] = _dt()
+
+    # The newest reading whose RAW response says this account has no such window (a key
+    # present with value null, or a limit missing from a non-empty limits[] — see
+    # parsing.offer_report). NULL = offered, or no information. Always newer than the last
+    # accepted reading of the series; an accepted newer reading clears it.
+    not_offered_at: Mapped[datetime | None] = _dt()
 
     updated_at: Mapped[datetime] = _dt(nullable=False, server_default=func.now(6),
                                        onupdate=func.now(6))

@@ -402,10 +402,13 @@ class Rung:
     """
 
     __slots__ = ("key", "label", "bar", "top", "bottom", "centre",
-                 "f_num", "f_num_tight", "f_pct")
+                 "f_num", "f_num_tight", "f_pct", "hero")
 
     def __init__(self, key, label, bar, f_num, f_num_tight, f_pct):
         self.key = key
+        #: The top rung, drawn in the accent: the session, or -- on an account with no
+        #: 5-hour window -- the week that took its slot.
+        self.hero = False
         self.label = label
         self.bar = bar
         self.top = label[1]
@@ -482,14 +485,14 @@ class Band:
         self.rows_top = y + m.HEADER_H + m.ROW_GAP
 
         self.shapes = {k: self._shape(*k) for k in
-                       [(s, c, g) for s in (False, True)
-                        for c in (False, True) for g in (False, True)]}
+                       [(s, c, g, n) for s in (False, True) for c in (False, True)
+                        for g in (False, True) for n in (False, True)]}
 
-    def shape(self, scoped, credits, glue=True):
+    def shape(self, scoped, credits, glue=True, session=True):
         """The shape this band takes, given whether the account has a scoped weekly
-        window, whether its credits are drawn, and whether the two weekly windows are
-        allowed to share a row."""
-        return self.shapes[(bool(scoped), bool(credits), bool(glue))]
+        window, whether its credits are drawn, whether the two weekly windows are
+        allowed to share a row, and whether the account has a 5-hour window at all."""
+        return self.shapes[(bool(scoped), bool(credits), bool(glue), bool(session))]
 
     def _cells(self, top, bottom, n):
         """Share a span out between n rows, the way `AlertList.rows` does.
@@ -538,7 +541,7 @@ class Band:
         pair.centres = (pair.centre - half, pair.centre - half + m.PAIR_NUM_PITCH)
         return pair
 
-    def _shape(self, scoped, credits, glue):
+    def _shape(self, scoped, credits, glue, session=True):
         m = self.m
         if credits:
             # Credits glued to the bottom of the band (margin-top: auto in the mockup);
@@ -555,12 +558,20 @@ class Band:
         # -- not because three rungs and the credits would not fit (they do, on both
         # canvases), but because at that density the pair reads better side by side than
         # stacked. `glue` is the panel.json switch that says otherwise.
-        glued = scoped and credits and glue
+        glued = session and scoped and credits and glue
 
         # The scoped window is built like the aggregate week and set in the same type:
         # both are seven-day windows, and one of them being narrower in scope is not a
         # reason to make it look like a lesser KIND of thing.
-        if glued:
+        if not session:
+            # No 5-hour window (Ultra since 2026-10-31): the week is the binding limit, so it
+            # takes the session's slot AND its sizes. There is nothing to pair it with -- the
+            # glue joins the week and the scoped window under the session -- so it is ignored.
+            spec = [("week", m.SES_BAR_H, m.F_SES_NUM, m.F_SES_NUM_TIGHT, m.F_SES_PCT)]
+            if scoped:
+                spec.append(("scoped", m.WK_BAR_H, m.F_WK_NUM, m.F_WK_NUM, m.F_WK_PCT))
+            heights = [m.LABEL_H + m.INNER_GAP + s[1] for s in spec]
+        elif glued:
             spec = [("session", m.SES_BAR_H_PAIR, m.F_SES_NUM_PAIR,
                      m.F_SES_NUM_PAIR, m.F_SES_PCT_PAIR)]
             heights = [m.LABEL_H + m.INNER_GAP + m.SES_BAR_H_PAIR,
@@ -578,6 +589,7 @@ class Band:
         rungs = [self._rung(key, cell, *sizes)
                  for cell, (key, *sizes) in zip(cells, spec)]
         pair = self._pair(cells[-1]) if glued else None
+        rungs[0].hero = True
 
         lowest = pair.bottom if pair else rungs[-1].bottom
         # Per CELL, not in aggregate. `_cells` shares the span out EQUALLY while the

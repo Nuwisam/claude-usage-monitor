@@ -3,7 +3,7 @@ import { Desktop } from "@phosphor-icons/react";
 import type { AccountStatus } from "../api/types";
 import { parseUtc, stamp } from "../lib/time";
 import { Cascade } from "./Cascade";
-import { HeroSession, pickSession } from "./HeroSession";
+import { HeroSession, pickHero } from "./HeroSession";
 import { SeriesRow } from "./SeriesRow";
 
 interface Props {
@@ -15,7 +15,8 @@ interface Props {
  *  account, because 40% on Max 20x and 40% on a Team seat are different amounts — which is also
  *  why we never sum or average percentages across accounts. */
 export function AccountCard({ a, nowMs }: Props) {
-  const hero = pickSession(a.series);
+  const pick = pickHero(a);
+  const hero = pick.s;
   // `primary` only — the API reports some limits twice (bucket + an entry in limits[]),
   // and `spend` and `extra_usage` are two views of the same credit pool.
   const rest = a.series
@@ -55,10 +56,15 @@ export function AccountCard({ a, nowMs }: Props) {
       </div>
 
       {hero ? (
-        <HeroSession s={hero} nowMs={nowMs} />
-      ) : (
+        <HeroSession s={hero} nowMs={nowMs} kicker={pick.kicker} />
+      ) : a.series.length === 0 ? (
         <div className="empty-slot">
           no series has had a value yet — the account is reporting, but there is nothing to show
+        </div>
+      ) : (
+        // Other series exist, so "nothing to show" would be false: only the hero's window is missing.
+        <div className="empty-slot">
+          no {pick.window} window has been reported for this account yet
         </div>
       )}
 

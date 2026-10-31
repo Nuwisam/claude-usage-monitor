@@ -28,6 +28,9 @@ function valueOf(r: CascadeRung): string {
   switch (r.key) {
     case "session":
     case "weekly": {
+      // The account has no such window (Ultra has no 5 h limit) — information, struck
+      // through like credits that are off.
+      if (r.state === "off") return "off";
       const p = pct(r.utilization);
       if (p === null) return "unknown";
       // 100% is not "almost there" — it is the end of this rung.

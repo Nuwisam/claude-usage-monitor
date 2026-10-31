@@ -121,7 +121,7 @@ def test_no_series_does_not_blow_up():
 
 def test_hero_rests_on_session_not_on_isActive():
     """Were the hero to follow isActive, the same screen would mean something else
-    depending on the day of the week (HeroSession.tsx:21-22)."""
+    depending on the day of the week (HeroSession.tsx, `pickHero`)."""
     week = series(seriesKey="limit:weekly_all|weekly|-|-", kind="weekly_all",
                      bucketKey="seven_day", isActive=True, utilization=99)
     session = series(isActive=False, utilization=3)
@@ -130,7 +130,7 @@ def test_hero_rests_on_session_not_on_isActive():
 
 def test_pickers_skip_duplicates():
     """We render only primary series — bucket and limit are the same number
-    reported twice (backend/app/services/status.py:128-156)."""
+    reported twice (backend/app/services/status.py, `_mark_duplicates`)."""
     duplicate = series(seriesKey="bucket:five_hour", primary=False, kind=None,
                       utilization=2)
     real = series(utilization=2)

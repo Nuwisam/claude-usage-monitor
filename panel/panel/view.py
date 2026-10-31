@@ -117,9 +117,11 @@ def reset_note(s, now_ms):
 
 
 def pick_session(series):
-    """The hero is permanently anchored to the 5 h session. Were it to follow `isActive`,
-    the same screen would mean something else depending on the day of the week
-    (HeroSession.tsx)."""
+    """The hero is anchored to the 5 h session. Were it to follow `isActive`, the same
+    screen would mean something else depending on the day of the week (HeroSession.tsx).
+    The one exception is an account with no 5 h window at all -- its session rung is `off`
+    (render.band_state), and the week takes the top slot instead (HeroSession.tsx,
+    `pickHero`)."""
     primary = [s for s in series if s.primary]
     for test in (lambda s: s.kind == "session",
                  lambda s: s.bucket_key == "five_hour"):

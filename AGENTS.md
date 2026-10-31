@@ -143,7 +143,7 @@ The project holds to a fixed vocabulary: window, pool, series, sample, freshness
 withdrawn meter, block, permission, credits, overage, reset, probe, frame, banner, card. Series
 labels, warnings and captions reach the screen in those words. `display_label` is refreshed on
 every ingest, so a wording fix reaches series registered earlier — a label is never frozen at the
-moment its series was first seen. Four of the words are easy to reach for in the wrong place, so
+moment its series was first seen. Five of the words are easy to reach for in the wrong place, so
 each one carries the test that settles it.
 
 **meter vs counter vs count vs countdown.** A **meter** is only the usage meter an organization
@@ -163,6 +163,18 @@ matching the `permission` reason key; the panel's `SHORT` display value is `ALLO
 is what fits: measured 39 px against `AlertList.REASON_W = 58`, where `PERMISSION` is 66 px and
 `APPROVAL` 59 px and both overflow. Any longer string silently runs off the alert list — measure
 before you change it.
+
+**not offered vs withdrawn vs unknown.** These are three different absences.
+- **Not offered:** the account does not have the window at all. The raw response says so, with
+  a key present as `null` or a limit missing from `limits[]`; Ultra has had no 5-hour window
+  since 2026-10-31. Rung `off`, series hidden, events `series_not_offered` /
+  `series_offered`.
+- **Withdrawn:** the window or pool exists, but the organization shut its meter.
+- **Unknown:** we do not know, because a reading failed.
+
+The test: if Anthropic's own payload states the absence, it is "not offered" or "withdrawn"
+(withdrawn only when a meter could have said it). If the absence is only our silence, it is
+"unknown", and it is never drawn as a zero or as `off`.
 
 **frame, qualified.** A stream frame and a display frame are different things; say which one you
 mean wherever the surrounding text does not.

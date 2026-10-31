@@ -14,6 +14,8 @@
  *    reset           — three window captions right after a session reset
  *    credits         — credits withdrawn by the organization next to an exhausted own pool;
  *                      the two states look identical in the payload apart from `disabled_reason`
+ *    ultra           — an account with no 5 h window (Ultra since 2026-10-31) next to Max: the
+ *                      session rung `off`, the week in the hero
  *
  *  `reset` is a separate variant because these states are visible ONLY in the hero, and the hero
  *  takes only `kind: "session"` series — adding them to `states` would show nothing.
@@ -164,6 +166,43 @@ function accountMax(): AccountStatus {
       series(6, { key: "limit:weekly_scoped|weekly|fable|-", label: "Week — Fable",
         source: "limit", sort: 200, kind: "weekly_scoped", group: "weekly", u: 0, resetMin: null,
         capturedMin: -85, fresh: "stale", active: false, severity: "normal" }),
+    ],
+  };
+}
+
+// ─── Ultra account: no 5 h window (since 2026-10-31), week 79%, Fable exhausted ─
+// Values from the real batch behind backend/tests/fixtures/usage_ultra_no_session.json. The
+// session series are gone from `series[]` and the session rung is `off`, so the week takes
+// the hero.
+function accountUltra(): AccountStatus {
+  const base = accountMax();
+  return {
+    ...base,
+    key: "00000000-0000-4000-8000-000000000005:00000000-0000-4000-8000-000000000006",
+    uuid: "00000000-0000-4000-8000-000000000005",
+    orgUuid: "00000000-0000-4000-8000-000000000006",
+    email: "ultra@example.org",
+    rateLimitTier: "default_claude_max_20x",
+    cascade: [
+      rung({ key: "session", state: "off" }),
+      rung({ key: "weekly", state: "on", utilization: 79, seriesKey: WEEKLY_KEY, isCurrent: true }),
+      rung({ key: "credits", state: "off", seriesKey: "spend:org", usedMinor: 0, currency: "USD", exponent: 2 }),
+      rung({ key: "hard_block", state: "on" }),
+    ],
+    series: [
+      series(31, { key: WEEKLY_KEY, label: "Week (all models)", source: "limit", sort: 25,
+        kind: "weekly_all", group: "weekly", u: 79, resetMin: 200, capturedMin: -0.4,
+        fresh: "live", active: false, severity: "warning", delta: 2 }),
+      series(32, { key: "bucket:seven_day", label: "Week (all models)", source: "bucket",
+        sort: 20, bucket: "seven_day", u: 79, resetMin: 200, capturedMin: -0.4, fresh: "live",
+        delta: 2, primary: false, dupOf: WEEKLY_KEY }),
+      series(33, { key: "spend:org", label: "Spend limit (your pool)", source: "spend",
+        sort: 30, u: 0, resetMin: null, capturedMin: -240, confirmedMin: -0.4, sinceMin: -240,
+        fresh: "live", severity: "normal", delta: 0,
+        extra: { enabled: false, used: { amount_minor: 0, currency: "USD", exponent: 2 } } }),
+      series(34, { key: "limit:weekly_scoped|weekly|fable|-", label: "Week — Fable",
+        source: "limit", sort: 200, kind: "weekly_scoped", group: "weekly", u: 100,
+        resetMin: 200, capturedMin: -0.4, fresh: "live", active: true, severity: "critical" }),
     ],
   };
 }
@@ -488,6 +527,7 @@ export function mockStatus(): StatusResponse {
   if (variant === "states") accounts = withEdgeCases(accounts);
   if (variant === "reset") accounts = afterReset();
   if (variant === "credits") accounts = creditsStates();
+  if (variant === "ultra") accounts = [accountUltra(), accountMax()];
 
   return {
     contractVersion: 4,

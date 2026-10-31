@@ -52,6 +52,31 @@ def test_parses_real_output(probe):
     assert r["scoped"] == {"Fable": 0, "Sonnet only": 12}
 
 
+# Ultra since 2026-10-31: the 5-hour limit is gone and `/usage` prints no session line.
+ULTRA_OUTPUT = """You are currently using your subscription to power your Claude Code usage
+
+Current week (all models): 79% used · resets Oct 31, 4pm (UTC)
+Current week (Fable): 100% used · resets Oct 31, 4pm (UTC)
+
+What's contributing to your usage?
+Approximate · sessions on this machine only · shares overlap
+"""
+
+
+def test_ultra_output_without_a_session_line_is_still_a_reading(probe):
+    """`read_fresh` refuses a dump only when BOTH session and weekly are missing."""
+    r = probe.parse_usage_text(ULTRA_OUTPUT)
+    assert r == {"session": None, "weekly_all": 79, "scoped": {"Fable": 100}}
+
+
+def test_merge_with_a_null_five_hour_covers_no_session(probe):
+    cache = {"five_hour": None, "seven_day": {"utilization": 70, "resets_at": None},
+             "limits": [{"kind": "weekly_all", "percent": 70, "scope": None}]}
+    usage, covered = probe.merge(cache, probe.parse_usage_text(ULTRA_OUTPUT))
+    assert usage["five_hour"] is None
+    assert "bucket:five_hour" not in covered and "bucket:seven_day" in covered
+
+
 def test_ignores_attribution_section(probe):
     """The '100% of your usage came from...' lines carry a percentage but have no colon
     before it. Were they to match, 100% would land as a limit reading."""

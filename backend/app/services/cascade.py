@@ -38,6 +38,10 @@ class SeriesFacts:
     extra: dict[str, Any] | None = None
     # The reason this series' meter does not work (see parsing.meter_withdrawn).
     unavailable_reason: str | None = None
+    # False: the raw response says the account has no such window (series_state
+    # .not_offered_at). Such facts carry no value, no `is_active`, no `extra` — a frozen
+    # number would turn the rung back on.
+    offered: bool = True
 
 
 def _pick(facts: list[SeriesFacts], **crit) -> SeriesFacts | None:
@@ -69,7 +73,23 @@ def _flag(extra: dict[str, Any] | None, key: str) -> bool | None:
     return v if isinstance(v, bool) else None
 
 
-def _window_rung(key: str, f: SeriesFacts | None) -> CascadeRung:
+def _window(facts: list[SeriesFacts], kind: str,
+            bucket_key: str) -> tuple[SeriesFacts | None, bool]:
+    """(the window's series, off). Picked from the OFFERED facts only, kind first and the
+    bucket as the fallback. `off` when no candidate is offered and at least one is not —
+    a candidate without a row says nothing. If the bucket and the limit disagree, the one
+    still offered builds the rung, so it stays `on`: both signals must agree first."""
+    offered = [f for f in facts if f.offered]
+    picked = _pick(offered, kind=kind) or _pick(offered, bucket_key=bucket_key)
+    off = picked is None and any(
+        not f.offered and (f.kind == kind or f.bucket_key == bucket_key) for f in facts)
+    return picked, off
+
+
+def _window_rung(key: str, f: SeriesFacts | None, off: bool = False) -> CascadeRung:
+    if off:
+        # Information, like credits that are off: this account has no such window.
+        return CascadeRung(key=key, state=OFF)
     if f is None:
         return CascadeRung(key=key, state=UNKNOWN)
     return CascadeRung(key=key, state=ON if f.utilization is not None else UNKNOWN,
@@ -77,8 +97,8 @@ def _window_rung(key: str, f: SeriesFacts | None) -> CascadeRung:
 
 
 def build_cascade(facts: list[SeriesFacts]) -> list[CascadeRung]:
-    session = _pick(facts, kind="session") or _pick(facts, bucket_key="five_hour")
-    weekly = _pick(facts, kind="weekly_all") or _pick(facts, bucket_key="seven_day")
+    session, session_off = _window(facts, "session", "five_hour")
+    weekly, weekly_off = _window(facts, "weekly_all", "seven_day")
     spend = _pick(facts, source="spend")
     eu = _pick(facts, source="extra_usage")
 
@@ -132,7 +152,9 @@ def build_cascade(facts: list[SeriesFacts]) -> list[CascadeRung]:
         # response. `reason` is here the only content we can give about it.
         hard = CascadeRung(key=HARD_BLOCK, state=ON, reason=reason)
 
-    rungs = [_window_rung(SESSION, session), _window_rung(WEEKLY, weekly), credits, hard]
+    # An off session passes as None, so `_mark_current` starts from the weekly on its own.
+    rungs = [_window_rung(SESSION, session, session_off),
+             _window_rung(WEEKLY, weekly, weekly_off), credits, hard]
     _mark_current(rungs, session, weekly, eu)
     return rungs
 

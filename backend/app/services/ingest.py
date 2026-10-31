@@ -45,9 +45,14 @@ from app.models import (
     RawPayload, SeriesState, UsageSeries, KEY_SEP,
 )
 from app.parsing import (
-    Observation, carry_reset_window, known_same_reset_window, meter_withdrawn, parse_ts,
-    parse_usage, same_reset_window,
+    Observation, OfferReport, carry_reset_window, known_same_reset_window, meter_withdrawn,
+    offer_report, parse_ts, parse_usage, same_reset_window,
 )
+
+# The windows the cascade builds a rung from (`cascade._window`). A null one nobody has
+# registered is registered on sight, so an install whose accounts never had it still turns
+# the rung `off`. Only these: the raw response nulls ~two dozen other keys on every plan.
+_WINDOW_BUCKETS = frozenset({"bucket:five_hour", "bucket:seven_day"})
 
 # Zero — used when the payload does not carry `sent_at` (a probe below v5 or a foreign client).
 # Graceful degradation: the client stamp then goes through untouched, exactly as before the
@@ -255,10 +260,12 @@ async def _write_observation(
     batch: IngestBatch, session_id: str | None, source: str,
     is_backlog: bool = False, client_reason: str | None = None,
     fresh: bool = False,
-) -> tuple[bool, bool, bool]:
-    """Returns (written, stale_read, released) — `released`: a drop the monotonicity guard
-    would have held back was accepted, because the reading is fresh (`fresh`: dated by the
-    probe's own `/usage` dump, see `ingest_one`)."""
+) -> tuple[bool, bool, bool, bool]:
+    """Returns (written, stale_read, released, offered_again) — `released`: a drop the
+    monotonicity guard would have held back was accepted, because the reading is fresh
+    (`fresh`: dated by the probe's own `/usage` dump, see `ingest_one`); `offered_again`: the
+    reading moved the state of a series the account had been reported not to have (see
+    `_mark_not_offered`)."""
     if is_backlog:
         # IDEMPOTENCE OF A SPOOL REPLAY. The probe truncates the spool only after the
         # response, so when the response is lost (timeout, broken connection) the same
@@ -301,9 +308,9 @@ async def _write_observation(
             .limit(1)
         )).scalar_one_or_none()
         if already is not None:
-            # (False, False, False), not an exception: this is a CORRECT result — we have this
+            # (False, ...), not an exception: this is a CORRECT result — we have this
             # measurement. The entry must be counted in `accepted` so the probe truncates it.
-            return False, False, False
+            return False, False, False, False
 
     st = (await db.execute(
         select(SeriesState).where(SeriesState.account_id == account.id,
@@ -420,9 +427,13 @@ async def _write_observation(
     if not should_write:
         # We do not write the sample, but THE MEASUREMENT DID HAPPEN. Without this a skipped
         # write is indistinguishable from client silence and the UI reports a false data age.
+        again = False
         if newest and not stale_read and st is not None:
             st.last_confirmed_at = captured_at
-        return False, False, False
+            # A return within the heartbeat lands here: the value matches the frozen state,
+            # but the window is offered again.
+            again = _clear_not_offered(st, captured_at)
+        return False, False, False, again
 
     # `o.resets_at`, not `next_r`: the SAMPLE is a record of the measurement and holds what the
     # measurement gave. Carrying the boundary over belongs to the state (`series_state` is a
@@ -441,6 +452,11 @@ async def _write_observation(
     await db.flush()
 
     # (3) the state is updated only by the newest, unsuspicious sample
+    again = False
+    # Whether the account had a reading of this series before. A row `_mark_not_offered`
+    # created on a first sighting has none and raised no `series_not_offered`, so its first
+    # real reading must not announce the window as offered AGAIN.
+    announced = st is not None and st.last_captured_at is not None
     if newest and not stale_read:
         if st is None:
             st = SeriesState(account_id=account.id, series_id=series.id)
@@ -460,7 +476,73 @@ async def _write_observation(
         st.last_is_active = o.is_active
         st.last_severity = o.severity
         st.last_extra = o.extra or None
-    return True, stale_read, released
+        again = _clear_not_offered(st, captured_at) and announced
+    return True, stale_read, released, again
+
+
+def _clear_not_offered(st: SeriesState, at: datetime) -> bool:
+    """An accepted reading at least as new as the last "not offered" one says the window is
+    back (a downgrade from Ultra brings the 5-hour window with it). Ties go to "offered":
+    an observation always beats the statement that there is none."""
+    if st.not_offered_at is not None and at >= st.not_offered_at:
+        st.not_offered_at = None
+        return True
+    return False
+
+
+async def _mark_not_offered(db: AsyncSession, *, account: Account, report: OfferReport,
+                            at: datetime, observed: set[str],
+                            cleared: list[str]) -> dict[str, float | None]:
+    """Record that this reading's raw response says the account has no such window.
+
+    Returns the series that BECAME not offered, with their last value (for the event), and
+    appends to `cleared` the ones the raw response offers again without an observation.
+    Rules:
+      * an observation in the same reading always wins (`observed`);
+      * the flag holds the NEWEST not-offered reading, and is set only when that reading is
+        newer than the last accepted one — so a backlog entry or another machine's stale
+        cache can neither set it over a newer value nor clear it;
+      * with no state row, one is created ONLY for a bucket reported null — that is how an
+        account first seen on Ultra gets its session rung `off`. Limits only on rows that
+        exist: otherwise every limit registered globally (Team, other models) would get a row
+        on every account that does not have it. No event for a created row: a first
+        sighting has nothing to compare against.
+    `usage_series` is never touched — it is global, and this flag is per account.
+    """
+    rows = (await db.execute(
+        select(UsageSeries, SeriesState)
+        .outerjoin(SeriesState, (SeriesState.series_id == UsageSeries.id)
+                   & (SeriesState.account_id == account.id))
+        .where(UsageSeries.source.in_(("bucket", "limit")))
+    )).all()
+    became: dict[str, float | None] = {}
+    for s, st in rows:
+        if s.series_key in observed:
+            continue
+        if (st is not None and st.not_offered_at is not None
+                and s.series_key in report.offered and at >= st.not_offered_at):
+            # The raw response names the window again, but `usage` yields no observation
+            # of it — `sanitize` nulled an expired cached window (a downgrade, then a cache
+            # idle for 5 h). The window exists; only its value is unknown, and that is the
+            # freshness rule's business, not this flag's.
+            st.not_offered_at = None
+            if st.last_captured_at is not None:
+                cleared.append(s.series_key)
+            continue
+        if not report.not_offered(s.series_key, s.source):
+            continue
+        if st is None:
+            if s.series_key in report.null_buckets:
+                db.add(SeriesState(account_id=account.id, series_id=s.id, not_offered_at=at))
+            continue
+        known = st.last_confirmed_at or st.last_captured_at
+        if (known is None or at > known) and (st.not_offered_at is None
+                                              or at > st.not_offered_at):
+            if st.not_offered_at is None and known is not None:
+                became[s.series_key] = (float(st.last_utilization)
+                                        if st.last_utilization is not None else None)
+            st.not_offered_at = at
+    return became
 
 
 async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
@@ -665,6 +747,7 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
     newest_at: datetime | None = None
     new_series: list[str] = []
     released_series: list[str] = []
+    offered_again: list[str] = []
     for o in parsed.observations:
         fresh = o.covered_by_fresh and fresh_ts is not None
         client_ts = fresh_ts if fresh else cache_ts
@@ -679,7 +762,7 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         series, s_created = await get_or_create_series(db, o, cache)
         if s_created:
             new_series.append(o.series_key)
-        w, sr, rel = await _write_observation(
+        w, sr, rel, again = await _write_observation(
             db, account=account, series=series, o=o, captured_at=captured_at,
             client_captured_at=client_ts,
             batch=batch, session_id=hook.get("session_id"), source=source,
@@ -694,6 +777,31 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
         if rel:
             released += 1
             released_series.append(o.series_key)
+        if again:
+            offered_again.append(o.series_key)
+
+    # A WINDOW THE ACCOUNT DOES NOT HAVE (Ultra, 2026-10-31: `five_hour: null`, no session
+    # limit). Read off `raw` alone — never `usage`, where `sanitize` nulls expired windows —
+    # so a probe below v15, which sends no `usage_raw`, gives no information here. Dated by
+    # the cache, like everything else the raw block says.
+    report = offer_report(raw) if isinstance(raw, dict) else None
+    offer_at = measured_at(cache_ts, offset, arrived_at)
+    not_offered: dict[str, float | None] = {}
+    if report is not None and offer_at is not None:
+        # `_mark_not_offered` judges registered series only, and a null bucket yields no
+        # observation — so on an install where no account ever had the window there is no row
+        # to flag. The parser builds it, so the row is the one a reading would have made.
+        nulled = {k.split(":", 1)[1]: {"utilization": None}
+                  for k in sorted(report.null_buckets & _WINDOW_BUCKETS)}
+        for o in parse_usage(nulled).observations:
+            if (await db.execute(select(UsageSeries.id)
+                                 .where(UsageSeries.series_key == o.series_key))
+                    ).scalar_one_or_none() is None:
+                await get_or_create_series(db, o, cache)
+                new_series.append(o.series_key)
+        not_offered = await _mark_not_offered(
+            db, account=account, report=report, at=offer_at,
+            observed={o.series_key for o in parsed.observations}, cleared=offered_again)
 
     if undated:
         await _event(db, level="warn", event_type="no_captured_at", account_id=account.id,
@@ -721,9 +829,22 @@ async def ingest_one(db: AsyncSession, *, machine_name: str, payload: dict,
                      batch_id=batch.id,
                      message="%d fresh readings accepted below the current state" % released,
                      detail={"series": released_series, "plan_changed": changed or None})
+    # "Not offered", not "withdrawn": that word belongs to meters (AGENTS.md, Terminology).
+    if not_offered:
+        await _event(db, level="info", event_type="series_not_offered",
+                     account_id=account.id, batch_id=batch.id,
+                     message="%d windows no longer offered on this account" % len(not_offered),
+                     detail={"series": sorted(not_offered), "at": offer_at.isoformat(),
+                             "last_utilization": not_offered})
+    if offered_again:
+        await _event(db, level="info", event_type="series_offered",
+                     account_id=account.id, batch_id=batch.id,
+                     message="%d windows offered again on this account" % len(offered_again),
+                     detail={"series": offered_again})
 
     batch.samples_written = written
     return {"samples_written": written, "batch_id": batch.id, "ok": True,
             "account_uuid": account.account_uuid, "account_key": account.key,
             "series_registered": new_series, "stale_reads": stale,
-            "guard_released": released}
+            "guard_released": released,
+            "series_not_offered": len(not_offered), "series_offered": len(offered_again)}

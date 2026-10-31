@@ -15,7 +15,9 @@ each, not scaled between them.
 
 What is on the glass, per account:
 
-- ⏳ **The 5-hour session and the weekly window,** each as a percentage and a bar.
+- ⏳ **The 5-hour session, where the account has one, and the weekly window,** each as a
+  percentage and a bar. On an account with no 5-hour window (Ultra since 2026-10-31) the week
+  takes the session's slot.
 - 🧩 **A model's own weekly limit** — Fable today — when the account has one, on a rung of its
   own. It is picked by kind and labelled from the data, so the next model appears by itself.
 - 🕐 **A live countdown to the reset** — seconds under an hour, so "wait it out or push on?"
@@ -211,7 +213,7 @@ old HTTP response, so the backend's parser needed no changes.
 from the validator inside the Claude Code binary nor from the reference repo. Series are rows
 in the table, not columns — a new bucket at Anthropic's end needs no migration.
 
-**Limits are a cascade.** 5-hour window / weekly window → after exhaustion, credits
+**Limits are a cascade.** 5-hour window (where the account has one) / weekly window → after exhaustion, credits
 (`extra_usage` / `spend`) → hard block. That's why `spend` is a first-class series, and
 `limits[].is_active` says what is really constraining *right now*.
 
