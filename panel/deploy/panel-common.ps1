@@ -1,18 +1,83 @@
 <#
-    Shared by install-task.ps1 and restart-panel.ps1 (dot-sourced): waiting,
-    after Start-ScheduledTask, until the log says how the panel started.
+    Shared by install-task.ps1 and restart-panel.ps1 (dot-sourced):
+      * Get-PanelProcess  -- the panel's pythonw processes, by command line
+      * Stop-PanelProcess -- stop the task and make sure every one of them is gone
+      * Wait-PanelLog     -- after Start-ScheduledTask, wait until the log says how
+                             the panel started
 
     Notes:
       * Kept in PURE ASCII, same reason as install-task.ps1 (PowerShell 5.1
         reads a file without a BOM as ANSI).
-      * The match strings below are log messages written by panel/panel/link.py,
-        panel/panel/app.py, panel/panel/drivers/turing_rev_a.py and
-        panel/run.pyw. Renaming one of them means changing it HERE, once --
-        a copy missed in one script silently turns a correct start into
-        "NO CONFIRMATION".
-      * Only the waiting is shared. What each script then SAYS about the result
-        stays in the script: an installation and a restart give different advice.
+      * The match strings in Wait-PanelLog are log messages written by
+        panel/panel/link.py, panel/panel/lock.py, panel/panel/supervisor.py,
+        panel/panel/drivers/turing_rev_a.py and panel/run.pyw. Renaming one of
+        them means changing it HERE, once -- a copy missed in one script silently
+        turns a correct start into "NO CONFIRMATION".
+      * The process lookup and the stop are shared too: the two scripts had a copy
+        each, and a third process kind (the guardian and the tray supervisor came
+        with the tray icon) would have had to be added to both.
+      * What each script SAYS about the result stays in the script: an
+        installation and a restart give different advice.
 #>
+
+# The three launchers install-task.ps1 writes, top of the chain first:
+# guardian -> tray supervisor -> client (panel/panel/keep.py). Stop-PanelProcess
+# kills in this order.
+$PanelLaunchers = @("panel-guard.pyw", "panel-tray.pyw", "panel-run.pyw")
+
+function Get-PanelProcess {
+    # By command line, not by name: pythonw.exe also runs other things, and killing
+    # an unrelated process would be worse than the problem being solved. Each
+    # launcher is usually two processes -- the venv stub and its child.
+    param([string[]]$Launcher = $PanelLaunchers)
+    $all = @(Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" -ErrorAction SilentlyContinue)
+    @($all | Where-Object {
+        $cl = $_.CommandLine
+        @($Launcher | Where-Object { $cl -like "*$_*" }).Count -gt 0
+    })
+}
+
+function Stop-PanelProcess {
+    <#
+        Stops the task, then waits for the PROCESSES to die, not for the task
+        state: the scheduler says "Ready" while pythonw still holds panel.lock,
+        and a new instance would back off on that lock and leave the old code
+        drawing.
+
+        Stopping the task is normally enough: the guardian is the task's process,
+        and the job objects (panel/panel/winjob.py) take the supervisor and the
+        client down with it. What is still alive after $WaitSec is killed top of
+        the chain first, and the list is read again after each level -- killing a
+        level cascades through the jobs, so the next level may already be gone.
+        A client started by hand (python -m panel) is not matched and has to be
+        closed by hand.
+    #>
+    param([string]$TaskName, [int]$WaitSec = 15)
+    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+        Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    }
+    $deadline = (Get-Date).AddSeconds($WaitSec)
+    while ((Get-Date) -lt $deadline -and (Get-PanelProcess)) {
+        Start-Sleep -Milliseconds 500
+    }
+    $left = @(Get-PanelProcess)
+    if ($left.Count -eq 0) { return }
+    Write-Host "  $($left.Count) panel process(es) still alive after $WaitSec s - killing"
+    foreach ($level in $PanelLaunchers) {
+        foreach ($p in @(Get-PanelProcess -Launcher $level)) {
+            Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    # Kills are asynchronous, and so is the cascade through the jobs.
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadline -and (Get-PanelProcess)) {
+        Start-Sleep -Milliseconds 500
+    }
+    if (Get-PanelProcess) {
+        throw "panel process will not die - check Task Manager (pythonw.exe, panel-*.pyw)"
+    }
+}
 
 function Wait-PanelLog {
     param(

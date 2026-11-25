@@ -233,6 +233,20 @@ with no trace of why. When you see `PANEL BUSY` instead of confirmation, another
 the module — stop that program, and the client will pick up drawing on its own within ~30 s, no
 reinstall needed.
 
+The task runs a chain of three processes: a guardian, which keeps the tray supervisor alive,
+which keeps the client alive (details, and what each tray command means, in `panel/README.md`,
+"The tray icon and the watchdog"). A crashed or hung client is back within seconds to two
+minutes without anyone touching it. Day to day:
+
+| want | do |
+|---|---|
+| restart the client | tray icon -> Restart panel |
+| stop drawing, keep the tray | tray icon -> Stop panel (a "Panel stopped" card goes up) |
+| everything off until the next logon | tray icon -> Quit, or `Stop-ScheduledTask -TaskName 'Claude Panel AX206'` |
+| everything back | `Start-ScheduledTask -TaskName 'Claude Panel AX206'` |
+| the icon is gone | `Set-Content $env:LOCALAPPDATA\claude-usage-monitor\tray.cmd restart`, or `deploy\restart-panel.ps1` |
+| why did it restart | `panel-tray.log` (exit code or "no heartbeat", peak memory), then `panel.log` |
+
 Configuration: `%LOCALAPPDATA%\claude-usage-monitor\panel.json` — a **separate file** from the
 probe's `config.json`, because the stream token has a different scope than the ingest token.
 Accounts are two named fields (`account_1`, `account_2`), not a list — the screen layout has

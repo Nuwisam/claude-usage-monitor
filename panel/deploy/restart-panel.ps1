@@ -6,15 +6,19 @@
 
     What it does:
       1. stops the scheduled task
-      2. waits for the pythonw process to DIE, and kills it if it does not
+      2. waits for every panel process (guardian, tray supervisor, client) to DIE,
+         and kills what does not
       3. starts the task again
       4. waits for "first frame after opening" in the log, once per screen
+
+    The tray icon's "Restart panel" restarts the client alone; this restarts all
+    three, and is the way back when the icon itself is gone.
 
     Notes:
       * Kept in PURE ASCII, same reason as install-task.ps1 (PowerShell 5.1
         reads a file without a BOM as ANSI).
-      * The process is found by command line, not by name -- pythonw.exe runs
-        other things too. Same filter as install-task.ps1.
+      * The processes are found by command line, not by name -- pythonw.exe runs
+        other things too. Get-PanelProcess / Stop-PanelProcess in panel-common.ps1.
       * Waiting for the process, not the task state: the scheduler says "Ready"
         while pythonw still holds panel.lock, and the new instance would back
         off on the lock and leave the screen dark.
@@ -29,16 +33,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$AppDir  = Join-Path $env:LOCALAPPDATA "claude-usage-monitor"
-$LogPath = Join-Path $AppDir "panel.log"
-$CfgPath = Join-Path $AppDir "panel.json"
+$AppDir   = Join-Path $env:LOCALAPPDATA "claude-usage-monitor"
+$LogPath  = Join-Path $AppDir "panel.log"
+$CfgPath  = Join-Path $AppDir "panel.json"
+$TrayLog  = Join-Path $AppDir "panel-tray.log"
+$GuardLog = Join-Path $AppDir "panel-guard.log"
 
 . (Join-Path $PSScriptRoot "panel-common.ps1")
-
-function Get-PanelProcess {
-    @(Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -like "*panel-run.pyw*" })
-}
 
 if (-not (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) {
     throw "task '$TaskName' does not exist - run deploy\install-task.ps1 first"
@@ -57,7 +58,9 @@ try {
 # With log_path set the client writes its frames there (a relative path is
 # resolved against the task's working directory, $AppDir), but run.pyw still
 # writes "panel already running" and "config error:" to the default panel.log.
-# So both are watched; the same file is never read twice.
+# So both are watched; the same file is never read twice. The tray supervisor's
+# log is watched too: a lock held by another instance is reported there, before
+# any client starts.
 $Logs = @($LogPath)
 if ($cfg -and $cfg.log_path) {
     $custom = [string]$cfg.log_path
@@ -66,30 +69,13 @@ if ($cfg -and $cfg.log_path) {
         $Logs = @($custom, $LogPath)
     }
 }
+$Logs += $TrayLog
 
 # --- 1. stop ---------------------------------------------------------------
+# A hung client does not react to Stop-ScheduledTask, and still holds the lock
+# and the USB handle; Stop-PanelProcess kills what outlives the stop.
 Write-Host "stopping '$TaskName'"
-Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-
-$deadline = (Get-Date).AddSeconds(15)
-while ((Get-Date) -lt $deadline -and (Get-PanelProcess)) {
-    Start-Sleep -Milliseconds 500
-}
-$left = Get-PanelProcess
-if ($left) {
-    # A hung client does not react to Stop-ScheduledTask. It still holds the
-    # lock and the USB handle. Only the task's own pythonw (panel-run.pyw) is
-    # matched here: a client started by hand (python -m panel) is not, and has
-    # to be closed by hand.
-    Write-Host "  process still alive after 15 s - killing $($left.Count)"
-    foreach ($p in $left) {
-        Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
-    }
-    Start-Sleep -Seconds 2
-    if (Get-PanelProcess) {
-        throw "panel process will not die - check Task Manager (pythonw.exe, panel-run.pyw)"
-    }
-}
+Stop-PanelProcess -TaskName $TaskName -WaitSec 15
 
 # --- 2. start --------------------------------------------------------------
 $before = @(foreach ($l in $Logs) { if (Test-Path $l) { @(Get-Content $l).Count } else { 0 } })
@@ -131,8 +117,13 @@ if ($reported -gt 0) {
     Write-Host "  $bad"
     Write-Host "  fix $CfgPath and run this script again"
 } else {
-    Write-Host "NO CONFIRMATION within $TimeoutSec s. Log tail:"
-    if (Test-Path $Logs[0]) { Get-Content $Logs[0] -Tail 10 | ForEach-Object { Write-Host "  $_" } }
+    Write-Host "NO CONFIRMATION within $TimeoutSec s. Log tails:"
+    foreach ($l in @($Logs[0], $TrayLog, $GuardLog)) {
+        if (Test-Path $l) {
+            Write-Host "  -- $l"
+            Get-Content $l -Tail 10 | ForEach-Object { Write-Host "  $_" }
+        }
+    }
 }
 Write-Host ""
-foreach ($l in $Logs) { Write-Host "  log: $l" }
+foreach ($l in ($Logs + $GuardLog)) { Write-Host "  log: $l" }

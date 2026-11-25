@@ -43,3 +43,15 @@ pyserial==3.5
 # `pip install -r requirements.txt` — re-run it, or the third screen reports itself
 # unavailable while the other two keep drawing.
 pycryptodome==3.23.0
+# pystray draws the tray icon of the supervisor (panel/tray.py): Restart, Stop/Start,
+# Quit. Pinned for one more reason than the rest: tray.py hooks two PRIVATE members of
+# its Win32 class (`_message_handlers`, `_on_notify`) to keep every call into it on the
+# icon's own thread, and a new release is free to rename them. Read
+# pystray/_win32.py before bumping this. Without it the supervisor still keeps the
+# panel alive — it only has no icon (panel-tray.log says so).
+#
+# `git pull` does not install it either: re-run deploy/install-task.ps1.
+pystray==0.19.5
+# pystray's own dependency on Windows (it imports six.moves.queue). Pinned here because
+# pystray's metadata does not pin it, and an unpinned one is a `pip install -U` away.
+six==1.17.0

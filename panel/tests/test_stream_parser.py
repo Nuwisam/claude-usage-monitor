@@ -144,6 +144,9 @@ def test_validation_catches_errors(change, fragment):
     ({"brightness": float("inf")}, "brightness must be a number"),
     ({"tick_sec": float("inf")}, "tick_sec must be a finite number"),
     ({"tick_sec": float("nan")}, "tick_sec must be a finite number"),
+    # The ceiling the supervisor states: a tick longer than this would read as a hang
+    # (supervisor.HANG_SEC) and restart the panel every cycle.
+    ({"tick_sec": 200}, "tick_sec is out of the range 0.01..30"),
 ])
 def test_bad_numbers_give_a_problem_not_an_exception(change, fragment):
     """validate() promises to RETURN a list of problems. A bare `int(self.brightness)`

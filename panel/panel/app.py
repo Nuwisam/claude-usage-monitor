@@ -16,13 +16,21 @@ import threading
 import time
 
 from . import config as C
-from . import fmt, model, render, status, stream
+from . import fmt, keep, model, render, status, stream
 from .link import PanelLink
+# Re-exported: run.pyw and __main__.py import both from here, and they have since
+# before the lock had a module of its own (lock.py says why it moved).
+from .lock import AlreadyRunning, single_instance  # noqa: F401
 from .log import get as log
 
+# How often the main loop proves it is alive to the supervisor (tray.py), which
+# calls it hung after supervisor.HANG_SEC of silence.
+HEARTBEAT_EVERY_SEC = 5.0
 
-class AlreadyRunning(Exception):
-    pass
+
+class StreamDied(RuntimeError):
+    """The SSE thread is gone. Raised by the main loop, so the process ends and its
+    supervisor (tray.py) starts a fresh one — see `App.run`."""
 
 
 def seconds(raw, default=0.0):
@@ -43,29 +51,14 @@ def seconds(raw, default=0.0):
     return value
 
 
-def single_instance(path=None):
-    """A file lock. Returns a handle that has to be held until the process ends.
-
-    The exclusive USB handle already guarantees that only one process draws — but the
-    second instance would then spin in a loop of "panel held by another process",
-    which reads like a hardware failure rather than like "it is already running".
-    """
-    import msvcrt
-
-    path = path or os.path.join(C.OUTDIR, "panel.lock")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    handle = open(path, "a+b")
-    try:
-        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-    except OSError:
-        handle.close()
-        raise AlreadyRunning("panel already running (lock %s)" % path)
-    return handle
-
-
 class App:
-    def __init__(self, cfg, monotonic=time.monotonic):
+    def __init__(self, cfg, monotonic=time.monotonic, heartbeat_path=None):
         self.cfg = cfg
+        # Where `run()` proves it is alive. None — the default — writes nothing, so a
+        # test that builds an App never touches the file the live supervisor watches;
+        # only `main()` passes the real path.
+        self.heartbeat = (keep.Toucher(heartbeat_path, HEARTBEAT_EVERY_SEC, monotonic)
+                          if heartbeat_path else None)
         # An injectable clock, because `holding()` and the debounce stamps read
         # it directly, and the tests cannot wait 300 s for the card to burn out.
         # `fmt.ServerClock` has been injected from the start — the same idiom, not a new one.
@@ -399,6 +392,18 @@ class App:
         try:
             while not self.stop.is_set():
                 self.tick()
+                # The stream thread catches only network errors (StreamClient._once);
+                # anything else — a MemoryError under system memory pressure — ends the
+                # thread while this loop keeps ticking. The screen then shows numbers
+                # that stopped moving, with a heartbeat that says all is well. Ending
+                # the process instead hands it to the supervisor, which starts a whole
+                # new one; the thread's own traceback is already in the log
+                # (threading.excepthook, log.py).
+                if not client.is_alive() and not self.stop.is_set():
+                    raise StreamDied("stream thread is gone; exiting for a restart")
+                # AFTER the tick, so a tick that hangs stops the heartbeat with it.
+                if self.heartbeat is not None:
+                    self.heartbeat.beat()
                 deadline += self.cfg.tick_sec
                 delay = deadline - self.monotonic()
                 if delay < 0:
@@ -448,6 +453,6 @@ def main(argv=None):
         raise C.ConfigError("; ".join(problems))
     lock = single_instance()
     try:
-        App(cfg).run()
+        App(cfg, heartbeat_path=os.path.join(C.OUTDIR, keep.CLIENT_HEARTBEAT)).run()
     finally:
         lock.close()

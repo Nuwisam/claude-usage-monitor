@@ -326,7 +326,12 @@ class Config:
         # top-level key is checked only where it can still mean the AX206 range.
         if "panels" not in self._raw:
             self._number(problems, "brightness", int, 0, 7)
-        self._number(problems, "tick_sec", float, 0.01)
+        # `tick_sec` has a ceiling because something DOES state one: the main loop
+        # writes its heartbeat once per tick at best, and the supervisor calls a
+        # client hung after `supervisor.HANG_SEC` (120 s) of silence. A tick of 200 s
+        # would be a false "hung" and a restart every cycle; 30 s leaves the four-fold
+        # margin a slow tick needs.
+        self._number(problems, "tick_sec", float, 0.01, 30)
         self._number(problems, "width", int, 1)
         self._number(problems, "height", int, 1)
         for name in ("clock_seconds", "clock_date", "session_alerts", "record_sse",

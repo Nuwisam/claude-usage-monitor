@@ -8,13 +8,20 @@ without copying, and Windows does not demand administrator rights for a link.
 """
 import os
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+# Exit codes of `--card`. 4 is the one `python -m panel` already gives for a lock
+# that someone else holds (panel/__main__.py), so the two entry points agree.
+CARD_DRAWN = 0
+CARD_PARTIAL = 1
+CARD_LOCKED = 4
 
-def _card(lines):
+
+def _card(lines, retry_sec=0.0):
     """A full-screen card on the panel.
 
     ConfigError promises in its own docstring that a configuration error is VISIBLE
@@ -28,6 +35,10 @@ def _card(lines):
     The card goes to ALL configured screens, each one separately: half a desk with
     an error and half with frozen, credible-looking numbers would be worse than the
     state before this function existed.
+
+    Returns (screens drawn, screens configured). A screen that does not take the card
+    is tried again for up to `retry_sec` seconds: right after the client was killed,
+    the device can still be held by the process that is dying.
     """
     from panel import config as C, render
     from panel.drivers import REGISTRY
@@ -85,21 +96,75 @@ def _card(lines):
     # can easily be looking at two sizes at once — and a card of the wrong size is a
     # card nobody reads, which is the one thing this function exists to prevent.
     cards = {}
-    for spec in cfg.panels:
-        link = PanelLink(spec, cfg)
-        try:
-            frame = cards.get(link.canvas)
-            if frame is None:
-                frame = cards[link.canvas] = render.Renderer(*link.canvas).frame(state)
-            link.send(frame, force=True)
-        except Exception:
-            # One busy screen must not take the card away from the others.
-            pass
-        finally:
-            link.close()
+    pending = list(cfg.panels)
+    deadline = time.monotonic() + retry_sec
+    while True:
+        failed = []
+        for spec in pending:
+            drawn = False
+            link = PanelLink(spec, cfg)
+            try:
+                frame = cards.get(link.canvas)
+                if frame is None:
+                    frame = cards[link.canvas] = render.Renderer(*link.canvas).frame(state)
+                drawn = bool(link.send(frame, force=True))
+            except Exception:
+                # One busy screen must not take the card away from the others.
+                pass
+            finally:
+                link.close()
+            if not drawn:
+                failed.append(spec)
+        pending = failed
+        if not pending or time.monotonic() >= deadline:
+            break
+        time.sleep(1.0)
+    return len(cfg.panels) - len(pending), len(cfg.panels)
 
 
-def main():
+def _card_main(lines):
+    """`run.pyw --card <title> [<line>...]`: one card on every screen, then exit.
+
+    Run by the supervisor (tray.py) and the guardian (guard.py) when they stop the
+    client or give up on it for a while: a stopped panel keeps its last frame, and
+    frozen, credible-looking numbers are the failure mode rule 4 of AGENTS.md exists
+    for. The words are theirs; this only draws them.
+
+    It takes panel.lock like the client does, so a card and a client never share a
+    device. Nothing here may say "panel already running" or "first frame": those are
+    the phrases deploy/panel-common.ps1 reads as a client's start.
+    """
+    from panel import config as C, log as logmod
+    from panel.lock import AlreadyRunning, acquire
+
+    try:
+        logger = logmod.setup(C.DEFAULT_LOG, "INFO", console=False)
+    except Exception:
+        logger = None
+    try:
+        # Retried: the card follows a kill, and the killed client can hold the lock
+        # for a moment after its job reports empty.
+        held = acquire(timeout=10.0)
+    except AlreadyRunning:
+        if logger:
+            logger.info("card not shown: the panel lock is held")
+        return CARD_LOCKED
+    try:
+        drawn, total = _card(lines, retry_sec=10.0)
+    finally:
+        held.close()
+    if logger:
+        logger.info("card %r shown on %d of %d screen(s)", lines[0], drawn, total)
+    return CARD_DRAWN if drawn == total else CARD_PARTIAL
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["--card"]:
+        # Before `panel.app`: a card needs the renderer and the drivers, not the
+        # stream client or the main loop.
+        return _card_main(argv[1:] or ["Panel stopped"])
+
     from panel.app import main as run
     from panel import config as C, log as logmod
 

@@ -61,3 +61,91 @@ def test_contract_mismatch_does_not_wait_for_the_threshold():
     a.contract_mismatch = 4
     assert not a.holding()
     assert a.screen().message
+
+
+# -- run(): what the supervisor relies on ------------------------------------------
+
+
+class FakeStream:
+    """Stands in for stream.StreamClient: no network, alive until told otherwise."""
+    alive = True
+
+    def __init__(self, cfg, keys, q, stop):
+        pass
+
+    def start(self):
+        pass
+
+    def is_alive(self):
+        return FakeStream.alive
+
+
+class Clock:
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+
+def looping_app(monkeypatch, ticks, heartbeat_path=None):
+    """An App whose run() does `ticks` ticks of 1 s on a fake clock, then stops."""
+    FakeStream.alive = True
+    monkeypatch.setattr(app_mod.stream, "StreamClient", FakeStream)
+    clock = Clock()
+    a = app_mod.App(cfg(), monotonic=clock, heartbeat_path=heartbeat_path)
+    a.stop.wait = lambda delay: None
+    count = [0]
+
+    def tick():
+        count[0] += 1
+        clock.t += 1.0
+        if count[0] >= ticks:
+            a.stop.set()
+
+    a.tick = tick
+    return a, count
+
+
+def test_no_heartbeat_path_writes_nothing(monkeypatch):
+    """The default is silence: a test that builds an App must never touch the file the
+    live supervisor watches."""
+    a, _ = looping_app(monkeypatch, 3)
+    assert a.heartbeat is None
+    a.run()
+
+
+def test_the_heartbeat_follows_the_ticks_at_most_every_5_s(monkeypatch, tmp_path):
+    writes = []
+    a, _ = looping_app(monkeypatch, 12, heartbeat_path=str(tmp_path / "hb"))
+    a.heartbeat.write = writes.append
+    a.run()
+    assert len(writes) == 3          # ticks at t=1, 6, 11
+
+
+def test_an_unwritable_heartbeat_does_not_stop_the_loop(monkeypatch, tmp_path):
+    def broken(path):
+        raise PermissionError("denied")
+    a, count = looping_app(monkeypatch, 8, heartbeat_path=str(tmp_path / "hb"))
+    a.heartbeat.write = broken
+    a.run()
+    assert count[0] == 8
+
+
+def test_a_dead_stream_thread_ends_the_run(monkeypatch):
+    """A MemoryError in the SSE thread kills only that thread; the loop would go on
+    drawing numbers that never move again. Ending the process hands it to the
+    supervisor instead."""
+    import pytest
+    a, count = looping_app(monkeypatch, 100)
+    real_tick = a.tick
+
+    def tick():
+        real_tick()
+        if count[0] == 3:
+            FakeStream.alive = False
+
+    a.tick = tick
+    with pytest.raises(app_mod.StreamDied):
+        a.run()
+    assert count[0] == 3
