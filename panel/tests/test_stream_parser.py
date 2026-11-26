@@ -153,6 +153,14 @@ def test_bad_numbers_give_a_problem_not_an_exception(change, fragment):
     assert fragment in problems
 
 
+def test_a_long_tick_is_still_a_valid_configuration():
+    """tick_sec had the floor alone before the supervisor came; a panel.json with a
+    long tick must not turn into a configuration error on update (App._wait keeps
+    the heartbeat going through the wait)."""
+    problems = " ".join(cfg(tick_sec=200).validate())
+    assert "tick_sec" not in problems
+
+
 def test_number_in_quotes_is_converted():
     """Checking without writing back was only for show: `int("480")` succeeds, so validate()
     stayed silent, and Layout then computed `"480" - 1` and broke with a TypeError already

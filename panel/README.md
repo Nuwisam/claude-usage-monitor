@@ -137,7 +137,10 @@ around:
 - **Every write is time-bounded.** pyserial's default `write_timeout=None` waits
   forever on Windows, and with rtscts a screen that deasserts CTS would freeze the
   tick loop — and with it *the other screen*, silently, with the scheduled task
-  seeing a live process and never restarting it.
+  seeing a live process and never restarting it. The tray supervisor now catches a
+  frozen loop by its heartbeat and restarts the client after 120 s (see "The tray
+  icon and the watchdog"), but that is two minutes of a dark second screen for
+  every stall; the bounded write is still what keeps it drawing.
 
 `RESET` (101) is never sent (unmeasured, and firmware in the middle of a payload
 would eat it as pixels). `SET_ORIENTATION` (121) is never sent either: rotation
@@ -522,6 +525,115 @@ out of the card's title. Both switches govern both faces.
 
 `deploy\restart-panel.cmd` is the same restart for a double-click.
 
+### The tray icon and the watchdog
+
+The client is not the task's process any more. The task starts a **guardian**,
+the guardian starts the **tray supervisor**, and the supervisor starts the
+**client** — the process that draws, the same `run.pyw` as before:
+
+```
+scheduled task "Claude Panel AX206"
+  -> panel-guard.pyw   guardian (panel/guard.py)       keeps the supervisor alive
+       -> panel-tray.pyw   tray supervisor (panel/tray.py)  keeps the client alive, has the icon
+            -> panel-run.pyw   client (run.pyw)              draws
+```
+
+Why three: the client dies of `MemoryError` when the whole machine runs short of
+memory, and the task's own "restart on failure" never brought it back (it restarts
+a task whose start failed, not one whose process ended). The supervisor restarts
+the client; and since one process cannot restart itself, the guardian restarts
+the supervisor. The guardian is the end of that chain on purpose: no icon, no
+Pillow, no renderer — it sleeps on a process handle and reads a file every 5 s.
+Nothing watches the guardian itself: killed, it takes the other two with it, and
+the scheduler does not bring the task back (measured: nothing within 3 minutes).
+`Start-ScheduledTask`, or the next logon, does.
+
+**Each level watches the one below in the same three ways** (`panel/keep.py`):
+
+- **the exit code.** Any exit is a failure and is restarted after 2, 5, 10, 30,
+  then every 60 s, for as long as it takes; five minutes of healthy running puts
+  the ladder back at 2 s. Two exits are not failures: the client's `2` (a
+  configuration error, already on the glass as a card) is retried when
+  `panel.json` changes, at the latest every 10 min; its `0` means it found
+  `panel.lock` held by another instance, which is waited out — or, after a Stop,
+  that it drew its stopped frame (that exit is the supervisor's own request and is
+  handled where the request was made).
+- **a heartbeat file.** The client touches `panel.heartbeat` after a tick, at
+  most every 5 s; the supervisor touches `tray.heartbeat`. **120 s without a
+  change is a hang**, and the process is killed and restarted. A start gets 180 s
+  for its first beat, because the launcher alone waits up to 120 s for the
+  network drive. The file's mtime is compared with its previous value, never with
+  the wall clock, and a gap in the watcher's own polling (sleep, hibernation)
+  restarts the count.
+- **a job object.** Each process is started suspended, put into a fresh job with
+  kill-on-close, and only then resumed (`panel/winjob.py`). Killing the job takes
+  the venv stub and the interpreter together, and when a watcher dies by any
+  route, everything below it dies with it — there is never a client drawing, and
+  holding `panel.lock`, with nobody watching it.
+
+A dead stream thread also ends the client: the SSE thread catches only network
+errors, and a `MemoryError` there used to leave the main loop ticking — and the
+heartbeat healthy — over numbers that never moved again.
+
+**The icon** is the web UI's favicon, and says the state by the shape of its
+bar: filled while the client runs, an outline while a
+restart is pending, the empty track when stopped. The tooltip says since
+when, and how many restarts with the last reason. Right-click:
+
+| item | what it does | how long it holds |
+|---|---|---|
+| Restart panel | kills the client and starts a new one at once | — |
+| Stop panel | the client draws its **stopped frame** and exits | until Start; it survives a restart of the supervisor |
+| Start panel | (instead of Stop while stopped) | — |
+| Open panel log / Open tray log | `panel.log` (or `log_path`) / `panel-tray.log` | — |
+| Quit | like Stop, then ends the supervisor and the guardian; the task goes back to Ready | until the next logon or `Start-ScheduledTask` |
+
+**The stopped frame keeps the numbers and takes out everything that would rot.** A
+stopped panel keeps its last frame, and frozen, credible-looking numbers are what
+rule 4 of `AGENTS.md` exists against — but the numbers themselves are true as of
+the stop, and a full-screen card would throw them away. So on Stop the supervisor
+asks the client (`panel.stop`), and the client paints the bands one last time with
+every relative word replaced: the reading age reads **STOPPED** in the accent —
+followed by the data's own time (`STOPPED · data 21:06`, with the date when it is
+another day) whenever the numbers were older than the stop, because the frozen clock
+says when the panel stopped, not when the numbers were taken — each
+reset is a full date (`reset 26.07.2026 21:59`, not "in 52 min · at 21:59"), the link
+mark is down, and the header clock stays at the moment of the stop. A client that
+does not answer within 10 s, has no data yet, or finds that a screen refused the
+stopped frame, is killed instead, and a **"Panel stopped"** card goes up on every
+screen — over a stopped frame a working screen may already show, so that no screen
+is left with live-looking numbers — with an absolute time (`25.11.2026 21:07`, never
+"at 21:07": a static card may still be on the glass tomorrow). A restart draws neither — the new client keeps the old frame
+until it has data, as it always did. After five failures in a row a **"Panel
+restarting"** card goes up once, so a client that keeps dying before its first
+frame does not leave stale numbers behind; the guardian does the same with
+**"Panel supervisor failing"**.
+
+**Quit and stop mean exactly what they say, whichever way they are given.** The
+guardian ends only when the supervisor exits with its dedicated quit code *and*
+`tray.state` records the quit for this guardian's epoch — a plain `0` is what any
+ordinary exit produces, so it is a failure here, and is restarted.
+`Stop-ScheduledTask` kills the guardian, and the jobs take the rest down; the
+task's trigger is still "at logon" only, so nothing comes back before you start it.
+
+**Without the icon** — pystray did not load, or Explorer is not there — the
+supervisor keeps the panel alive anyway and says so in `panel-tray.log`. The menu's
+commands also work through a file:
+
+```powershell
+Set-Content $env:LOCALAPPDATA\claude-usage-monitor\tray.cmd stop    # or start, restart, quit
+```
+
+**Before editing `panel/` on the machine that runs it**, Quit from the tray: the
+working tree is what runs, and the watchers restart a crashing client or
+supervisor on half-saved files. Afterwards, `deploy\restart-panel.ps1` (it restarts
+all three; the icon's Restart restarts only the client).
+
+Three logs, one per process, because a rotating log cannot have two writers:
+`panel.log` (client, unchanged), `panel-tray.log` (supervisor: starts, exit codes,
+hangs, the client's peak memory every hour and at exit) and `panel-guard.log`
+(guardian).
+
 Configuration: `%LOCALAPPDATA%\claude-usage-monitor\panel.json` — the same
 directory as the probe's `config.json`, but a **separate file**: the stream
 token has a different scope than the ingest token, and the probe's file gets
@@ -642,7 +754,11 @@ panel every week.
 
 | symptom | where to look |
 |---|---|
-| panel black / stale content | `panel.log`; is the task running; is another program holding the module |
+| panel black / stale content | the tray icon's tooltip; `panel.log`, then `panel-tray.log`; is another program holding the module |
+| no tray icon | `panel-tray.log` (pystray did not load: the panel is still supervised), `panel-guard.log`; is the task running; after a Quit nothing runs until the next logon or `Start-ScheduledTask` |
+| the client restarts every few minutes | `panel-tray.log`: the exit code or "no heartbeat", and the client's peak memory; `panel.log` around the same time for the traceback |
+| STOPPED next to the account name | someone chose Stop or Quit in the tray; the frozen clock in the header says when; the "data" time after the word says how old the numbers already were |
+| "Panel stopped" card on the glass | Stop or Quit, with a client that did not answer, had no data yet, or met a screen that refused its stopped frame; the time on the card says when — `panel-tray.log` says which |
 | "panel held by another process" | another program or a second instance of the client |
 | `missed_csw` rising | we sent the wrong byte count — a bug in the code, not in the hardware (AX206 only; the serial screen confirms nothing) |
 | serial screen: colors swapped, image "shifted" | byte drift after a torn write. A full repaint does **not** fix this — unplug and replug the screen |

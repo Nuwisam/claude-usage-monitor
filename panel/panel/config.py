@@ -326,6 +326,11 @@ class Config:
         # top-level key is checked only where it can still mean the AX206 range.
         if "panels" not in self._raw:
             self._number(problems, "brightness", int, 0, 7)
+        # `tick_sec` gets the floor alone: the main loop keeps its heartbeat going
+        # through the wait between ticks (App._wait), so a long tick does not read as
+        # a hang (`supervisor.HANG_SEC`), and the same wait answers a stop request
+        # within app.STOP_POLL_SEC (`supervisor.STOP_GRACE_SEC`), and a value
+        # accepted before stays accepted.
         self._number(problems, "tick_sec", float, 0.01)
         self._number(problems, "width", int, 1)
         self._number(problems, "height", int, 1)
