@@ -30,6 +30,7 @@ LOCK_RETRY_SEC = 30.0       # how often a lock held by someone else is probed ag
 LOCK_GRACE_SEC = 20.0       # our own killed client may hold panel.lock this long
 CONFIG_RETRY_SEC = 600.0    # a configuration error is retried this often at most
 CARD_LIMIT_SEC = 30.0       # a card process is killed after this
+STOP_GRACE_SEC = 10.0       # a client asked to stop gets this long to draw its last frame
 MEMORY_EVERY_SEC = 3600.0   # how often the client's peak memory goes to the log
 PIDS_AFTER_SEC = 5.0        # when the client's job membership goes to the log
 
@@ -49,7 +50,7 @@ def describe_exit(code):
     """An exit code as a reader wants it: NTSTATUS values in hex, a job kill by name."""
     if code is None:
         return "unknown"
-    if code == 0xDEAD:
+    if code == keep.KILLED_EXIT:
         return "killed"
     if code >= 0x80000000:
         return "0x%08X" % code
@@ -59,8 +60,13 @@ def describe_exit(code):
 class Supervisor:
     def __init__(self, spawn_client, spawn_card, lock_free, launcher_ok, beat,
                  config_mtime, store, logger, read_command=None,
-                 clock=time.monotonic, wall=_utc_now, backoff=None):
+                 clock=time.monotonic, wall=_utc_now, backoff=None,
+                 request_stop=None, clear_stop=None):
         self.spawn_client = spawn_client
+        # Writes keep.STOP_REQUEST for the client / removes a leftover one. None: the
+        # client is never asked, it is killed and the card goes up (the old way).
+        self.request_stop = request_stop
+        self.clear_stop = clear_stop or (lambda: None)
         self.spawn_card = spawn_card
         self.lock_free = lock_free
         self.launcher_ok = launcher_ok
@@ -160,12 +166,13 @@ class Supervisor:
         if name == "stop":
             if self.state == "stopped":
                 return
-            self._end_child("stop requested")
+            painted = self._stop_client("stop requested")
             self._save("stopped")
             self._enter("stopped", "stopped by the owner")
             self.log.info("panel stopped by the owner")
-            self._show_card(["Panel stopped", self._stamp(),
-                             "Start it again from the tray icon"], now)
+            if not painted:
+                self._show_card(["Panel stopped", self._stamp(),
+                                 "Start it again from the tray icon"], now)
         elif name in ("start", "restart"):
             if name == "start" and self.state == "running":
                 return
@@ -179,12 +186,64 @@ class Supervisor:
             self._enter("waiting", None)
             self.next_start = now
         elif name == "quit":
-            self._end_child("quit requested")
+            painted = self._stop_client("quit requested")
             self._save("quit")
             self.log.info("quit by the owner")
-            self._show_card(["Panel stopped", self._stamp(),
-                             "It starts again at the next logon"], now)
+            # From "stopped" the glass already holds the stopped frame or the card.
+            if not painted and self.state != "stopped":
+                self._show_card(["Panel stopped", self._stamp(),
+                                 "It starts again at the next logon"], now)
             self._enter("quitting", None)
+
+    def _stop_client(self, why):
+        """Ends the client for Stop / Quit. True when it drew its own stopped frame.
+
+        The client is ASKED first (keep.STOP_REQUEST): it holds the numbers on the
+        glass, and its last frame keeps them, marked STOPPED, with nothing relative left
+        to rot (App.stopped_screen). A full-screen card would throw that away. Only a
+        client that does not answer in STOP_GRACE_SEC, or did not get its stopped frame
+        onto every screen — no data yet, or a screen refused it
+        (keep.EXIT_STOPPED_BLANK) — is killed, and then the caller draws the card.
+        """
+        child = self.child
+        if child is None:
+            return False
+        if self.request_stop is None:
+            self._end_child(why)
+            return False
+        try:
+            self.request_stop()
+        except OSError as e:
+            self.log.warning("stop request not written (%s); killing the client", e)
+            self._end_child(why)
+            return False
+        try:
+            code = child.wait(STOP_GRACE_SEC)
+        except OSError as e:
+            # Escaping here would skip _save/_enter("stopped") while the client may
+            # already have read panel.stop and exited 0, which _watch takes for the
+            # lock back-off and starts the panel again at once.
+            self.log.warning("waiting for the client failed (%s); killing it", e)
+            self._end_child(why)
+            self.clear_stop()
+            return False
+        if code == 0:
+            self.log.info("client drew its stopped frame and exited (%s)", why)
+            self._close_child(self.clock())
+            self.clear_stop()
+            return True
+        if code is None:
+            self.log.warning("client did not stop within %.0f s; killing it",
+                             STOP_GRACE_SEC)
+        elif code == keep.EXIT_STOPPED_BLANK:
+            self.log.info("client drew no stopped frame on every screen (no data yet, "
+                          "or a screen refused it)")
+        else:
+            self.log.warning("client exited %s instead of drawing its stopped frame",
+                             describe_exit(code))
+        self._end_child(why)
+        self.clear_stop()
+        return False
 
     def _save(self, want):
         try:
@@ -213,6 +272,10 @@ class Supervisor:
             self._wait(now, "panel already running elsewhere (panel.lock is held); "
                             "not starting a second one")
             return
+        # A stop request left from an earlier client goes now, before the new one
+        # exists: from here on any request is this client's, and the client keeps it
+        # (app.main removes none at start).
+        self.clear_stop()
         try:
             child = self.spawn_client()
         except Exception as e:
@@ -232,6 +295,9 @@ class Supervisor:
         self._enter("running", None)
 
     def _wait(self, now, why, retry=LOCK_RETRY_SEC):
+        # A new wait replaces the configuration-error one: left armed, the old mtime
+        # would skip this wait on every step (_maybe_start).
+        self._config_wait = False
         self.next_start = now + retry
         if why != self._logged_wait:
             self.log.warning("%s", why)
@@ -267,8 +333,10 @@ class Supervisor:
             self._enter("waiting", "configuration error (exit 2); waiting for "
                                    "panel.json to change")
         elif code == 0:
-            # run.pyw exits 0 only when it backed off on panel.lock
-            # (App.run never returns on its own).
+            # run.pyw has two exit-0 paths: it backed off on panel.lock, or it drew
+            # its stopped frame after a stop request. A request we made is reaped by
+            # _stop_client and never reaches here, so this is the first one — not a
+            # crash, and the next start is due now.
             self.next_start = now
             self._enter("waiting", None)
         else:
@@ -276,6 +344,7 @@ class Supervisor:
 
     def _failed(self, now, reason):
         delay = self.backoff.failed(now)
+        self._config_wait = False       # as in _wait: the ladder's delay must hold
         self.restarts += 1
         self.last = reason
         self.next_start = now + delay
@@ -353,6 +422,10 @@ class Supervisor:
             card.kill(5.0)
             self.log.warning("card %r did not finish in %.0f s; killed", title,
                              CARD_LIMIT_SEC)
+            # A killed card, like a killed client, may hold panel.lock a moment
+            # longer than its job: without the grace the next start reads it as
+            # another instance and parks for LOCK_RETRY_SEC.
+            self._lock_grace_until = now + LOCK_GRACE_SEC
         elif code != 0:
             self.log.warning("card %r: exit %s", title, describe_exit(code))
         card.close()
@@ -366,6 +439,7 @@ class Supervisor:
                 card.kill(5.0)
             finally:
                 card.close()
+            self._lock_grace_until = self.clock() + LOCK_GRACE_SEC     # as in _reap_card
 
     # -- status ----------------------------------------------------------------
 

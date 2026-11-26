@@ -18,9 +18,11 @@ Order of start, and why:
 Every call into pystray happens on the icon's thread. The Win32 backend builds its
 menu ahead of time, and rebuilding it from another thread destroys a menu that may be
 on screen; the supervisor thread therefore only POSTS a message to the icon's window
-(`TrayUi.refresh`), and the menu is rebuilt right before it is shown. That takes two
-hooks into pystray's private Win32 class (`_message_handlers`, `_on_notify`), which
-is one reason requirements.txt pins its version.
+(`TrayUi.refresh`), and the menu is rebuilt right before it is shown. That takes three
+private members of pystray's Win32 class — `_message_handlers` and `_on_notify` hooked,
+`_hwnd` read as the window to post to — which is one reason requirements.txt pins its
+version. A rename of `_hwnd` fails silently: `refresh` finds no window, posts nothing,
+and the icon simply stops following the state.
 """
 import ctypes
 import os
@@ -46,11 +48,11 @@ MENU_LINE_MAX = 64
 def icon_image(state, size=64):
     """The tray icon for a state: the web UI's favicon (frontend/public/favicon.svg),
     redrawn here because Pillow does not read SVG. Same 32-unit geometry, same three
-    colours — the favicon's #1c1b19, #322f2b and #d97757 are theme.BG, NEUTRAL_900
+    colors — the favicon's #1c1b19, #322f2b and #d97757 are theme.BG, NEUTRAL_900
     and ACCENT.
 
-    The meter's FILL carries the state, by its shape and not only its colour — the
-    project has no red, and colour alone is the first thing to go unnoticed:
+    The bar's FILL carries the state, by its shape and not only its color — the
+    project has no red, and color alone is the first thing to go unnoticed:
       running   the favicon as it is: a filled bar
       waiting   the bar as an outline only (a restart is pending)
       stopped   the empty track, no bar at all
@@ -108,7 +110,7 @@ def tooltip(status, now):
 
 
 def status_line(status, now):
-    """The first, greyed-out line of the menu."""
+    """The first, grayed-out line of the menu."""
     if status is None:
         return "Starting"
     if status.state == "waiting" and status.detail:
@@ -135,14 +137,28 @@ class CommandFile:
 
     `"stop" > tray.cmd` in Windows PowerShell 5.1 writes UTF-16 with a BOM and
     Set-Content writes the ANSI code page; both are read.
+
+    A file older than this supervisor is not a command for it: it was written while
+    no supervisor ran (after a Quit, before a logon), and acting on it would carry a
+    "stop" or "quit" into a session that never asked for one — tray.state is scoped
+    to the guardian's epoch for the same reason. Such a file is removed unread.
     """
 
     def __init__(self, path, logger, clock=time.time):
         self.path = path
         self.log = logger
         self.clock = clock
+        self.started = clock()
 
     def read(self):
+        try:
+            if os.stat(self.path).st_mtime < self.started:
+                os.remove(self.path)
+                self.log.warning("tray.cmd written before this supervisor started; "
+                                 "removed unread")
+                return None
+        except OSError:
+            return None
         try:
             with open(self.path, "rb") as f:
                 raw = f.read()
@@ -181,11 +197,25 @@ def _spawn(args):
                         + list(args), cwd=C.OUTDIR)
 
 
+def _request_stop():
+    with open(os.path.join(C.OUTDIR, keep.STOP_REQUEST), "w", encoding="ascii") as f:
+        f.write("stop\n")
+
+
+def _clear_stop():
+    try:
+        os.remove(os.path.join(C.OUTDIR, keep.STOP_REQUEST))
+    except OSError:
+        pass
+
+
 def build(logger, epoch):
     """The supervisor with the real world plugged in."""
     from . import winjob    # noqa: F401 - fail here, at start, not at the first spawn
 
     return S.Supervisor(
+        request_stop=_request_stop,
+        clear_stop=_clear_stop,
         spawn_client=lambda: _spawn([]),
         spawn_card=lambda lines: _spawn(["--card"] + list(lines)),
         lock_free=lambda: lock.is_free(name="panel"),
@@ -268,7 +298,7 @@ class TrayUi:
 
     def _ready(self, icon):
         """pystray's setup thread, once the icon's loop runs. It only asks the icon's
-        own thread to show itself (`apply`) — and honours a stop that came before the
+        own thread to show itself (`apply`) — and honors a stop that came before the
         loop was there to receive it (Quit through tray.cmd in the first second)."""
         if self._stop_requested:
             icon.stop()
@@ -352,6 +382,14 @@ class TrayUi:
 
 def main():
     logger = logmod.setup(LOG, "INFO", console=False)
+    # pystray reports its own failures (a message handler that raised, a broken main
+    # loop) to the "pystray" logger, which has no handler under pythonw: route its
+    # warnings into panel-tray.log, or an icon that stops working leaves no trace.
+    import logging
+    pystray_log = logging.getLogger("pystray")
+    pystray_log.setLevel(logging.WARNING)
+    for handler in logger.handlers:
+        pystray_log.addHandler(handler)
     beat = keep.Toucher(os.path.join(C.OUTDIR, keep.TRAY_HEARTBEAT))
     beat.beat(force=True)
     try:

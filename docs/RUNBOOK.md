@@ -241,7 +241,7 @@ minutes without anyone touching it. Day to day:
 | want | do |
 |---|---|
 | restart the client | tray icon -> Restart panel |
-| stop drawing, keep the tray | tray icon -> Stop panel (a "Panel stopped" card goes up) |
+| stop drawing, keep the tray | tray icon -> Stop panel (the numbers stay, marked STOPPED) |
 | everything off until the next logon | tray icon -> Quit, or `Stop-ScheduledTask -TaskName 'Claude Panel AX206'` |
 | everything back | `Start-ScheduledTask -TaskName 'Claude Panel AX206'` |
 | the icon is gone | `Set-Content $env:LOCALAPPDATA\claude-usage-monitor\tray.cmd restart`, or `deploy\restart-panel.ps1` |

@@ -66,7 +66,7 @@ class Log:
 def test_the_command_file_is_read_once(tmp_path):
     path = tmp_path / "tray.cmd"
     path.write_text("Stop\r\n", encoding="ascii")
-    reader = tray.CommandFile(str(path), Log())
+    reader = tray.CommandFile(str(path), Log(), clock=lambda: 0.0)
     assert reader.read() == "stop"
     assert not path.exists()
     assert reader.read() is None
@@ -75,14 +75,14 @@ def test_the_command_file_is_read_once(tmp_path):
 def test_the_command_file_in_utf16_from_powershell(tmp_path):
     path = tmp_path / "tray.cmd"
     path.write_bytes("restart\r\n".encode("utf-16"))     # with the BOM, as `>` writes it
-    assert tray.CommandFile(str(path), Log()).read() == "restart"
+    assert tray.CommandFile(str(path), Log(), clock=lambda: 0.0).read() == "restart"
 
 
 def test_an_unknown_command_is_cleared_and_logged(tmp_path):
     path = tmp_path / "tray.cmd"
     path.write_text("reboot", encoding="ascii")
     log = Log()
-    assert tray.CommandFile(str(path), log).read() is None
+    assert tray.CommandFile(str(path), log, clock=lambda: 0.0).read() is None
     assert not path.exists()
     assert "unknown command 'reboot'" in log.lines[0]
 
@@ -90,8 +90,20 @@ def test_an_unknown_command_is_cleared_and_logged(tmp_path):
 def test_an_empty_file_is_given_time_to_be_written(tmp_path):
     path = tmp_path / "tray.cmd"
     path.write_text("", encoding="ascii")
-    t = [os.stat(path).st_mtime + 1]
+    t = [os.stat(path).st_mtime - 1]     # the reader starts just before the write
     reader = tray.CommandFile(str(path), Log(), clock=lambda: t[0])
     assert reader.read() is None and path.exists()
     t[0] += 10
     assert reader.read() is None and not path.exists()
+
+
+def test_a_command_older_than_the_supervisor_is_removed_unread(tmp_path):
+    """Written while no supervisor ran (after a Quit, before a logon): not a command
+    for this one. tray.state is scoped to the guardian's epoch for the same reason."""
+    path = tmp_path / "tray.cmd"
+    path.write_text("quit", encoding="ascii")
+    log = Log()
+    reader = tray.CommandFile(str(path), log, clock=lambda: os.stat(path).st_mtime + 60)
+    assert reader.read() is None
+    assert not path.exists()
+    assert "before this supervisor started" in log.lines[0]

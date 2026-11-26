@@ -131,8 +131,12 @@ def _card_main(lines):
     for. The words are theirs; this only draws them.
 
     It takes panel.lock like the client does, so a card and a client never share a
-    device. Nothing here may say "panel already running" or "first frame": those are
-    the phrases deploy/panel-common.ps1 reads as a client's start.
+    device. Nothing written here directly says "panel already running" or "first
+    frame", the phrases deploy/panel-common.ps1 reads as a client's start. One does
+    reach panel.log all the same: PanelLink.send logs "first frame after opening" for
+    every screen the card opens. A card drawn while an installer waits would read as
+    a client starting; it is accepted, because cards are drawn only on Stop / Quit
+    and after five failed starts, neither of which happens inside an install's wait.
     """
     from panel import config as C, log as logmod
     from panel.lock import AlreadyRunning, acquire
@@ -171,7 +175,13 @@ def main(argv=None):
     from panel.app import AlreadyRunning
 
     try:
-        run()
+        drew = run()
+        if drew is False:
+            # Stopped from the tray, and the stopped frame did not reach every screen:
+            # no data came in yet, or a screen refused it. The supervisor puts up its
+            # own card on every screen (keep.EXIT_STOPPED_BLANK).
+            from panel import keep
+            return keep.EXIT_STOPPED_BLANK
         return 0
     except AlreadyRunning as e:
         try:

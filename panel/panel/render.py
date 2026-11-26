@@ -38,13 +38,13 @@ class BandState:
     __slots__ = ("title", "plan", "session", "weekly", "scoped", "credits",
                  "session_view", "weekly_view", "scoped_view", "scoped_label",
                  "reset_session", "reset_week", "reset_scoped", "reset_aligned",
-                 "ago", "note", "show_clock", "alert", "session_off")
+                 "ago", "note", "show_clock", "alert", "session_off", "stopped")
 
     def __init__(self, title="", plan="", session=None, weekly=None, scoped=None,
                  credits=None, session_view=None, weekly_view=None, scoped_view=None,
                  scoped_label="", reset_session=("", None), reset_week=("", None),
                  reset_scoped=("", None), reset_aligned=True, ago="", note=None,
-                 show_clock=False, alert=False, session_off=False):
+                 show_clock=False, alert=False, session_off=False, stopped=False):
         self.title = title
         self.plan = plan
         self.session = session
@@ -74,6 +74,11 @@ class BandState:
         # The block reason in a single word, or None. Lights the accent bar on the left
         # edge of the band and switches the account name to ACCENT_100 — no red here.
         self.alert = alert
+        #: The panel was stopped from the tray: this is its LAST frame, and nothing will
+        #: redraw it. `ago` then reads "STOPPED" (plus the data's own time when that is
+        #: not the stop's, see band_state) and is drawn in the accent, and the
+        #: resets carry full dates (band_state) — see App.stopped_screen.
+        self.stopped = stopped
 
 
 class AlertRow:
@@ -282,7 +287,7 @@ def _scoped_still_reported(scoped, session, weekly):
 
 
 def band_state(account, now_ms, name=None, show_clock=False, note=None,
-               alert=False):
+               alert=False, stopped=False):
     """model.AccountStatus -> BandState. The ONLY place this transition happens, shared
     by the client and by tools/render-png.py — otherwise the diagnostic tool would
     show something other than the panel.
@@ -299,7 +304,8 @@ def band_state(account, now_ms, name=None, show_clock=False, note=None,
         why = note or "no data from server"
         return BandState(title=name or "—", note=note, show_clock=show_clock,
                          reset_session=(why, None), reset_week=(why, None),
-                         ago="—", alert=alert)
+                         ago="STOPPED" if stopped else "—", alert=alert,
+                         stopped=stopped)
 
     r = account.rung("session")
     session_off = r is not None and r.state == "off"
@@ -333,7 +339,24 @@ def band_state(account, now_ms, name=None, show_clock=False, note=None,
         moment = fmt.parse_utc(account.last_sample_at)
         if moment is not None:
             moments.append(moment)
-    age = fmt.ago(fmt.ms(min(moments)), now_ms) if moments else "—"
+    oldest = min(moments) if moments else None
+    age = fmt.ago(fmt.ms(oldest), now_ms) if oldest is not None else "—"
+    if stopped:
+        # Stopped: the age would freeze at "1 min ago" and read that way tomorrow. The
+        # word says why nothing moves; the frozen header clock says since when. That
+        # clock is the STOP, not the data: numbers already hours old at the stop would
+        # pass for current as of it. So the age stays, as the time of the oldest window
+        # drawn, which stays true for as long as the frame is up. As short as the clock
+        # beside it allows, because the name pays for every pixel: no stamp when it
+        # would repeat the clock's minute, no date when it is the clock's day.
+        stop = fmt.from_ms(now_ms)
+        if oldest is None or (fmt.dmy(oldest), fmt.hm(oldest)) == (fmt.dmy(stop),
+                                                                   fmt.hm(stop)):
+            age = "STOPPED"
+        elif fmt.dmy(oldest) == fmt.dmy(stop):
+            age = "STOPPED · data %s" % fmt.hm(oldest)
+        else:
+            age = "STOPPED · data %s %s" % (fmt.dm(oldest), fmt.hm(oldest))
 
     return BandState(
         title=name or account.title,
@@ -346,9 +369,9 @@ def band_state(account, now_ms, name=None, show_clock=False, note=None,
         weekly_view=V.describe_series(weekly) if weekly else V.missing_view(),
         scoped_view=V.describe_series(scoped) if scoped else V.missing_view(),
         scoped_label=V.scoped_label(scoped),
-        reset_session=V.reset_note(session, now_ms),
-        reset_week=V.reset_note(weekly, now_ms),
-        reset_scoped=V.reset_note(scoped, now_ms),
+        reset_session=V.reset_note(session, now_ms, absolute=stopped),
+        reset_week=V.reset_note(weekly, now_ms, absolute=stopped),
+        reset_scoped=V.reset_note(scoped, now_ms, absolute=stopped),
         # On the INSTANTS and with a tolerance -- see view.RESET_ALIGN_TOLERANCE_S for
         # what was measured. Strings would not do (the same moment arrives as
         # "...T16:00:00Z" and as "...T16:00:00+00:00") and neither would exact equality.
@@ -363,6 +386,7 @@ def band_state(account, now_ms, name=None, show_clock=False, note=None,
         show_clock=show_clock,
         alert=alert,
         session_off=session_off,
+        stopped=stopped,
     )
 
 
@@ -844,7 +868,8 @@ class Renderer:
         # goes away so a third window can fit, and the header is where both mockups put it.
         if band.ago:
             f_ago = draw.font(self.L.F_AGO)
-            d.text((right, base), band.ago, font=f_ago, fill=theme.TEXT_52, anchor="rs")
+            d.text((right, base), band.ago, font=f_ago,
+                   fill=theme.ACCENT if band.stopped else theme.TEXT_52, anchor="rs")
             right -= draw.text_width(band.ago, f_ago) + self.L.HEAD_GAP
 
         if band.alert:

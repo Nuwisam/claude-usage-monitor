@@ -181,6 +181,10 @@ class Guard:
                 return
             card.kill(5.0)
             self.log.warning("card did not finish in %.0f s; killed", CARD_LIMIT_SEC)
+        elif code != 0:
+            # The same line the supervisor writes (supervisor._reap_card): a card that
+            # drew on no screen is a stale frame left up, and only the log says so.
+            self.log.warning("card: exit %s", _describe(code))
         card.close()
         self.card = None
 

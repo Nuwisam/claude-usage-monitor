@@ -151,3 +151,72 @@ def test_run_once_forces_every_panel_and_reports_each(monkeypatch):
     assert drew == [("a", True), ("dead", False)]
     assert a.forced == [True] and dead.forced == [True]
     assert a.closed == 1 and dead.closed == 1
+
+
+# -- the stopped frame (Stop / Quit from the tray) ----------------------------
+
+
+def fed(app):
+    """The app with one real account in it, as a stream frame would leave it."""
+    from tests import fixtures
+    acc = fixtures.base()[0]
+    app.cfg = cfg(account_1={"key": acc.key})
+    app.accounts = {acc.key: acc}
+    return app
+
+
+def test_the_stopped_frame_keeps_the_numbers_and_says_stopped():
+    """The owner's rule: Stop keeps the numbers on the glass, marked STOPPED, with
+    nothing relative left — no age, no countdown — and the link mark down."""
+    app = fed(app_with([FakeLink("a")]))
+    state = app.stopped_screen()
+    band = state.bands[0]
+    assert band.stopped and band.ago.startswith("STOPPED · data ")
+    assert " ago" not in band.ago, "no relative age on a frame nothing redraws"
+    assert band.session is not None, "the numbers stay"
+    lead, at = band.reset_session
+    assert lead.startswith("reset ") and " in " not in lead and at is None
+    assert state.link == "down" and state.alert is None and state.message is None
+
+
+def test_the_stopped_clock_carries_the_date_even_without_clock_date():
+    """A frozen "21:07" still up tomorrow reads as today's: the stopped face always
+    has its date, whatever clock_date says for the live one."""
+    app = fed(app_with([FakeLink("a")]))
+    app.cfg = cfg(account_1=app.cfg._d["account_1"], clock_date=False)
+    clock = app.stopped_screen().clock
+    assert len(clock.split()) == 2 and clock.split()[0].count(".") == 2, clock
+
+
+def test_paint_stopped_draws_every_screen_whole():
+    a, b = FakeLink("a"), FakeLink("b")
+    app = fed(app_with([a, b]))
+    assert app.paint_stopped() is True
+    assert a.forced == [True] and b.forced == [True]
+    assert a.frames[0] is b.frames[0]
+
+
+def test_a_stopped_frame_one_screen_refused_is_not_a_success():
+    """One screen took it, the other kept its last LIVE frame: the supervisor has to
+    be told (False -> keep.EXIT_STOPPED_BLANK -> its card on every screen)."""
+    a, b = FakeLink("a"), FakeLink("b", ok=False)
+    app = fed(app_with([a, b]))
+    assert app.paint_stopped() is False
+    assert a.forced == [True] and b.forced == [True]
+
+
+def test_a_stopped_frame_no_screen_took_is_not_a_success():
+    a, b = FakeLink("a", ok=False), FakeLink("b", ok=False)
+    app = fed(app_with([a, b]))
+    assert app.paint_stopped() is False
+
+
+def test_no_data_means_no_stopped_frame():
+    """Before the first data there are no numbers of ours: nothing is drawn, and the
+    supervisor puts up its own card (keep.EXIT_STOPPED_BLANK)."""
+    a = FakeLink("a")
+    app = app_with([a])
+    app.first_data_at = None
+    assert app.stopped_screen() is None
+    assert app.paint_stopped() is False
+    assert a.frames == []

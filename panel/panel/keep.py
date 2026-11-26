@@ -19,6 +19,16 @@ import time
 # accident into a panel that stays off with the last numbers on the glass.
 EXIT_QUIT = 75      # the supervisor was told to quit; it also says so in tray.state
 EXIT_BUSY = 76      # the supervisor found tray.lock held and backed off
+# The client, asked to stop (STOP_REQUEST), did not get a stopped frame onto every
+# screen: it had no data to draw one from, or a screen refused it (App.paint_stopped).
+# The supervisor then puts up its own card on every screen instead, over any screen
+# that did take the frame. A stop whose frame every screen took exits 0.
+EXIT_STOPPED_BLANK = 77
+# The exit code a job kill leaves on its processes (winjob.Child.kill). Any value
+# works — the watcher knows it killed — but a recognizable one reads better in a log
+# than "1". Defined here, where the watchers' pure logic can read it without the
+# Win32 half (supervisor.describe_exit), and re-exported by winjob.
+KILLED_EXIT = 0xDEAD
 
 # Files in config.OUTDIR (%LOCALAPPDATA%\claude-usage-monitor). The launchers are the
 # few lines install-task.ps1 writes there, each runpy-executing one file of the repo.
@@ -26,6 +36,10 @@ GUARD_LAUNCHER = "panel-guard.pyw"
 TRAY_LAUNCHER = "panel-tray.pyw"
 CLIENT_LAUNCHER = "panel-run.pyw"
 CLIENT_HEARTBEAT = "panel.heartbeat"
+# Written by the supervisor on Stop/Quit. The client looks for it in every
+# app.STOP_POLL_SEC slice of its wait (App._wait), then at the top of its loop (App.run)
+# removes it, draws its last frame as a stopped one (App.stopped_screen) and exits.
+STOP_REQUEST = "panel.stop"
 TRAY_HEARTBEAT = "tray.heartbeat"
 TRAY_STATE = "tray.state"
 TRAY_COMMAND = "tray.cmd"

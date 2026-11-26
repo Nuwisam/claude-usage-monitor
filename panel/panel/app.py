@@ -21,11 +21,17 @@ from .link import PanelLink
 # Re-exported: run.pyw and __main__.py import both from here, and they have since
 # before the lock had a module of its own (lock.py says why it moved).
 from .lock import AlreadyRunning, single_instance  # noqa: F401
+from .lock import is_free
 from .log import get as log
 
 # How often the main loop proves it is alive to the supervisor (tray.py), which
 # calls it hung after supervisor.HANG_SEC of silence.
 HEARTBEAT_EVERY_SEC = 5.0
+# How often the wait between ticks looks for the supervisor's stop request
+# (keep.STOP_REQUEST). The supervisor kills a client that has not drawn its stopped
+# frame within supervisor.STOP_GRACE_SEC, and the request must not wait for a long
+# `tick_sec` to run out: 1 s is the default tick, so every tick answers as fast.
+STOP_POLL_SEC = 1.0
 
 
 class StreamDied(RuntimeError):
@@ -51,9 +57,58 @@ def seconds(raw, default=0.0):
     return value
 
 
+# How old the supervisor's own heartbeat (keep.TRAY_HEARTBEAT, beaten every loop step)
+# may be for it to still count as running: the silence its guardian calls a hang
+# (guard.HANG_SEC).
+SUPERVISOR_SILENCE_SEC = 120.0
+
+
+def supervised():
+    """Whether a supervisor would start a new client if this one exited.
+
+    The guardian's epoch (keep.EPOCH_ENV, inherited down the chain) says so for an
+    installed chain. A tray supervisor started by hand has no epoch, but it beats
+    keep.TRAY_HEARTBEAT like any other, so a fresh one says so too. The old scheduled
+    task, or a client run by hand, has neither.
+
+    A fresh heartbeat is not the whole answer for a client without an epoch, though.
+    A supervisor that quit leaves it fresh for SUPERVISOR_SILENCE_SEC after it is gone,
+    so tray.lock must be held as well: a supervisor holds it until it exits
+    (tray.main). A stopped supervisor beats and holds the lock, but starts nothing
+    until the owner says Start, so keep.TRAY_STATE saying "stopped" or "quit" means
+    no. That file is written only under a guardian's epoch (keep.StateStore), and a
+    new guardian leaves the previous one's in place, so it is read only while a
+    guardian holds guard.lock: a supervisor started by hand, with no guardian above
+    it, still counts however an earlier chain left the file.
+
+    Under a guardian the file's epoch is not compared: this client has none to
+    compare it with. A new guardian's supervisor that has not yet written the file
+    can therefore be read through the previous chain's "stopped". It is accepted: a
+    client run by hand can start next to a live chain only while that chain has no
+    client of its own (panel.lock), the answer errs towards "not supervised", and
+    such a client keeps ticking, so the age on the glass keeps growing.
+    """
+    if os.environ.get(keep.EPOCH_ENV):
+        return True
+    at = keep.mtime_ns(os.path.join(C.OUTDIR, keep.TRAY_HEARTBEAT))
+    if at is None or time.time_ns() - at >= SUPERVISOR_SILENCE_SEC * 1e9:
+        return False
+    if is_free(name="tray"):
+        return False
+    if is_free(name="guard"):
+        return True
+    _, want, _ = keep.read_state(os.path.join(C.OUTDIR, keep.TRAY_STATE))
+    return want not in ("stopped", "quit")
+
+
 class App:
-    def __init__(self, cfg, monotonic=time.monotonic, heartbeat_path=None):
+    def __init__(self, cfg, monotonic=time.monotonic, heartbeat_path=None,
+                 stop_path=None):
         self.cfg = cfg
+        # The supervisor's "stop" (keep.STOP_REQUEST). None — the default — means no
+        # one can ask, for the same reason as the heartbeat: a test App never reads the
+        # live file. Only `main()` passes the real path.
+        self.stop_path = stop_path
         # Where `run()` proves it is alive. None — the default — writes nothing, so a
         # test that builds an App never touches the file the live supervisor watches;
         # only `main()` passes the real path.
@@ -301,6 +356,68 @@ class App:
                                                         **self._clock_switches()),
                                   link=self.link_state, bands=bands)
 
+    def stopped_screen(self):
+        """The LAST frame, when the owner stops the panel from the tray — or None when
+        there is nothing worth keeping on the glass.
+
+        The bands as they are now, with every relative word taken out, because nothing
+        will redraw them: the age becomes STOPPED (in the accent) with the data's own
+        time when it is older than the stop, the resets become full
+        dates, the link mark goes to "down", and the header clock stays at this instant
+        — which is exactly when the panel stopped. No alert card: it is about a block
+        that may be answered a minute from now.
+
+        None before the first data: there are no numbers of ours to keep, and the
+        supervisor draws its own card instead (keep.EXIT_STOPPED_BLANK).
+        """
+        if self.first_data_at is None or self.contract_mismatch is not None:
+            return None
+        now_ms = self.clock.now_ms()
+        bands = []
+        for index, slot in enumerate(self.cfg.accounts):
+            account = self.accounts.get(slot.key)
+            note = "unknown account" if slot.key in self.unknown_keys else None
+            bands.append(render.band_state(account, name=slot.name, now_ms=now_ms,
+                                           show_clock=(index == 0), note=note,
+                                           stopped=True))
+        while len(bands) < 2:
+            bands.append(None)
+        # The date is forced, whatever `clock_date` says: this face is frozen, and a
+        # bare "21:07" still on the glass tomorrow would read as today's.
+        switches = dict(self._clock_switches(), date=True)
+        return render.ScreenState(clock=fmt.panel_clock(fmt.from_ms(now_ms), **switches),
+                                  link="down", bands=bands)
+
+    def _stop_requested(self):
+        if not self.stop_path or not os.path.exists(self.stop_path):
+            return False
+        try:
+            os.remove(self.stop_path)
+        except OSError:
+            pass
+        return True
+
+    def paint_stopped(self):
+        """Puts `stopped_screen()` on every screen. True when every screen took it.
+
+        Drawn whole (`force`), because it is the frame the glass keeps: a partial update
+        over a screen we may have misjudged would leave the misjudged part there for good.
+
+        False also when only SOME screens took it: the one that refused still carries
+        the last LIVE frame, frozen numbers that look current, and only the supervisor's
+        card (keep.EXIT_STOPPED_BLANK) goes to every screen and so reaches it too.
+        """
+        state = self.stopped_screen()
+        if state is None:
+            log().info("stop requested: no data yet, nothing to keep on the glass")
+            return False
+        frames = dict((canvas, self._renderer(canvas).frame(state))
+                      for canvas in self._canvases())
+        drew = [link.send(frames[link.canvas], force=True) for link in self.panels]
+        log().info("stop requested: stopped frame on %d of %d screen(s)",
+                   sum(1 for d in drew if d), len(drew))
+        return all(drew)
+
     def _clock_switches(self):
         """The two config reads behind BOTH clock faces, in one place.
 
@@ -389,8 +506,19 @@ class App:
         log().info("start: %d account(s), panels: %s", len(keys),
                    ", ".join(link.tag for link in self.panels) or "(none)")
         deadline = self.monotonic()
+        orphaned = False
+        # Read by `_wait` too: with no ceiling on `tick_sec`, a thread that dies early
+        # in a long wait must not wait the whole tick to be noticed.
+        self._stream = client
         try:
             while not self.stop.is_set():
+                # BEFORE the tick: an ordinary frame painted after the request would
+                # only be overwritten, and on a slow screen that is a whole blit.
+                if self._stop_requested():
+                    # The events queued since the last tick go in first, so the frame
+                    # kept on the glass is the newest we have, not one second older.
+                    stream.drain(self.q, self.on_event)
+                    return self.paint_stopped()
                 self.tick()
                 # The stream thread catches only network errors (StreamClient._once);
                 # anything else — a MemoryError under system memory pressure — ends the
@@ -399,8 +527,22 @@ class App:
                 # the process instead hands it to the supervisor, which starts a whole
                 # new one; the thread's own traceback is already in the log
                 # (threading.excepthook, log.py).
+                #
+                # Only when a supervisor is there to start that new process, though
+                # (`supervised`). A client run by the old scheduled task or by hand has
+                # nobody to restart it: exiting would leave the glass on a frame whose
+                # "N min ago" never moves again. There the loop goes on as it did
+                # before, so the age on the glass keeps growing and shows the data is
+                # stale; the error goes to the log once.
                 if not client.is_alive() and not self.stop.is_set():
-                    raise StreamDied("stream thread is gone; exiting for a restart")
+                    if supervised():
+                        raise StreamDied("stream thread is gone; exiting for a restart")
+                    if not orphaned:
+                        orphaned = True
+                        self._stream = None     # nothing left for `_wait` to watch
+                        log().error("stream thread is gone and no supervisor would "
+                                    "restart this process; the data on the screen "
+                                    "stays stale until the panel is restarted")
                 # AFTER the tick, so a tick that hangs stops the heartbeat with it.
                 if self.heartbeat is not None:
                     self.heartbeat.beat()
@@ -411,11 +553,39 @@ class App:
                     # better to lose a tick than to chase our own tail.
                     deadline = self.monotonic()
                     delay = 0
-                self.stop.wait(delay)
+                self._wait(delay)
         finally:
             self.stop.set()
             for link in self.panels:
                 link.close()        # without clearing the screen, deliberately
+
+    def _wait(self, delay):
+        """The pause between ticks, cut into slices of at most STOP_POLL_SEC.
+
+        The heartbeat goes on between slices, so a long `tick_sec` does not read as a
+        hang (supervisor.HANG_SEC), and a stop request ends the pause at the next
+        slice, so it is not killed for missing supervisor.STOP_GRACE_SEC: panel.json
+        needs no ceiling on it. The request is only seen here, not consumed — the top
+        of the loop in `run` does that and draws the stopped frame. The slices are
+        counted down, not timed against the clock: a stopped clock cannot make this
+        loop spin.
+
+        A dead stream thread ends the pause too, so `run` reaches its dead-stream
+        check at once: otherwise the heartbeat beaten here would say "alive" for a
+        whole long tick over numbers that stopped moving.
+        """
+        while delay > 0 and not self.stop.is_set():
+            if self.stop_path and os.path.exists(self.stop_path):
+                return
+            stream_thread = getattr(self, "_stream", None)
+            if stream_thread is not None and not stream_thread.is_alive():
+                return
+            step = min(delay, HEARTBEAT_EVERY_SEC, STOP_POLL_SEC)
+            if self.stop.wait(step):
+                return
+            delay -= step
+            if self.heartbeat is not None:
+                self.heartbeat.beat()
 
     def run_once(self, wait_sec=30.0):
         """Connect, wait for the first frame, draw once, exit."""
@@ -452,7 +622,25 @@ def main(argv=None):
     if problems:
         raise C.ConfigError("; ".join(problems))
     lock = single_instance()
+    # Under a supervisor no panel.stop is removed here. A request found at start was
+    # written while this client was starting (the supervisor's Stop), and removing it
+    # left the supervisor waiting STOP_GRACE_SEC to kill us instead of drawing our
+    # stopped frame. A leftover from an earlier client is the supervisor's to clear,
+    # before it starts this one (Supervisor._maybe_start).
+    # With no supervisor nobody clears it and nobody can have just written it: a
+    # leftover from a supervised client killed before it read its request would end
+    # this run on its first tick, so it is removed.
+    stop_path = os.path.join(C.OUTDIR, keep.STOP_REQUEST)
+    if not supervised():
+        try:
+            os.remove(stop_path)
+        except OSError:
+            pass
     try:
-        App(cfg, heartbeat_path=os.path.join(C.OUTDIR, keep.CLIENT_HEARTBEAT)).run()
+        # True / False only after a stop request: whether a stopped frame was drawn.
+        # None is the ordinary end (the loop ended without one), and never happens in
+        # practice — App.run returns only on a request or an exception.
+        return App(cfg, heartbeat_path=os.path.join(C.OUTDIR, keep.CLIENT_HEARTBEAT),
+                   stop_path=stop_path).run()
     finally:
         lock.close()

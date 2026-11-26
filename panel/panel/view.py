@@ -84,8 +84,14 @@ def missing_view():
                       number=None, words="unknown")
 
 
-def reset_note(s, now_ms):
+def reset_note(s, now_ms, absolute=False):
     """(lead, at) — the countdown caption. A port of resetNote() from freshness.ts.
+
+    `absolute` is the stopped panel's caption (App.stopped_screen): "reset 26.07.2026
+    21:59", the boundary as a full date and time with no countdown and no "at"/"on
+    Sat." stamp. Once nothing redraws the glass, everything relative rots — "in 52 min"
+    and "at 21:59" (which day?) alike — while a full date stays true for as long as the
+    frame is up. It has no port on the web side: the web never stops redrawing.
 
     `resetsAt: null` has SEVERAL reasons, and merging them into one caption was
     a bug once already: Anthropic gives no boundary for a window at 0% usage, and
@@ -102,6 +108,8 @@ def reset_note(s, now_ms):
     if s.source in ("spend", "extra_usage"):
         return "no reset", None
     r = fmt.parse_utc(s.resets_at)
+    if r is not None and absolute:
+        return "reset %s" % fmt.panel_clock(r, seconds=False, date=True), None
     if r is not None:
         target = fmt.ms(r)
         # Rounding threshold THE SAME as in countdown(), otherwise a 300 ms

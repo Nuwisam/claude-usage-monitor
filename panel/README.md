@@ -555,7 +555,9 @@ the scheduler does not bring the task back (measured: nothing within 3 minutes).
   the ladder back at 2 s. Two exits are not failures: the client's `2` (a
   configuration error, already on the glass as a card) is retried when
   `panel.json` changes, at the latest every 10 min; its `0` means it found
-  `panel.lock` held by another instance, which is waited out.
+  `panel.lock` held by another instance, which is waited out — or, after a Stop,
+  that it drew its stopped frame (that exit is the supervisor's own request and is
+  handled where the request was made).
 - **a heartbeat file.** The client touches `panel.heartbeat` after a tick, at
   most every 5 s; the supervisor touches `tray.heartbeat`. **120 s without a
   change is a hang**, and the process is killed and restarted. A start gets 180 s
@@ -574,22 +576,34 @@ errors, and a `MemoryError` there used to leave the main loop ticking — and th
 heartbeat healthy — over numbers that never moved again.
 
 **The icon** is the web UI's favicon, and says the state by the shape of its
-meter: the filled bar while the client runs, the bar as an outline while a
+bar: filled while the client runs, an outline while a
 restart is pending, the empty track when stopped. The tooltip says since
 when, and how many restarts with the last reason. Right-click:
 
 | item | what it does | how long it holds |
 |---|---|---|
 | Restart panel | kills the client and starts a new one at once | — |
-| Stop panel | kills the client and draws a **"Panel stopped"** card | until Start; it survives a restart of the supervisor |
+| Stop panel | the client draws its **stopped frame** and exits | until Start; it survives a restart of the supervisor |
 | Start panel | (instead of Stop while stopped) | — |
 | Open panel log / Open tray log | `panel.log` (or `log_path`) / `panel-tray.log` | — |
-| Quit | stops the client, draws the card, ends the supervisor and the guardian; the task goes back to Ready | until the next logon or `Start-ScheduledTask` |
+| Quit | like Stop, then ends the supervisor and the guardian; the task goes back to Ready | until the next logon or `Start-ScheduledTask` |
 
-The card is there because a stopped panel keeps its last frame, and frozen,
-credible-looking numbers are what rule 4 of `AGENTS.md` exists against. Its time
-is absolute (`25.11.2026 21:07`), never "at 21:07": a static card may still be on
-the glass tomorrow. A restart draws no card — the new client keeps the old frame
+**The stopped frame keeps the numbers and takes out everything that would rot.** A
+stopped panel keeps its last frame, and frozen, credible-looking numbers are what
+rule 4 of `AGENTS.md` exists against — but the numbers themselves are true as of
+the stop, and a full-screen card would throw them away. So on Stop the supervisor
+asks the client (`panel.stop`), and the client paints the bands one last time with
+every relative word replaced: the reading age reads **STOPPED** in the accent —
+followed by the data's own time (`STOPPED · data 21:06`, with the date when it is
+another day) whenever the numbers were older than the stop, because the frozen clock
+says when the panel stopped, not when the numbers were taken — each
+reset is a full date (`reset 26.07.2026 21:59`, not "in 52 min · at 21:59"), the link
+mark is down, and the header clock stays at the moment of the stop. A client that
+does not answer within 10 s, has no data yet, or finds that a screen refused the
+stopped frame, is killed instead, and a **"Panel stopped"** card goes up on every
+screen — over a stopped frame a working screen may already show, so that no screen
+is left with live-looking numbers — with an absolute time (`25.11.2026 21:07`, never
+"at 21:07": a static card may still be on the glass tomorrow). A restart draws neither — the new client keeps the old frame
 until it has data, as it always did. After five failures in a row a **"Panel
 restarting"** card goes up once, so a client that keeps dying before its first
 frame does not leave stale numbers behind; the guardian does the same with
@@ -743,7 +757,8 @@ panel every week.
 | panel black / stale content | the tray icon's tooltip; `panel.log`, then `panel-tray.log`; is another program holding the module |
 | no tray icon | `panel-tray.log` (pystray did not load: the panel is still supervised), `panel-guard.log`; is the task running; after a Quit nothing runs until the next logon or `Start-ScheduledTask` |
 | the client restarts every few minutes | `panel-tray.log`: the exit code or "no heartbeat", and the client's peak memory; `panel.log` around the same time for the traceback |
-| "Panel stopped" card on the glass | someone chose Stop or Quit in the tray; the time on the card says when |
+| STOPPED next to the account name | someone chose Stop or Quit in the tray; the frozen clock in the header says when; the "data" time after the word says how old the numbers already were |
+| "Panel stopped" card on the glass | Stop or Quit, with a client that did not answer, had no data yet, or met a screen that refused its stopped frame; the time on the card says when — `panel-tray.log` says which |
 | "panel held by another process" | another program or a second instance of the client |
 | `missed_csw` rising | we sent the wrong byte count — a bug in the code, not in the hardware (AX206 only; the serial screen confirms nothing) |
 | serial screen: colors swapped, image "shifted" | byte drift after a torn write. A full repaint does **not** fix this — unplug and replug the screen |

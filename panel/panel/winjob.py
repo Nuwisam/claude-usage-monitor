@@ -27,6 +27,8 @@ import os
 import subprocess
 from ctypes import wintypes
 
+from . import keep
+
 _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 CREATE_SUSPENDED = 0x00000004
@@ -44,9 +46,9 @@ JobObjectBasicAccountingInformation = 1
 JobObjectBasicProcessIdList = 3
 JobObjectExtendedLimitInformation = 9
 
-# The exit code a job kill leaves on its processes. Any value works — the watcher
-# knows it killed — but a recognisable one reads better in a log than "1".
-KILLED_EXIT = 0xDEAD
+# The exit code a job kill leaves on its processes: one value for every reader, kept
+# in keep.py (pure, importable without Win32).
+KILLED_EXIT = keep.KILLED_EXIT
 
 
 class STARTUPINFOW(ctypes.Structure):

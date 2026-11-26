@@ -117,6 +117,19 @@ def test_no_series_does_not_blow_up():
     assert view.reset_note(None, NOW) == ("no data", None)
 
 
+def test_a_stopped_panel_gets_full_dates_and_no_countdown():
+    """The stopped frame is never redrawn: a countdown and a day-less "at 21:59" both
+    rot, a full date does not. Local time, as the header clock writes it."""
+    s = series(utilization=31, resetsAt="2026-07-26T20:00:00Z")
+    lead, at = view.reset_note(s, NOW, absolute=True)
+    r = fmt.parse_utc("2026-07-26T20:00:00Z")
+    assert (lead, at) == ("reset " + fmt.panel_clock(r, seconds=False, date=True), None)
+    assert "in" not in lead.split()
+    # the reasons without a boundary keep their sentences
+    assert view.reset_note(series(utilization=0), NOW, absolute=True) == \
+        ("window has not started", None)
+
+
 # --- series pickers ---------------------------------------------------------
 
 def test_hero_rests_on_session_not_on_isActive():

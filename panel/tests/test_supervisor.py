@@ -39,6 +39,9 @@ class FakeChild:
             self.code = 0xDEAD
         return True
 
+    def wait(self, timeout):
+        return self.code
+
     def close(self):
         self.closed = True
 
@@ -111,6 +114,19 @@ class World:
         self.spawn_error = None
         self.changes = []
         self.backoff = None
+        # What the client does when asked to stop: 0 = draws its stopped frame and
+        # exits; keep.EXIT_STOPPED_BLANK = had nothing to draw; None = does not answer.
+        self.stop_reply = 0
+        self.stop_requests = 0
+        self.stop_cleared = 0
+
+    def request_stop(self):
+        self.stop_requests += 1
+        if self.clients and self.clients[-1].code is None:
+            self.clients[-1].code = self.stop_reply
+
+    def clear_stop(self):
+        self.stop_cleared += 1
 
     def spawn_client(self):
         if self.spawn_error:
@@ -135,7 +151,8 @@ class World:
             beat=self.beat, config_mtime=lambda: self.mtime, store=self.store,
             logger=self.log, read_command=self.read_command, clock=self.clock,
             wall=lambda: datetime(2026, 11, 25, 20, 7, tzinfo=timezone.utc),
-            backoff=self.backoff)
+            backoff=self.backoff, request_stop=self.request_stop,
+            clear_stop=self.clear_stop)
         sup.on_change = self.changes.append
         sup.begin()
         return sup
@@ -168,6 +185,19 @@ def test_the_first_step_starts_the_client():
     assert len(w.clients) == 1
     assert w.beat.armed == [w.clock.t]
     assert sup.status.state == "running"
+
+
+def test_a_leftover_stop_request_is_cleared_before_the_client_starts():
+    """Regression: app.main removed panel.stop at start, also a Stop written while the
+    client was starting. The supervisor now clears a leftover BEFORE the spawn, and
+    the client keeps whatever it finds."""
+    w = World()
+    sup = w.make()
+    cleared_at_spawn = []
+    real_spawn = w.spawn_client
+    sup.spawn_client = lambda: cleared_at_spawn.append(w.stop_cleared) or real_spawn()
+    sup.step()
+    assert cleared_at_spawn == [1] and len(w.clients) == 1
 
 
 def test_a_crash_restarts_on_the_ladder():
@@ -288,6 +318,7 @@ def test_a_card_holds_the_next_start_back_until_it_is_done():
 
 def test_a_card_that_never_ends_is_killed_after_its_limit():
     w = World()
+    w.stop_reply = None                 # the client does not answer: the card goes up
     sup = started(w)
     w.commands.append("stop")
     sup.step()
@@ -295,6 +326,27 @@ def test_a_card_that_never_ends_is_killed_after_its_limit():
     w.run(sup, S.CARD_LIMIT_SEC + 1)
     assert card.killed and card.closed
     assert sup.card is None
+
+
+def test_a_killed_card_gets_the_lock_grace_too():
+    """A killed card may hold panel.lock a moment after its job: the next start waits
+    it out quietly instead of reporting another instance for LOCK_RETRY_SEC."""
+    w = World()
+    w.backoff = keep.Backoff(steps=(1.0,))
+    sup = started(w)
+    for _ in range(S.LOOP_FAILURES):
+        w.client.code = 1
+        sup.step()
+        if not w.cards:
+            w.run(sup, 1)
+    w.run(sup, S.CARD_LIMIT_SEC + 1)        # the card hangs and is killed
+    assert w.cards[0].killed
+    w.lock = False                          # the dying card's lock
+    w.run(sup, 3)
+    assert "panel already running" not in w.log.text()
+    w.lock = True
+    w.run(sup, 1)
+    assert sup.state == "running"
 
 
 # -- exit codes that are not crashes ------------------------------------------
@@ -312,6 +364,55 @@ def test_exit_2_waits_for_panel_json_to_change():
     w.run(sup, 1)
     assert len(w.clients) == 2
     assert sup.restarts == 0            # not a crash
+
+
+def test_a_failed_start_after_a_config_change_waits_out_the_ladder():
+    """The changed panel.json earns one retry. If that start fails, the 2 s rung
+    holds: the old mtime must not skip it on every step."""
+    w = World()
+    sup = started(w)
+    w.client.code = 2
+    sup.step()
+    w.mtime = 2
+    w.spawn_error = MemoryError()
+    w.run(sup, 1)
+    assert sup.restarts == 1
+    w.run(sup, 1)
+    assert sup.restarts == 1, "the 2 s rung must hold"
+    w.run(sup, 1)
+    assert sup.restarts == 2
+
+
+def test_a_held_lock_after_a_config_change_is_probed_every_30_s():
+    w = World()
+    sup = started(w)
+    w.client.code = 2
+    sup.step()
+    w.run(sup, S.LOCK_GRACE_SEC + 1)
+    w.lock = False                      # someone else took panel.lock
+    w.mtime = 2
+    w.run(sup, 10)
+    assert w.log.text().count("panel.json changed") == 1, "one retry, not one per step"
+    assert "panel already running" in sup.detail
+    w.lock = True
+    w.run(sup, S.LOCK_RETRY_SEC)
+    assert len(w.clients) == 2
+
+
+def test_a_config_change_inside_the_lock_grace_is_not_lost():
+    """Our own client still holds panel.lock for a moment after exit 2. A change seen
+    then is retried as soon as the lock is free, not after CONFIG_RETRY_SEC."""
+    w = World()
+    sup = started(w)
+    w.client.code = 2
+    w.lock = False                      # the exiting client, still dying
+    sup.step()
+    w.mtime = 2
+    w.run(sup, 1)
+    assert len(w.clients) == 1
+    w.lock = True
+    w.run(sup, 1)
+    assert len(w.clients) == 2
 
 
 def test_exit_2_is_retried_after_ten_minutes_anyway():
@@ -366,8 +467,78 @@ def test_a_missing_launcher_starts_nothing():
 # -- the owner's commands --------------------------------------------------------
 
 
+def test_stop_asks_the_client_for_its_stopped_frame_and_draws_no_card():
+    """The owner's rule: a stopped panel keeps its numbers, marked STOPPED — never a
+    full-screen card over them, when the client can draw that frame itself."""
+    w = World()
+    sup = started(w)
+    client = w.client
+    sup.command("stop")
+    sup.step()
+    assert w.stop_requests == 1
+    assert not client.killed and client.closed
+    assert not w.cards
+    assert sup.state == "stopped" and w.store.saved == ["stopped"]
+    assert w.stop_cleared == 2, "once before the client started, once after its stop"
+    assert "client drew its stopped frame" in w.log.text()
+    w.run(sup, 3600)
+    assert len(w.clients) == 1
+
+
+@pytest.mark.parametrize("reply,why", [(keep.EXIT_STOPPED_BLANK,
+                                        "drew no stopped frame on every screen"),
+                                       (None, "did not stop within"),
+                                       (1, "exited 1 instead")])
+def test_stop_falls_back_to_the_card(reply, why):
+    w = World()
+    w.stop_reply = reply
+    sup = started(w)
+    client = w.client
+    sup.command("stop")
+    sup.step()
+    assert client.killed and client.closed
+    assert w.cards and w.cards[0].lines[0] == "Panel stopped"
+    assert why in w.log.text()
+
+
+def test_stop_while_nothing_runs_draws_the_card():
+    """No client: nobody holds numbers to keep, so the card is all there is."""
+    w = World()
+    w.launcher = False
+    sup = w.make()
+    sup.step()
+    sup.command("stop")
+    sup.step()
+    assert w.stop_requests == 0
+    assert w.cards and w.cards[0].lines[0] == "Panel stopped"
+
+
+def test_stop_holds_when_waiting_for_the_client_fails():
+    """A failed wait (WaitForSingleObject / GetExitCodeProcess) must not lose the Stop:
+    the client may have read panel.stop and exited 0, which _watch would read as the
+    lock back-off and start the panel again at once."""
+    w = World()
+    sup = started(w)
+    client = w.client
+
+    def broken_wait(timeout):
+        raise OSError("WaitForSingleObject failed")
+
+    client.wait = broken_wait
+    sup.command("stop")
+    sup.step()
+    assert client.killed and client.closed
+    assert sup.state == "stopped" and w.store.saved == ["stopped"]
+    assert w.stop_cleared == 2, "once before the client started, once after its stop"
+    assert w.cards and w.cards[0].lines[0] == "Panel stopped"
+    assert "waiting for the client failed" in w.log.text()
+    w.run(sup, 3600)
+    assert len(w.clients) == 1
+
+
 def test_stop_kills_draws_the_card_and_stays_stopped():
     w = World()
+    w.stop_reply = None
     sup = started(w)
     client = w.client
     sup.command("stop")
@@ -386,7 +557,6 @@ def test_start_after_stop():
     sup = started(w)
     sup.command("stop")
     sup.step()
-    w.cards[0].code = 0
     sup.command("start")
     w.run(sup, 1)
     assert sup.state == "running" and len(w.clients) == 2
@@ -395,6 +565,7 @@ def test_start_after_stop():
 
 def test_start_while_a_card_is_up_ends_the_card_first():
     w = World()
+    w.stop_reply = keep.EXIT_STOPPED_BLANK
     sup = started(w)
     sup.command("stop")
     sup.step()
@@ -433,8 +604,31 @@ def test_restart_while_running_kills_and_starts():
     assert not w.cards, "a restart draws no card: the new client holds the old frame"
 
 
+def test_quit_with_a_stopped_frame_is_done_at_once():
+    w = World()
+    sup = started(w)
+    sup.command("quit")
+    sup.step()
+    assert not w.cards and not w.client.killed
+    assert w.store.saved == ["quit"]
+    sup.step()
+    assert sup.done
+
+
+def test_quit_after_stop_draws_nothing_more():
+    w = World()
+    sup = started(w)
+    sup.command("stop")
+    sup.step()
+    sup.command("quit")
+    sup.step()
+    sup.step()
+    assert sup.done and not w.cards
+
+
 def test_quit_waits_for_its_card_then_is_done():
     w = World()
+    w.stop_reply = None
     sup = started(w)
     sup.command("quit")
     sup.step()
